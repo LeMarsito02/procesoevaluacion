@@ -614,6 +614,42 @@ function App() {
 
           <RequisitoSection
             numero={19}
+            requisito={11}
+            titulo="Requisito 11: Garantía de Seriedad de la Propuesta"
+            descripcion={`Busca la póliza de garantía de seriedad por título interno y verifica que el beneficiario sea la entidad (ICCU), que la vigencia cubra al menos hasta la fecha mínima requerida, y que el valor asegurado sea al menos el 10% del lote de mayor valor. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Garantía de Seriedad de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(11, r)}
+          />
+
+          <RequisitoSection
+            numero={20}
+            requisito={12}
+            titulo="Requisito 12: Pago de Seguridad Social y Aportes Legales"
+            descripcion={`Busca el Formato 5 por título interno y verifica que mencione al representante legal identificado en el Formato 1. Si es Consorcio/UT, cada integrante debe firmar el suyo propio — ese caso siempre queda para revisión humana. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Pago de Seguridad Social de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(12, r)}
+          />
+
+          <RequisitoSection
+            numero={21}
+            requisito={18}
+            titulo="Requisito 18: Certificado de Revisor Fiscal"
+            descripcion={`N.A. si el proponente no es una Sociedad Anónima (S.A.) — incluye personas naturales, S.A.S., Ltda. y otros tipos societarios. Si es S.A., verifica que el Certificado de Existencia indique si es abierta o cerrada. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Revisor Fiscal de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(18, r)}
+          />
+
+          <RequisitoSection
+            numero={22}
             requisito={13}
             titulo="Requisito 13: Registro Único Tributario - RUT"
             descripcion="El abogado confirmó que este requisito no se exige actualmente en este proceso — se marca N.A. para todos los proponentes automáticamente, sin necesidad de revisar documentos."

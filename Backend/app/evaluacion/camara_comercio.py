@@ -417,3 +417,58 @@ def evaluar_proponente_requisito9(proponente: Proponente, proceso: ProcesoDocume
 
 def evaluar_proponente_requisito10(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
     return _evaluar_proponente_camara(10, lambda pdfs, proceso, tipo: evaluar_requisito10(pdfs), proponente, proceso)
+
+
+# "ORGANIZACION JURIDICA: SOCIEDAD POR ACCIONES SIMPLIFICADA CATEGORIA :
+# PERSONA JURIDICA PRINCIPAL NIT :..." — confirmado con un Certificado de
+# Existencia real (SIMO SAS). "SOCIEDAD ANONIMA" y "SOCIEDAD POR ACCIONES
+# SIMPLIFICADA" (S.A.S.) son frases completamente distintas en español, así
+# que basta buscar la primera literalmente sin riesgo de confundirla con
+# S.A.S. No se encontró en los documentos reales revisados un proponente
+# que sea efectivamente una S.A. (todos eran S.A.S.), así que esta parte no
+# se pudo validar contra un caso real — queda como limitación conocida.
+SOCIEDAD_ANONIMA_RE = re.compile(r"SOCIEDAD ANONIMA(?!\s*SIMPLIFICADA)")
+SOCIEDAD_ABIERTA_RE = re.compile(r"\bABIERTA\b")
+SOCIEDAD_CERRADA_RE = re.compile(r"\bCERRADA\b")
+
+
+def evaluar_requisito18(pdfs: dict[str, bytes], tipo_proponente: str | None) -> ResultadoEvaluacionCamara:
+    """Requisito 18: Certificado de Revisor Fiscal indicando si la sociedad
+    es abierta o cerrada. N.A. si el proponente no es una Sociedad Anónima
+    (S.A.) — incluye personas naturales y cualquier otro tipo societario
+    (S.A.S., Ltda., etc.), que no están obligados a este certificado. No
+    validado contra un proponente S.A. real (limitación conocida, ver
+    comentario en SOCIEDAD_ANONIMA_RE)."""
+    if tipo_proponente == "persona_natural":
+        return ResultadoEvaluacionCamara(cumple=True, motivo="N.A. — persona natural", archivo=None)
+
+    encontrados = encontrar_documentos(pdfs, TITULO_EXISTENCIA_RE, PISTAS_EXISTENCIA)
+    if not encontrados:
+        return ResultadoEvaluacionCamara(
+            cumple=False,
+            motivo="No se encontró el Certificado de Existencia y Representación Legal por título dentro de los documentos del proponente.",
+            archivo=None,
+        )
+
+    es_sociedad_anonima = False
+    for nombre in encontrados:
+        texto_norm = _norm(_texto_completo(pdfs, nombre))
+        if SOCIEDAD_ANONIMA_RE.search(texto_norm):
+            es_sociedad_anonima = True
+            if SOCIEDAD_ABIERTA_RE.search(texto_norm) or SOCIEDAD_CERRADA_RE.search(texto_norm):
+                return ResultadoEvaluacionCamara(cumple=True, motivo=None, archivo=nombre)
+
+    if not es_sociedad_anonima:
+        return ResultadoEvaluacionCamara(
+            cumple=True, motivo="N.A. — el proponente no es una Sociedad Anónima (S.A.)", archivo=None
+        )
+
+    return ResultadoEvaluacionCamara(
+        cumple=False,
+        motivo="El proponente es una Sociedad Anónima (S.A.), pero no se pudo confirmar si es abierta o cerrada — revisa manualmente el certificado de Revisor Fiscal.",
+        archivo=encontrados[0],
+    )
+
+
+def evaluar_proponente_requisito18(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
+    return _evaluar_proponente_camara(18, lambda pdfs, proceso, tipo: evaluar_requisito18(pdfs, tipo), proponente, proceso)

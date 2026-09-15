@@ -22,10 +22,13 @@ from app.evaluacion.camara_comercio import (
     evaluar_proponente_requisito8,
     evaluar_proponente_requisito9,
     evaluar_proponente_requisito10,
+    evaluar_proponente_requisito18,
 )
 from app.evaluacion.copnia import evaluar_proponente_requisito2, evaluar_proponente_requisito3
 from app.evaluacion.formato1 import evaluar_proponente
+from app.evaluacion.garantia import evaluar_proponente_requisito11
 from app.evaluacion.proponente_plural import evaluar_proponente_requisito4
+from app.evaluacion.seguridad_social import evaluar_proponente_requisito12
 from app.evaluacion.trivial import evaluar_proponente_requisito13
 from app.excel.filler import fill_template
 from app.integrations.drive import DriveAccessError, DriveConfigError, download_file_bytes, list_proponentes
@@ -144,11 +147,14 @@ EVALUADORES_POR_REQUISITO: dict[int, EvaluadorProponente] = {
     8: evaluar_proponente_requisito8,
     9: evaluar_proponente_requisito9,
     10: evaluar_proponente_requisito10,
+    11: evaluar_proponente_requisito11,
+    12: evaluar_proponente_requisito12,
     13: evaluar_proponente_requisito13,
     14: evaluar_proponente_requisito14,
     15: evaluar_proponente_requisito15,
     16: evaluar_proponente_requisito16,
     17: evaluar_proponente_requisito17,
+    18: evaluar_proponente_requisito18,
 }
 
 
