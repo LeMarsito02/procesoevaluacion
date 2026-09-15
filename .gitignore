@@ -1,0 +1,23 @@
+# Python
+Backend/venv/
+__pycache__/
+*.pyc
+
+# Credenciales — nunca deben subirse al repo
+Backend/credentials/
+
+# Caché en disco (puede pesar varios GB, se regenera solo)
+Backend/cache/
+
+# Archivos generados en tiempo de ejecución
+Backend/storage/uploads/*
+Backend/storage/output/*
+!Backend/storage/uploads/.gitkeep
+!Backend/storage/output/.gitkeep
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Editor / OS
+.DS_Store

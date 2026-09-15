@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+import io
+import shutil
+import subprocess
+import tempfile
+import zipfile
+from pathlib import Path
+
+MAX_PROFUNDIDAD = 6
+
+# Algunos proponentes comprimen sus documentos en .rar en vez de .zip.
+# Python no tiene soporte nativo para RAR, así que usamos 7-Zip (que sabe
+# leer RAR, incluido RAR5) si está instalado en el servidor.
+_SIETE_ZIP = shutil.which("7z") or shutil.which("7za")
+
+
+def _extraer_rar(contenido: bytes, _profundidad: int, _ruta: str) -> dict[str, bytes]:
+    if not _SIETE_ZIP:
+        return {}
+
+    pdfs: dict[str, bytes] = {}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rar_path = Path(tmpdir) / "archivo.rar"
+        rar_path.write_bytes(contenido)
+        destino = Path(tmpdir) / "extraido"
+        destino.mkdir()
+
+        try:
+            subprocess.run(
+                [_SIETE_ZIP, "x", "-y", f"-o{destino}", str(rar_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=120,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return {}
+
+        for archivo in sorted(destino.rglob("*")):
+            if not archivo.is_file():
+                continue
+            relativo = archivo.relative_to(destino).as_posix()
+            ruta_completa = f"{_ruta}/{relativo}" if _ruta else relativo
+            lower = archivo.name.lower()
+            try:
+                data = archivo.read_bytes()
+            except OSError:
+                continue
+
+            if lower.endswith(".pdf"):
+                pdfs[ruta_completa] = data
+            elif lower.endswith(".zip"):
+                pdfs.update(extraer_pdfs(data, _profundidad + 1, ruta_completa))
+            elif lower.endswith(".rar"):
+                pdfs.update(_extraer_rar(data, _profundidad + 1, ruta_completa))
+
+    return pdfs
+
+
+def extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> dict[str, bytes]:
+    """Extrae recursivamente todos los PDF de un zip, incluyendo zips y rars
+    anidados dentro de él (a cualquier profundidad, mezclados)."""
+    if _profundidad > MAX_PROFUNDIDAD:
+        return {}
+
+    pdfs: dict[str, bytes] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                nombre = info.filename
+                ruta_completa = f"{_ruta}/{nombre}" if _ruta else nombre
+                try:
+                    contenido = zf.read(info)
+                except Exception:  # noqa: BLE001
+                    continue
+
+                lower = nombre.lower()
+                if lower.endswith(".pdf"):
+                    pdfs[ruta_completa] = contenido
+                elif lower.endswith(".zip"):
+                    pdfs.update(extraer_pdfs(contenido, _profundidad + 1, ruta_completa))
+                elif lower.endswith(".rar"):
+                    pdfs.update(_extraer_rar(contenido, _profundidad + 1, ruta_completa))
+    except zipfile.BadZipFile:
+        # El nivel superior también podría venir como .rar en vez de .zip.
+        pdfs.update(_extraer_rar(zip_bytes, _profundidad, _ruta))
+
+    return pdfs
