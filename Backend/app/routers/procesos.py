@@ -16,6 +16,13 @@ from app.evaluacion.antecedentes import (
     evaluar_proponente_requisito16,
     evaluar_proponente_requisito17,
 )
+from app.evaluacion.camara_comercio import (
+    evaluar_proponente_requisito6,
+    evaluar_proponente_requisito7,
+    evaluar_proponente_requisito8,
+    evaluar_proponente_requisito9,
+    evaluar_proponente_requisito10,
+)
 from app.evaluacion.copnia import evaluar_proponente_requisito2, evaluar_proponente_requisito3
 from app.evaluacion.formato1 import evaluar_proponente
 from app.evaluacion.proponente_plural import evaluar_proponente_requisito4
@@ -132,6 +139,11 @@ EVALUADORES_POR_REQUISITO: dict[int, EvaluadorProponente] = {
     3: evaluar_proponente_requisito3,
     4: evaluar_proponente_requisito4,
     5: evaluar_proponente_requisito5,
+    6: evaluar_proponente_requisito6,
+    7: evaluar_proponente_requisito7,
+    8: evaluar_proponente_requisito8,
+    9: evaluar_proponente_requisito9,
+    10: evaluar_proponente_requisito10,
     13: evaluar_proponente_requisito13,
     14: evaluar_proponente_requisito14,
     15: evaluar_proponente_requisito15,

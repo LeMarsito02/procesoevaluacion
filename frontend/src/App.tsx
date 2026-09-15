@@ -554,6 +554,66 @@ function App() {
 
           <RequisitoSection
             numero={14}
+            requisito={6}
+            titulo="Requisito 6: Certificado de Existencia y Representación Legal"
+            descripcion={`N.A. si es persona natural. Busca el Certificado de Existencia y Representación Legal (Cámara de Comercio) por título interno y verifica que su fecha de expedición no sea mayor a 1 mes antes del cierre. Si es Consorcio/UT, evalúa uno por cada integrante persona jurídica encontrado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Certificado de Existencia de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(6, r)}
+          />
+
+          <RequisitoSection
+            numero={15}
+            requisito={7}
+            titulo="Requisito 7: Objeto Social acorde con el objeto de la Licitación"
+            descripcion={`N.A. si es persona natural. Usa el mismo Certificado de Existencia del Requisito 6 y compara el objeto social de la empresa con el objeto del proceso. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Objeto Social de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(7, r)}
+          />
+
+          <RequisitoSection
+            numero={16}
+            requisito={8}
+            titulo="Requisito 8: Facultades del Representante Legal"
+            descripcion={`N.A. si es persona natural. Usa el mismo Certificado de Existencia y verifica si indica expresamente que el representante legal no tiene restricción de cuantía para contratar. Cuando no se puede confirmar (o hay un límite mencionado), queda para revisión humana — este requisito casi siempre necesita una mirada del abogado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Facultades de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(8, r)}
+          />
+
+          <RequisitoSection
+            numero={17}
+            requisito={9}
+            titulo="Requisito 9: Registro Único de Proponentes - RUP"
+            descripcion={`Busca el RUP (Cámara de Comercio) por título interno y verifica que su fecha de expedición no sea mayor a 1 mes antes del cierre. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar RUP de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(9, r)}
+          />
+
+          <RequisitoSection
+            numero={18}
+            requisito={10}
+            titulo="Requisito 10: Sanciones (dentro del RUP)"
+            descripcion="El RUP no trae una sección de sanciones/multas identificable automáticamente por texto, así que este requisito siempre queda para revisión humana — solo confirma que el RUP se haya encontrado."
+            textoBoton="Evaluar Sanciones (RUP) de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(10, r)}
+          />
+
+          <RequisitoSection
+            numero={19}
             requisito={13}
             titulo="Requisito 13: Registro Único Tributario - RUT"
             descripcion="El abogado confirmó que este requisito no se exige actualmente en este proceso — se marca N.A. para todos los proponentes automáticamente, sin necesidad de revisar documentos."
