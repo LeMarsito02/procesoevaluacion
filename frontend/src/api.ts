@@ -55,6 +55,7 @@ export interface ResultadoRequisito {
   lotes_encontrados: string[]
   numero_proceso_encontrado: boolean
   objeto_relacionado: boolean | null
+  tipo_proponente: 'persona_natural' | 'persona_juridica' | 'consorcio' | 'union_temporal' | 'otro' | null
   firma_detectada: boolean
   representante_legal: string | null
   firma_nombre_certificado: string | null
@@ -147,6 +148,7 @@ function resultadoVacio(requisito: number, proponente: Proponente, error: string
     lotes_encontrados: [],
     numero_proceso_encontrado: false,
     objeto_relacionado: null,
+    tipo_proponente: null,
     firma_detectada: false,
     representante_legal: null,
     firma_nombre_certificado: null,

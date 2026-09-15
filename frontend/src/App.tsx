@@ -481,6 +481,19 @@ function App() {
 
           <RequisitoSection
             numero={8}
+            requisito={4}
+            titulo="Requisito 4: Conformación de Proponente Plural (Formato 2)"
+            descripcion={`N.A. automático si el proponente es persona natural o jurídica individual. Si es Consorcio o Unión Temporal, busca el Formato 2 por su título interno y verifica que los integrantes sumen 100% de participación y que se pueda identificar al representante legal designado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Conformación de Proponente Plural de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(4, r)}
+            renderExtraCumple={(r) => r.tipo_proponente ?? '—'}
+          />
+
+          <RequisitoSection
+            numero={9}
             requisito={13}
             titulo="Requisito 13: Registro Único Tributario - RUT"
             descripcion="El abogado confirmó que este requisito no se exige actualmente en este proceso — se marca N.A. para todos los proponentes automáticamente, sin necesidad de revisar documentos."

@@ -29,7 +29,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 12
+VERSION_LOGICA = 14
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -242,7 +242,12 @@ TIPO_PROPONENTE_PATRONES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"CONSORCIO"), "consorcio"),
     (re.compile(r"OTRO"), "otro"),
 ]
-_MARCA_X_RE = re.compile(r"_[Xx]|[Xx]_")
+# La "X" que marca la casilla no siempre está pegada a un guion bajo
+# ("__X_"): se vieron documentos reales donde va suelta con solo un espacio
+# ("Consorcio X"). Se exige que no haya letras pegadas a los lados (con
+# guiones bajos o espacios sí) para no confundirla con la "x" que aparece
+# dentro de palabras como "extranjera".
+_MARCA_X_RE = re.compile(r"(?<![A-Za-zÑÁÉÍÓÚñáéíóú])[Xx](?![A-Za-zÑÁÉÍÓÚñáéíóú])")
 
 # La celda con el checklist de tipo de proponente trae las opciones juntas
 # ("Persona natural__ Persona jurídica... Unión temporal___ Consorcio _X__
@@ -280,17 +285,38 @@ def _extraer_tipo_proponente(pdf: pdfplumber.PDF) -> str | None:
     return None
 
 
+# La declaración de apertura de la carta ya dice explícitamente "en mi
+# calidad de representante legal DEL CONSORCIO ..." o "DE LA UNIÓN TEMPORAL
+# ...", y se usa como señal PRIORITARIA sobre la casilla "El Proponente es:"
+# para detectar proponente plural: se encontró un caso real (Consorcio AJ
+# 037) donde el proponente dejó marcada por error "Persona jurídica
+# nacional" en la casilla, siendo evidentemente un Consorcio según su propia
+# carta y su Formato 2 de conformación. Confiar en una casilla mal
+# diligenciada y omitir por eso el Requisito 4 (Conformación de Proponente
+# Plural) es un error más grave que evaluarlo de más, así que la
+# declaración firmada gana cuando hay conflicto. No se usa para distinguir
+# persona natural de jurídica porque ahí no hay ese mismo riesgo.
+TIPO_PROPONENTE_FALLBACK_RE = re.compile(r"REPRESENTANTE LEGAL DEL?(?:\s+LA)?\s+(UNION TEMPORAL|CONSORCIO)\b")
+
+_TIPO_PROPONENTE_FALLBACK_MAP = {"CONSORCIO": "consorcio", "UNION TEMPORAL": "union_temporal"}
+
+
 def obtener_tipo_proponente(pdfs: dict[str, bytes]) -> str | None:
-    """Encuentra el Formato 1 dentro de los PDF del proponente y lee su
-    casilla 'El Proponente es:'. Lo usan otros requisitos (4, 5, 6, 12,
-    14-17) que necesitan saber si el proponente es individual o plural, sin
-    tener que repetir la búsqueda del Formato 1 en cada uno."""
+    """Encuentra el Formato 1 dentro de los PDF del proponente y determina si
+    es persona natural, jurídica, consorcio o unión temporal. Lo usan otros
+    requisitos (4, 5, 6, 12, 14-17) que necesitan saber si el proponente es
+    individual o plural, sin tener que repetir la búsqueda del Formato 1 en
+    cada uno."""
     encontrado = encontrar_formato1(pdfs)
     if encontrado is None:
         return None
     _, contenido = encontrado
     with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-        return _extraer_tipo_proponente(pdf)
+        tipo_casilla = _extraer_tipo_proponente(pdf)
+        texto = "\n".join((page.extract_text() or "") for page in pdf.pages[:2])
+    match = TIPO_PROPONENTE_FALLBACK_RE.search(_norm(texto))
+    tipo_declaracion = _TIPO_PROPONENTE_FALLBACK_MAP[match.group(1)] if match else None
+    return tipo_declaracion or tipo_casilla
 
 
 def _tokens_nombre(nombre: str) -> set[str]:

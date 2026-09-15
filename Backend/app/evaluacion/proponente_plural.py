@@ -40,15 +40,17 @@ PAGINAS_A_REVISAR = 6
 
 # "5. EL REPRESENTANTE DEL CONSORCIO ES ADRIANA MARCELA ROJAS PRIETO
 # IDENTIFICADA CON CEDULA DE CIUDADANIA 52.371.321 DE BOGOTA D.C., QUIEN..."
-# También se vieron variantes reales sin coma antes de "IDENTIFICADO" y sin
-# la palabra "IDENTIFICADO" (solo "CON CEDULA DE CIUDADANIA # ...").
+# También se vieron variantes reales sin coma antes de "IDENTIFICADO", sin
+# la palabra "IDENTIFICADO" (solo "CON CEDULA DE CIUDADANIA # ..."), y con
+# "C. C. No." en vez de "CEDULA DE CIUDADANIA" escrito completo.
+_CEDULA_RE = r"CON\s*(?:CEDULA DE CIUDADANIA|C\.?\s*C\.?)\s*(?:#|NO\.?)?\s*([\d.,]+)"
 REPRESENTANTE_RE = re.compile(
-    r"REPRESENTANTE(?:\s+PRINCIPAL)? (?:DEL CONSORCIO|DE LA UNION TEMPORAL) ES:?\s+"
-    r"([A-ZÑ][A-ZÑ .]+?),?\s*(?:IDENTIFICAD[OA]\s+)?CON CEDULA DE CIUDADANIA\s*(?:#|NO\.?)?\s*([\d.,]+)"
+    rf"REPRESENTANTE(?:\s+PRINCIPAL)? (?:DEL CONSORCIO|DE LA UNION TEMPORAL) ES:?\s+"
+    rf"([A-ZÑ][A-ZÑ .]+?),?\s*(?:IDENTIFICAD[OA]\s+)?{_CEDULA_RE}"
 )
 REPRESENTANTE_SUPLENTE_RE = re.compile(
-    r"REPRESENTANTE SUPLENTE (?:DEL CONSORCIO|DE LA UNION TEMPORAL) ES:?\s+"
-    r"([A-ZÑ][A-ZÑ .]+?),?\s*(?:IDENTIFICAD[OA]\s+)?CON CEDULA DE CIUDADANIA\s*(?:#|NO\.?)?\s*([\d.,]+)"
+    rf"REPRESENTANTE SUPLENTE (?:DEL CONSORCIO|DE LA UNION TEMPORAL) ES:?\s+"
+    rf"([A-ZÑ][A-ZÑ .]+?),?\s*(?:IDENTIFICAD[OA]\s+)?{_CEDULA_RE}"
 )
 
 # La tabla de integrantes sale desordenada en texto plano (nombres partidos
@@ -59,7 +61,19 @@ TABLA_INTEGRANTES_RE = re.compile(
     r"(?:EL TOTAL DE LA COLUMNA|\d+\.\s*(?:EL CONSORCIO|LA UNION TEMPORAL) SE DENOMINA)",
     re.DOTALL,
 )
-PORCENTAJE_RE = re.compile(r"(\d{1,3}(?:[.,]\d+)?)\s*%")
+PORCENTAJE_CON_SIGNO_RE = re.compile(r"(\d{1,3}(?:[.,]\d+)?)\s*%")
+
+# El símbolo "%" no siempre sobrevive la extracción de texto (se vio un caso
+# real donde la tabla quedó como "MIGUEL MORALES 90 INGENIERIA SAS ... 10",
+# sin "%" pegado a ningún número). Este respaldo solo se usa cuando la tabla
+# NO trae ningún "%" en absoluto — si trae al menos uno, se asume que el
+# documento sí marca los porcentajes con "%" y cualquier número suelto es
+# otra cosa (se vio un caso real donde el NIT "901.477.828-7" quedó pegado
+# en la misma celda del integrante y un respaldo sin esta restricción lo
+# contaba como "901%"). El lookahead exige que el número no siga
+# encadenado a más dígitos/puntos/comas/letras, para no partir un NIT o un
+# nombre como "9D SOLUCIONES...".
+PORCENTAJE_SIN_SIGNO_RE = re.compile(r"\b(\d{1,3})(?![\d.,A-Za-zÑÁÉÍÓÚñáéíóú])")
 
 TOLERANCIA_SUMA_PORCENTAJES = 1.5
 
@@ -101,7 +115,28 @@ def extraer_datos_plural(texto: str) -> DatosProponentePlural:
     porcentajes: list[float] = []
     tabla_match = TABLA_INTEGRANTES_RE.search(texto_norm)
     if tabla_match:
-        porcentajes = [float(p.replace(",", ".")) for p in PORCENTAJE_RE.findall(tabla_match.group(1))]
+        # La marca de pie de nota "(1)" (referenciando la aclaración de que
+        # deben sumar 100%) a veces queda pegada al final de la tabla misma,
+        # no solo en el encabezado — se quita antes de leer números para que
+        # no se cuente como un "1%" adicional. Algunas tablas también traen
+        # su propia fila "TOTAL 100%", que si no se descarta se suma aparte
+        # y duplica el resultado (ej. 90% + 10% + 100% = 200%).
+        # Limitación conocida: en PDF de varias columnas, pdfplumber a veces
+        # intercala el texto de la nota al pie ("...LA SUMA DE LOS
+        # PORCENTAJES...DEBE SER IGUAL AL 100%.") en medio de la tabla en
+        # vez de dejarlo después, y ese "100%" de la nota se cuenta como si
+        # fuera un integrante más. No se detectó una forma confiable de
+        # distinguirlo del contenido real sin un parseo de tabla más
+        # sofisticado (por coordenadas) — cuando pasa, la suma da mal y el
+        # caso queda (correctamente) para revisión humana, aunque el motivo
+        # mostrado puede no reflejar el porcentaje real.
+        contenido_tabla = re.sub(r"\(\d+\)", "", tabla_match.group(1))
+        contenido_tabla = re.sub(r"TOTAL\s*\d{1,3}(?:[.,]\d+)?\s*%?", "", contenido_tabla)
+        con_signo = PORCENTAJE_CON_SIGNO_RE.findall(contenido_tabla)
+        if con_signo:
+            porcentajes = [float(p.replace(",", ".")) for p in con_signo]
+        else:
+            porcentajes = [float(p) for p in PORCENTAJE_SIN_SIGNO_RE.findall(contenido_tabla)]
 
     principal_match = REPRESENTANTE_RE.search(texto_norm)
     representante_principal = None

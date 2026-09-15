@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.evaluacion.copnia import evaluar_proponente_requisito2, evaluar_proponente_requisito3
 from app.evaluacion.formato1 import evaluar_proponente
+from app.evaluacion.proponente_plural import evaluar_proponente_requisito4
 from app.evaluacion.trivial import evaluar_proponente_requisito13
 from app.excel.filler import fill_template
 from app.integrations.drive import DriveAccessError, DriveConfigError, download_file_bytes, list_proponentes
@@ -122,6 +123,7 @@ EVALUADORES_POR_REQUISITO: dict[int, EvaluadorProponente] = {
     1: evaluar_proponente,
     2: evaluar_proponente_requisito2,
     3: evaluar_proponente_requisito3,
+    4: evaluar_proponente_requisito4,
     13: evaluar_proponente_requisito13,
 }
 
