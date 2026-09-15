@@ -8,9 +8,13 @@ import pdfplumber
 
 from app.evaluacion.formato1 import (
     _clave_cache,
+    _extraer_nombre_apertura,
+    _extraer_representante_legal,
     _guardar_cache,
     _leer_cache,
     _norm,
+    encontrar_formato1,
+    extraer_cedula_representante,
     obtener_tipo_proponente,
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
@@ -223,9 +227,7 @@ def evaluar_requisito4(pdfs: dict[str, bytes], tipo_proponente: str | None) -> R
     return ResultadoEvaluacionPlural(cumple=cumple, motivo=motivo, datos=datos, archivo_formato2=archivo_formato2)
 
 
-def obtener_personas_a_verificar(
-    pdfs: dict[str, bytes], tipo_proponente: str | None, representante_individual: str | None
-) -> list[tuple[str, str | None]]:
+def obtener_personas_a_verificar(pdfs: dict[str, bytes], tipo_proponente: str | None) -> list[tuple[str, str | None]]:
     """Devuelve la lista de personas cuyos antecedentes (REDAM, Contraloría,
     Procuraduría, Policía, RNMC) hay que verificar: el representante legal
     declarado en el Formato 1 si el proponente es individual, o el
@@ -234,9 +236,17 @@ def obtener_personas_a_verificar(
     integrante. Cada elemento es (nombre, cédula-o-None); si no se pudo
     identificar a nadie, devuelve una lista vacía."""
     if tipo_proponente not in ("consorcio", "union_temporal"):
-        if representante_individual:
-            return [(representante_individual, None)]
-        return []
+        encontrado_f1 = encontrar_formato1(pdfs)
+        if encontrado_f1 is None:
+            return []
+        _, contenido = encontrado_f1
+        with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+            texto = "\n".join((page.extract_text() or "") for page in pdf.pages)
+        texto_norm = _norm(texto)
+        nombre = _extraer_representante_legal(texto_norm) or _extraer_nombre_apertura(texto_norm)
+        if not nombre:
+            return []
+        return [(nombre, extraer_cedula_representante(texto_norm))]
 
     encontrado = encontrar_formato2(pdfs)
     if encontrado is None:

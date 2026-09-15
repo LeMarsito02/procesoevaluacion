@@ -127,15 +127,18 @@ def _codigo_variantes(codigo_proceso: str) -> list[re.Pattern[str]]:
     return [_codigo_regex(v) for v in variantes if v]
 
 
-# "Nombre del representante legal JUAN JOSE ARAQUE BLANCO   C. C. No. ..."
-# Algunos formatos meten un ":" o "_" (raya para llenar a mano) entre
-# "LEGAL" y el nombre, ej. "LEGAL: LAYTON..." o "LEGAL _ DANIELA...". Otros
-# omiten "LEGAL" y ponen en cambio la entidad, ej. "REPRESENTANTE DEL
-# CONSORCIO: JUAN...". Y el corte antes de "C.C." tolera tanto espacio como
-# dos puntos después ("C. C. No." o "C. C.:"). Esto suele aparecer cerca del
-# cierre/firma de la carta.
+# "Nombre del representante legal JUAN JOSE ARAQUE BLANCO   C. C. No.
+# 77.031.208 DE VALLEDUPAR..." Algunos formatos meten un ":" o "_" (raya
+# para llenar a mano) entre "LEGAL" y el nombre, ej. "LEGAL: LAYTON..." o
+# "LEGAL _ DANIELA...". Otros omiten "LEGAL" y ponen en cambio la entidad,
+# ej. "REPRESENTANTE DEL CONSORCIO: JUAN...". Y el corte antes de "C.C."
+# tolera tanto espacio como dos puntos después ("C. C. No." o "C. C.:").
+# Esto suele aparecer cerca del cierre/firma de la carta. El segundo grupo
+# captura la cédula, usada por los requisitos de antecedentes (REDAM,
+# Contraloría, etc.) que identifican por número de documento.
 NOMBRE_REPRESENTANTE_RE = re.compile(
-    r"NOMBRE DEL REPRESENTANTE(?:\s+LEGAL|\s+DEL?\s+\w+)?\s*[\s:_]*([A-ZÑÁÉÍÓÚ][A-ZÑÁÉÍÓÚ.\s]*?)\s+C\.?\s?C\.?[\s:]"
+    r"NOMBRE DEL REPRESENTANTE(?:\s+LEGAL|\s+DEL?\s+\w+)?\s*[\s:_]*([A-ZÑÁÉÍÓÚ][A-ZÑÁÉÍÓÚ.\s]*?)\s+"
+    r"C\.?\s?C\.?[\s:]+(?:NO\.?)?\s*([\d.,]+)?"
 )
 
 # "Estimados señores: JUAN AMADO LIZARAZO, en mi calidad de representante
@@ -168,6 +171,18 @@ def _extraer_representante_legal(texto_norm: str) -> str | None:
         return None
     nombre = re.sub(r"\s+", " ", match.group(1)).strip(" .")
     return nombre or None
+
+
+def extraer_cedula_representante(texto_norm: str) -> str | None:
+    """Cédula del representante legal, tomada del mismo bloque de cierre
+    ('Nombre del representante legal ... C.C. No. 77.031.208 ...') que ya
+    usa `_extraer_representante_legal`. La usan los requisitos de
+    antecedentes (REDAM, Contraloría, Procuraduría, Policía, RNMC) que
+    identifican a la persona por número de documento."""
+    match = NOMBRE_REPRESENTANTE_RE.search(texto_norm)
+    if not match or not match.group(2):
+        return None
+    return match.group(2)
 
 
 def _extraer_nombre_apertura(texto_norm: str) -> str | None:

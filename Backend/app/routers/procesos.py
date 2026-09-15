@@ -9,6 +9,13 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
+from app.evaluacion.antecedentes import (
+    evaluar_proponente_requisito5,
+    evaluar_proponente_requisito14,
+    evaluar_proponente_requisito15,
+    evaluar_proponente_requisito16,
+    evaluar_proponente_requisito17,
+)
 from app.evaluacion.copnia import evaluar_proponente_requisito2, evaluar_proponente_requisito3
 from app.evaluacion.formato1 import evaluar_proponente
 from app.evaluacion.proponente_plural import evaluar_proponente_requisito4
@@ -124,7 +131,12 @@ EVALUADORES_POR_REQUISITO: dict[int, EvaluadorProponente] = {
     2: evaluar_proponente_requisito2,
     3: evaluar_proponente_requisito3,
     4: evaluar_proponente_requisito4,
+    5: evaluar_proponente_requisito5,
     13: evaluar_proponente_requisito13,
+    14: evaluar_proponente_requisito14,
+    15: evaluar_proponente_requisito15,
+    16: evaluar_proponente_requisito16,
+    17: evaluar_proponente_requisito17,
 }
 
 

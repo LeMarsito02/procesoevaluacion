@@ -494,6 +494,66 @@ function App() {
 
           <RequisitoSection
             numero={9}
+            requisito={5}
+            titulo="Requisito 5: REDAM (Registro de Deudores Alimentarios Morosos)"
+            descripcion={`Busca el certificado REDAM del representante legal (y del suplente, si es Consorcio/UT) por su título interno, y verifica que confirme que no está inscrito como deudor alimentario moroso. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar REDAM de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(5, r)}
+          />
+
+          <RequisitoSection
+            numero={10}
+            requisito={14}
+            titulo="Requisito 14: Boletín de Responsables Fiscales - Contraloría"
+            descripcion={`Busca el certificado de la Contraloría (Boletín de Responsables Fiscales - SIBOR) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no está reportado como responsable fiscal. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Contraloría de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(14, r)}
+          />
+
+          <RequisitoSection
+            numero={11}
+            requisito={15}
+            titulo="Requisito 15: Antecedentes Disciplinarios - Procuraduría"
+            descripcion={`Busca el certificado de la Procuraduría (Registro de Sanciones e Inhabilidades - SIRI) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no registra sanciones ni inhabilidades vigentes. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Procuraduría de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(15, r)}
+          />
+
+          <RequisitoSection
+            numero={12}
+            requisito={16}
+            titulo="Requisito 16: Antecedentes Judiciales - Policía Nacional"
+            descripcion={`Busca el certificado de la Policía Nacional (antecedentes penales y requerimientos judiciales) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no tiene asuntos pendientes con las autoridades judiciales. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar Policía Nacional de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(16, r)}
+          />
+
+          <RequisitoSection
+            numero={13}
+            requisito={17}
+            titulo="Requisito 17: Multas - RNMC (Código Nacional de Policía)"
+            descripcion={`Busca el certificado del Registro Nacional de Medidas Correctivas (RNMC) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no tiene medidas correctivas pendientes por cumplir. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
+            textoBoton="Evaluar RNMC de todos los proponentes"
+            proponentes={proponentes}
+            construirPayload={construirPayload}
+            onAbrirVisor={abrirVisor}
+            onResultadosChange={(r) => actualizarResultados(17, r)}
+          />
+
+          <RequisitoSection
+            numero={14}
             requisito={13}
             titulo="Requisito 13: Registro Único Tributario - RUT"
             descripcion="El abogado confirmó que este requisito no se exige actualmente en este proceso — se marca N.A. para todos los proponentes automáticamente, sin necesidad de revisar documentos."
