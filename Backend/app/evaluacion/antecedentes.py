@@ -138,61 +138,67 @@ def evaluar_antecedente(
     return ResultadoEvaluacionAntecedente(cumple=cumple, motivo=motivo, archivo=archivo_evaluado)
 
 
-def _hacer_evaluador_proponente(config: AntecedenteConfig) -> Callable[[Proponente, ProcesoDocumentoBase], ResultadoRequisito]:
-    def evaluar_proponente_antecedente(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
-        base = {
-            "hoja": proponente.hoja,
-            "numero_orden": proponente.numero_orden,
-            "nombre_proponente": proponente.nombre_proponente,
-            "requisito": config.requisito,
-        }
+def _evaluar_proponente_antecedente(
+    config: AntecedenteConfig, proponente: Proponente, proceso: ProcesoDocumentoBase
+) -> ResultadoRequisito:
+    """Lógica compartida por los 5 evaluadores de antecedentes. No se expone
+    directamente como evaluador de un requisito: cada uno de
+    `evaluar_proponente_requisitoN` de más abajo es una función de módulo
+    (no un closure) que la llama con su propio config, porque
+    ProcessPoolExecutor necesita poder *picklear* la función por su nombre
+    calificado — un closure generado dinámicamente no se puede serializar y
+    revienta con PicklingError al enviarlo al pool de procesos."""
+    base = {
+        "hoja": proponente.hoja,
+        "numero_orden": proponente.numero_orden,
+        "nombre_proponente": proponente.nombre_proponente,
+        "requisito": config.requisito,
+    }
 
-        try:
-            metadata = get_file_metadata(proponente.drive_file_id)
-        except Exception:  # noqa: BLE001
-            metadata = None
+    try:
+        metadata = get_file_metadata(proponente.drive_file_id)
+    except Exception:  # noqa: BLE001
+        metadata = None
 
-        md5 = metadata.get("md5Checksum") if metadata else None
-        clave_cache = _clave_cache(proponente, proceso, md5, requisito=config.requisito)
-        if md5:
-            cacheado = _leer_cache(clave_cache)
-            if cacheado is not None:
-                return cacheado
+    md5 = metadata.get("md5Checksum") if metadata else None
+    clave_cache = _clave_cache(proponente, proceso, md5, requisito=config.requisito)
+    if md5:
+        cacheado = _leer_cache(clave_cache)
+        if cacheado is not None:
+            return cacheado
 
-        def finalizar(resultado: ResultadoRequisito, *, cacheable: bool) -> ResultadoRequisito:
-            if cacheable and md5:
-                _guardar_cache(clave_cache, resultado)
-            return resultado
+    def finalizar(resultado: ResultadoRequisito, *, cacheable: bool) -> ResultadoRequisito:
+        if cacheable and md5:
+            _guardar_cache(clave_cache, resultado)
+        return resultado
 
-        try:
-            zip_bytes = download_file_bytes(proponente.drive_file_id, metadata=metadata)
-        except Exception as exc:  # noqa: BLE001
-            return ResultadoRequisito(**base, error=f"No se pudo descargar el archivo de Drive: {exc}")
+    try:
+        zip_bytes = download_file_bytes(proponente.drive_file_id, metadata=metadata)
+    except Exception as exc:  # noqa: BLE001
+        return ResultadoRequisito(**base, error=f"No se pudo descargar el archivo de Drive: {exc}")
 
-        pdfs = extraer_pdfs(zip_bytes)
-        if not pdfs:
-            return finalizar(
-                ResultadoRequisito(**base, error="El archivo del proponente no contiene PDFs legibles (¿zip dañado?)."),
-                cacheable=False,
-            )
-
-        tipo_proponente = obtener_tipo_proponente(pdfs)
-        personas = obtener_personas_a_verificar(pdfs, tipo_proponente)
-        resultado = evaluar_antecedente(pdfs, config, personas)
-
+    pdfs = extraer_pdfs(zip_bytes)
+    if not pdfs:
         return finalizar(
-            ResultadoRequisito(
-                **base,
-                cumple=resultado.cumple,
-                motivo=resultado.motivo,
-                archivo_evaluado=resultado.archivo,
-                archivos_disponibles=sorted(pdfs.keys()) if resultado.archivo is None else [],
-                tipo_proponente=tipo_proponente,
-            ),
-            cacheable=True,
+            ResultadoRequisito(**base, error="El archivo del proponente no contiene PDFs legibles (¿zip dañado?)."),
+            cacheable=False,
         )
 
-    return evaluar_proponente_antecedente
+    tipo_proponente = obtener_tipo_proponente(pdfs)
+    personas = obtener_personas_a_verificar(pdfs, tipo_proponente)
+    resultado = evaluar_antecedente(pdfs, config, personas)
+
+    return finalizar(
+        ResultadoRequisito(
+            **base,
+            cumple=resultado.cumple,
+            motivo=resultado.motivo,
+            archivo_evaluado=resultado.archivo,
+            archivos_disponibles=sorted(pdfs.keys()) if resultado.archivo is None else [],
+            tipo_proponente=tipo_proponente,
+        ),
+        cacheable=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -320,8 +326,21 @@ CONFIG_RNMC = AntecedenteConfig(
     extraer_identidad=_identidad_rnmc,
 )
 
-evaluar_proponente_requisito5 = _hacer_evaluador_proponente(CONFIG_REDAM)
-evaluar_proponente_requisito14 = _hacer_evaluador_proponente(CONFIG_CONTRALORIA)
-evaluar_proponente_requisito15 = _hacer_evaluador_proponente(CONFIG_PROCURADURIA)
-evaluar_proponente_requisito16 = _hacer_evaluador_proponente(CONFIG_POLICIA)
-evaluar_proponente_requisito17 = _hacer_evaluador_proponente(CONFIG_RNMC)
+def evaluar_proponente_requisito5(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
+    return _evaluar_proponente_antecedente(CONFIG_REDAM, proponente, proceso)
+
+
+def evaluar_proponente_requisito14(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
+    return _evaluar_proponente_antecedente(CONFIG_CONTRALORIA, proponente, proceso)
+
+
+def evaluar_proponente_requisito15(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
+    return _evaluar_proponente_antecedente(CONFIG_PROCURADURIA, proponente, proceso)
+
+
+def evaluar_proponente_requisito16(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
+    return _evaluar_proponente_antecedente(CONFIG_POLICIA, proponente, proceso)
+
+
+def evaluar_proponente_requisito17(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
+    return _evaluar_proponente_antecedente(CONFIG_RNMC, proponente, proceso)
