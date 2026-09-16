@@ -14,6 +14,7 @@ from app.evaluacion.formato1 import (
     _leer_cache,
     _nombres_coinciden,
     _norm,
+    es_titulo_formato1,
     encontrar_formato1,
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
@@ -31,6 +32,10 @@ PISTAS_NOMBRE_COPNIA = ("copnia",)
 # fusionar cédula + tarjeta profesional + COPNIA + REDAM en un solo archivo,
 # así que el certificado puede no estar en la primera página.
 PAGINAS_A_REVISAR = 6
+# Hay proponentes que anexan el COPNIA de quien avala la oferta al final del
+# mismo PDF de la carta de presentación (se confirmó uno real en la página 8,
+# tras las 4 de la carta y 3 escaneadas): en ese archivo se revisa más.
+PAGINAS_A_REVISAR_EN_CARTA = 20
 
 NOMBRE_PROFESIONAL_RE = re.compile(r"QUE\s+([A-ZÑÁÉÍÓÚ][A-ZÑÁÉÍÓÚ\s.]+?),\s*IDENTIFICAD[OA]")
 PROFESION_RE = re.compile(r"EN LA PROFESI[OÓ]N DE\s+([A-ZÑÁÉÍÓÚ][A-ZÑÁÉÍÓÚ\s]+?)\s+CON MATRICULA")
@@ -72,12 +77,18 @@ def encontrar_copnias(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
         contenido = pdfs[nombre]
         try:
             with abrir_pdf(contenido) as pdf:
-                for page in pdf.pages[:PAGINAS_A_REVISAR]:
+                limite = PAGINAS_A_REVISAR
+                for indice, page in enumerate(pdf.pages[:PAGINAS_A_REVISAR_EN_CARTA]):
+                    if indice >= limite:
+                        break
                     texto = page.extract_text() or ""
-                    if TITULO_COPNIA_RE.search(_norm(texto)):
+                    page.flush_cache()
+                    texto_norm = _norm(texto)
+                    if indice == 0 and es_titulo_formato1(texto_norm):
+                        limite = PAGINAS_A_REVISAR_EN_CARTA
+                    if TITULO_COPNIA_RE.search(texto_norm):
                         encontrados.append((nombre, texto))
                         break
-                    page.flush_cache()
         except Exception:  # noqa: BLE001
             continue
     return encontrados
