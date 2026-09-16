@@ -13,12 +13,38 @@ import pdfplumber
 
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from app.procesamiento.pdf_utils import extraer_texto
+from app.procesamiento.pdf_utils import abrir_pdf, extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # El título interno del documento es siempre el mismo, sin importar cómo se
 # llame el archivo dentro del zip del proponente.
-TITULO_RE = re.compile(r"FORMATO\s*1\b.{0,15}CARTA\s+DE\s+PRESENTAC")
+TITULO_RE = re.compile(r"FORMATO\s*(?:NO\.?\s*)?1\b.{0,15}CARTA\s+DE\s+PRESENTAC")
+
+# Hay proponentes que no copian el "FORMATO 1" y titulan el documento solo
+# "CARTA DE PRESENTACION DE LA OFERTA". Esa frase también aparece citada en
+# otros documentos ("con la firma de la carta de presentación de la
+# propuesta..." en el Pacto de Transparencia, "debe aportar el Anexo No. 1 -
+# Carta de presentación..." en el formulario del SECOP), así que sin el
+# número del formato solo se acepta como título de una carta de verdad: en
+# el encabezado, antes del "SEÑORES" con el que arranca el cuerpo, y ese
+# saludo tiene que estar al principio del documento.
+TITULO_SIN_NUMERO_RE = re.compile(r"(?<!FIRMA DE LA )CARTA DE PRESENTACION DE LA (?:OFERTA|PROPUESTA)")
+ENCABEZADO_FIN_RE = re.compile(r"\bSENORES\b")
+LARGO_MAXIMO_ENCABEZADO = 600
+
+
+def en_encabezado(titulo_re: re.Pattern[str], texto_norm: str) -> bool:
+    """True si `titulo_re` aparece en el encabezado de una carta: antes del
+    primer "SEÑORES", que a su vez debe estar en los primeros
+    LARGO_MAXIMO_ENCABEZADO caracteres. Sin saludo no se acepta."""
+    fin = ENCABEZADO_FIN_RE.search(texto_norm)
+    if fin is None or fin.start() > LARGO_MAXIMO_ENCABEZADO:
+        return False
+    return titulo_re.search(texto_norm[: fin.start()]) is not None
+
+
+def es_titulo_formato1(texto_norm: str) -> bool:
+    return bool(TITULO_RE.search(texto_norm)) or en_encabezado(TITULO_SIN_NUMERO_RE, texto_norm)
 
 # Palabras que sugieren que un PDF podría ser el Formato 1; se revisan primero
 # para no tener que abrir decenas de PDF no relacionados en cada proponente.
@@ -30,7 +56,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 16
+VERSION_LOGICA = 17
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -92,7 +118,7 @@ def encontrar_formato1(pdfs: dict[str, bytes]) -> tuple[str, bytes] | None:
             texto = extraer_texto(contenido, max_paginas=2)
         except Exception:  # noqa: BLE001
             continue
-        if TITULO_RE.search(_norm(texto)):
+        if es_titulo_formato1(_norm(texto)):
             return nombre, contenido
     return None
 
@@ -328,7 +354,7 @@ def obtener_tipo_proponente(pdfs: dict[str, bytes]) -> str | None:
     if encontrado is None:
         return None
     _, contenido = encontrado
-    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+    with abrir_pdf(contenido) as pdf:
         tipo_casilla = _extraer_tipo_proponente(pdf)
         partes = []
         for page in pdf.pages[:2]:
@@ -411,7 +437,7 @@ class ResultadoEvaluacionFormato1:
 
 
 def evaluar_formato1(pdf_bytes: bytes, proceso: ProcesoDocumentoBase) -> ResultadoEvaluacionFormato1:
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+    with abrir_pdf(pdf_bytes) as pdf:
         texto_completo = ""
         tiene_imagen = False
         for page in pdf.pages:

@@ -1,8 +1,45 @@
 from __future__ import annotations
 
 import io
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pdfplumber
+from pdfplumber.utils.exceptions import PdfminerException
+
+
+def _reparar_pdf(contenido: bytes) -> bytes | None:
+    """Reescribe el PDF con pikepdf (qpdf), que quita el cifrado de solo
+    permisos y normaliza la estructura. Se confirmó con un Formato 1 real
+    (P-79) cifrado con un valor de permisos negativo que pdfminer no sabe
+    leer ("'L' format requires 0 <= number <= 4294967295"): tras reescribirlo
+    el texto sale completo."""
+    try:
+        import pikepdf
+
+        with pikepdf.open(io.BytesIO(contenido)) as pdf:
+            salida = io.BytesIO()
+            pdf.save(salida)
+            return salida.getvalue()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@contextmanager
+def abrir_pdf(contenido: bytes) -> Iterator[pdfplumber.PDF]:
+    """Igual que `pdfplumber.open`, pero si pdfminer no puede abrir el
+    archivo se intenta una vez más con una copia reparada. Solo se repara
+    cuando falla, para no alterar los PDF que ya se leen bien (ni sus firmas
+    digitales)."""
+    try:
+        pdf = pdfplumber.open(io.BytesIO(contenido))
+    except PdfminerException:
+        reparado = _reparar_pdf(contenido)
+        if reparado is None:
+            raise
+        pdf = pdfplumber.open(io.BytesIO(reparado))
+    with pdf:
+        yield pdf
 
 
 def extraer_texto(contenido: bytes, max_paginas: int | None = None) -> str:
@@ -18,7 +55,7 @@ def extraer_texto(contenido: bytes, max_paginas: int | None = None) -> str:
     sola porque los workers se reutilizan entre peticiones, así que con
     varios proponentes grandes en la misma corrida el ahorro se
     multiplica en vez de perderse."""
-    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+    with abrir_pdf(contenido) as pdf:
         paginas = pdf.pages[:max_paginas] if max_paginas is not None else pdf.pages
         partes = []
         for page in paginas:
@@ -43,7 +80,7 @@ def buscar_pagina(contenido: bytes, coincide, max_paginas: int = 6) -> str | Non
     Bucaramanga) con el título en la carátula y la fecha de expedición en la
     página siguiente."""
     partes: list[str] = []
-    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+    with abrir_pdf(contenido) as pdf:
         for page in pdf.pages[:max_paginas]:
             partes.append(page.extract_text() or "")
             page.flush_cache()

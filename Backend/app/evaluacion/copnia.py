@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import io
 import re
 from dataclasses import dataclass
 from datetime import date
 
-import pdfplumber
 from dateutil.relativedelta import relativedelta
 
 from app.evaluacion.formato1 import (
@@ -20,7 +18,7 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from app.procesamiento.pdf_utils import extraer_texto
+from app.procesamiento.pdf_utils import abrir_pdf, extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # El certificado COPNIA (Consejo Profesional Nacional de Ingeniería) siempre
@@ -73,7 +71,7 @@ def encontrar_copnias(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
     for nombre in _orden_busqueda_copnia(list(pdfs.keys())):
         contenido = pdfs[nombre]
         try:
-            with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+            with abrir_pdf(contenido) as pdf:
                 for page in pdf.pages[:PAGINAS_A_REVISAR]:
                     texto = page.extract_text() or ""
                     if TITULO_COPNIA_RE.search(_norm(texto)):

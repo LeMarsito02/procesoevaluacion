@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 source venv/bin/activate
 
-for req in 9 10 11 12 13 14 15 16 17 18; do
+for req in ${REQUISITOS:-1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18}; do
   echo "=========================================="
   echo "REQUISITO $req"
   echo "=========================================="
@@ -21,7 +21,7 @@ for req in 9 10 11 12 13 14 15 16 17 18; do
     avail=$(free -m | awk '/Mem:/{print $7}')
   done
 
-  MAX_WORKERS=4 nohup uvicorn app.main:app --port 8000 > /tmp/backend.log 2>&1 &
+  MAX_WORKERS=${MAX_WORKERS:-2} nohup uvicorn app.main:app --port 8000 > .scratch/backend.log 2>&1 &
   BACKEND_PID=$!
   disown
 

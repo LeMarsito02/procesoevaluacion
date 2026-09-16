@@ -10,6 +10,7 @@ from app.evaluacion.formato1 import (
     _guardar_cache,
     _leer_cache,
     _norm,
+    en_encabezado,
     encontrar_formato1,
     extraer_cedula_representante,
     obtener_tipo_proponente,
@@ -23,7 +24,18 @@ from app.procesamiento.zip_utils import extraer_pdfs
 # ("Formato 2 - Conformación...", "Acuerdo Consorcial...", "4. Conformación
 # Consorcio...", etc. son solo nombres de archivo distintos para el mismo
 # documento).
-TITULO_FORMATO2_RE = re.compile(r"FORMATO\s*2\b.{0,15}CONFORMACION DE PROPONENTE PLURAL")
+TITULO_FORMATO2_RE = re.compile(r"FORMATO\s*(?:NO\.?\s*)?2\b.{0,15}CONFORMACION DE PROPONENTE PLURAL")
+
+# Muchos proponentes copian solo el subtítulo de la variante que usan
+# ("FORMATO 2A — DOCUMENTO DE CONFORMACION DE CONSORCIO", "FORMATO NO. 2B –
+# DOCUMENTO DE CONFORMACION DE UNION TEMPORAL") o ni siquiera el número.
+# Como esa frase puede citarse en otros documentos, sin el título general
+# solo se acepta en el encabezado (ver `en_encabezado`).
+SUBTITULO_FORMATO2_RE = re.compile(r"DOCUMENTO DE CONFORMACION DE(?:L)? (?:CONSORCIO|UNION TEMPORAL)")
+
+
+def es_titulo_formato2(texto_norm: str) -> bool:
+    return bool(TITULO_FORMATO2_RE.search(texto_norm)) or en_encabezado(SUBTITULO_FORMATO2_RE, texto_norm)
 
 PISTAS_NOMBRE_FORMATO2 = (
     "formato 2",
@@ -45,13 +57,16 @@ PAGINAS_A_REVISAR = 6
 # También se vieron variantes reales sin coma antes de "IDENTIFICADO", sin
 # la palabra "IDENTIFICADO" (solo "CON CEDULA DE CIUDADANIA # ..."), y con
 # "C. C. No." en vez de "CEDULA DE CIUDADANIA" escrito completo.
-_CEDULA_RE = r"CON\s*(?:CEDULA DE CIUDADANIA|C\.?\s*C\.?)\s*(?:#|NO\.?)?\s*([\d.,]+)"
+_CEDULA_RE = r"CON\s*(?:LA\s+)?(?:CEDULA DE CIUDADANIA|C\.?\s*C\.?)\s*(?:#|NO\.?)?\s*([\d.,]+)"
+# Variantes vistas en documentos reales: "REPRESENTANTE DEL CONSORCIO ES:",
+# "REPRESENTANTE LEGAL DEL CONSORCIO ES", "REPRESENTANTE LEGAL SUPLENTE DEL
+# CONSORCIO ES", "REPRESENTANTE DE LA UNION TEMPORAL ES".
 REPRESENTANTE_RE = re.compile(
-    rf"REPRESENTANTE(?:\s+PRINCIPAL)? (?:DEL CONSORCIO|DE LA UNION TEMPORAL) ES:?\s+"
+    rf"REPRESENTANTE(?:\s+LEGAL)?(?:\s+PRINCIPAL)? (?:DEL CONSORCIO|DE LA UNION TEMPORAL) ES:?\s+"
     rf"([A-ZÑ][A-ZÑ .]+?),?\s*(?:IDENTIFICAD[OA]\s+)?{_CEDULA_RE}"
 )
 REPRESENTANTE_SUPLENTE_RE = re.compile(
-    rf"REPRESENTANTE SUPLENTE (?:DEL CONSORCIO|DE LA UNION TEMPORAL) ES:?\s+"
+    rf"REPRESENTANTE(?:\s+LEGAL)? SUPLENTE (?:DEL CONSORCIO|DE LA UNION TEMPORAL) ES:?\s+"
     rf"([A-ZÑ][A-ZÑ .]+?),?\s*(?:IDENTIFICAD[OA]\s+)?{_CEDULA_RE}"
 )
 
@@ -59,10 +74,11 @@ REPRESENTANTE_SUPLENTE_RE = re.compile(
 # en varias líneas), pero los porcentajes siempre quedan entre el
 # encabezado "Compromiso (%)" y la nota al pie "El total de la columna...".
 TABLA_INTEGRANTES_RE = re.compile(
-    r"NOMBRE DEL INTEGRANTE.*?COMPROMISO\s*\(%\)\s*(?:\(1\)\s*)?(.*?)"
+    r"(?:NOMBRE DEL INTEGRANTE.*?\(%\)|INTEGRAD[OA] POR:?\s*NOMBRE\b.{0,40}?PARTICIPACION)\s*(?:\(\d\)\s*)?(.*?)"
     r"(?:EL TOTAL DE LA COLUMNA|\d+\.\s*(?:EL CONSORCIO|LA UNION TEMPORAL) SE DENOMINA)",
     re.DOTALL,
 )
+
 PORCENTAJE_CON_SIGNO_RE = re.compile(r"(\d{1,3}(?:[.,]\d+)?)\s*%")
 
 # El símbolo "%" no siempre sobrevive la extracción de texto (se vio un caso
@@ -98,7 +114,7 @@ def encontrar_formato2(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
             texto = extraer_texto(contenido, max_paginas=PAGINAS_A_REVISAR)
         except Exception:  # noqa: BLE001
             continue
-        if TITULO_FORMATO2_RE.search(_norm(texto)):
+        if es_titulo_formato2(_norm(texto)):
             return nombre, texto
     return None
 
@@ -132,7 +148,7 @@ def extraer_datos_plural(texto: str) -> DatosProponentePlural:
         # caso queda (correctamente) para revisión humana, aunque el motivo
         # mostrado puede no reflejar el porcentaje real.
         contenido_tabla = re.sub(r"\(\d+\)", "", tabla_match.group(1))
-        contenido_tabla = re.sub(r"TOTAL\s*\d{1,3}(?:[.,]\d+)?\s*%?", "", contenido_tabla)
+        contenido_tabla = re.sub(r"(?:TOTAL|SUMA)\s*\d{1,3}(?:[.,]\d+)?\s*%?", "", contenido_tabla)
         con_signo = PORCENTAJE_CON_SIGNO_RE.findall(contenido_tabla)
         if con_signo:
             porcentajes = [float(p.replace(",", ".")) for p in con_signo]
@@ -233,27 +249,36 @@ def obtener_personas_a_verificar(pdfs: dict[str, bytes], tipo_proponente: str | 
     integrante. Cada elemento es (nombre, cédula-o-None); si no se pudo
     identificar a nadie, devuelve una lista vacía."""
     if tipo_proponente not in ("consorcio", "union_temporal"):
-        encontrado_f1 = encontrar_formato1(pdfs)
-        if encontrado_f1 is None:
-            return []
-        _, contenido = encontrado_f1
-        texto_norm = _norm(extraer_texto(contenido))
-        nombre = _extraer_representante_legal(texto_norm) or _extraer_nombre_apertura(texto_norm)
-        if not nombre:
-            return []
-        return [(nombre, extraer_cedula_representante(texto_norm))]
+        return _representante_formato1(pdfs)
 
     encontrado = encontrar_formato2(pdfs)
-    if encontrado is None:
-        return []
-    _, texto = encontrado
-    datos = extraer_datos_plural(texto)
     personas: list[tuple[str, str | None]] = []
-    if datos.representante_principal:
-        personas.append(datos.representante_principal)
-    if datos.representante_suplente:
-        personas.append(datos.representante_suplente)
+    if encontrado is not None:
+        _, texto = encontrado
+        datos = extraer_datos_plural(texto)
+        if datos.representante_principal:
+            personas.append(datos.representante_principal)
+        if datos.representante_suplente:
+            personas.append(datos.representante_suplente)
+    if not personas:
+        # Sin Formato 2 legible, quien firma la carta (Formato 1) en nombre
+        # del consorcio/UT es su representante: se verifica al menos a esa
+        # persona en vez de no verificar a nadie. El Requisito 4 sigue
+        # reportando aparte que falta/no se leyó el Formato 2.
+        personas = _representante_formato1(pdfs)
     return personas
+
+
+def _representante_formato1(pdfs: dict[str, bytes]) -> list[tuple[str, str | None]]:
+    encontrado_f1 = encontrar_formato1(pdfs)
+    if encontrado_f1 is None:
+        return []
+    _, contenido = encontrado_f1
+    texto_norm = _norm(extraer_texto(contenido))
+    nombre = _extraer_representante_legal(texto_norm) or _extraer_nombre_apertura(texto_norm)
+    if not nombre:
+        return []
+    return [(nombre, extraer_cedula_representante(texto_norm))]
 
 
 def evaluar_proponente_requisito4(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
