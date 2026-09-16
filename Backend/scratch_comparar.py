@@ -112,7 +112,7 @@ def main():
             resp = requests.post(
                 f"{API}/api/procesos/evaluar-requisito-{requisito}",
                 json={"documento_base": proceso_json, "proponentes": proponentes_json},
-                timeout=1800,
+                timeout=7200,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  ERROR de conexión: {exc}")
