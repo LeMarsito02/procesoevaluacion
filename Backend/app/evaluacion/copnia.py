@@ -20,6 +20,7 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from app.procesamiento.pdf_utils import extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # El certificado COPNIA (Consejo Profesional Nacional de Ingeniería) siempre
@@ -71,6 +72,7 @@ def encontrar_copnia(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
                     texto = page.extract_text() or ""
                     if TITULO_COPNIA_RE.search(_norm(texto)):
                         return nombre, texto
+                    page.flush_cache()
         except Exception:  # noqa: BLE001
             continue
     return None
@@ -305,9 +307,7 @@ def _obtener_representante_legal(pdfs: dict[str, bytes]) -> str | None:
     if encontrado is None:
         return None
     _, contenido = encontrado
-    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-        texto = "\n".join((page.extract_text() or "") for page in pdf.pages)
-    texto_norm = _norm(texto)
+    texto_norm = _norm(extraer_texto(contenido))
     return _extraer_nombre_apertura(texto_norm) or _extraer_representante_legal(texto_norm)
 
 

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import io
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-
-import pdfplumber
 
 from app.evaluacion.formato1 import (
     _clave_cache,
@@ -18,6 +15,7 @@ from app.evaluacion.formato1 import (
 from app.evaluacion.proponente_plural import obtener_personas_a_verificar
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from app.procesamiento.pdf_utils import extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # Cuántas páginas de cada PDF candidato se revisan: estos certificados son
@@ -65,8 +63,7 @@ def encontrar_documentos_antecedente(pdfs: dict[str, bytes], config: Antecedente
     for nombre in _orden_busqueda_generico(list(pdfs.keys()), config.pistas_nombre):
         contenido = pdfs[nombre]
         try:
-            with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-                texto = "\n".join((page.extract_text() or "") for page in pdf.pages[:PAGINAS_A_REVISAR])
+            texto = extraer_texto(contenido, max_paginas=PAGINAS_A_REVISAR)
         except Exception:  # noqa: BLE001
             continue
         if config.titulo_re.search(_norm(texto)):

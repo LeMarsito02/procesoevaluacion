@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import io
 import re
-
-import pdfplumber
 
 from app.evaluacion.formato1 import (
     _clave_cache,
@@ -18,6 +15,7 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from app.procesamiento.pdf_utils import extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 PAGINAS_A_REVISAR = 2
@@ -42,8 +40,7 @@ def encontrar_formato5(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
     for nombre in _orden_busqueda(list(pdfs.keys())):
         contenido = pdfs[nombre]
         try:
-            with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-                texto = "\n".join((page.extract_text() or "") for page in pdf.pages[:PAGINAS_A_REVISAR])
+            texto = extraer_texto(contenido, max_paginas=PAGINAS_A_REVISAR)
         except Exception:  # noqa: BLE001
             continue
         if TITULO_FORMATO5_RE.search(_norm(texto)):
@@ -77,9 +74,7 @@ def _representante_legal_individual(pdfs: dict[str, bytes]) -> str | None:
     if encontrado is None:
         return None
     _, contenido = encontrado
-    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-        texto = "\n".join((page.extract_text() or "") for page in pdf.pages)
-    texto_norm = _norm(texto)
+    texto_norm = _norm(extraer_texto(contenido))
     return _extraer_representante_legal(texto_norm) or _extraer_nombre_apertura(texto_norm)
 
 

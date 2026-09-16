@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import io
 import re
 from datetime import date
 
-import pdfplumber
 from dateutil.relativedelta import relativedelta
 
 from app.evaluacion.formato1 import (
@@ -17,6 +15,7 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from app.procesamiento.pdf_utils import extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # El título se repite como encabezado en cada página, así que basta revisar
@@ -113,8 +112,7 @@ def encontrar_documentos(pdfs: dict[str, bytes], titulo_re: re.Pattern[str], pis
     for nombre in _orden_busqueda(list(pdfs.keys()), pistas):
         contenido = pdfs[nombre]
         try:
-            with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-                texto = "\n".join((page.extract_text() or "") for page in pdf.pages[:PAGINAS_PARA_TITULO])
+            texto = extraer_texto(contenido, max_paginas=PAGINAS_PARA_TITULO)
         except Exception:  # noqa: BLE001
             continue
         texto_norm = _norm(texto)
@@ -124,8 +122,7 @@ def encontrar_documentos(pdfs: dict[str, bytes], titulo_re: re.Pattern[str], pis
 
 
 def _texto_completo(pdfs: dict[str, bytes], nombre: str) -> str:
-    with pdfplumber.open(io.BytesIO(pdfs[nombre])) as pdf:
-        return "\n".join((page.extract_text() or "") for page in pdf.pages)
+    return extraer_texto(pdfs[nombre])
 
 
 class ResultadoEvaluacionCamara:

@@ -13,6 +13,7 @@ import pdfplumber
 
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from app.procesamiento.pdf_utils import extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # El título interno del documento es siempre el mismo, sin importar cómo se
@@ -29,7 +30,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 14
+VERSION_LOGICA = 15
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -88,10 +89,7 @@ def encontrar_formato1(pdfs: dict[str, bytes]) -> tuple[str, bytes] | None:
     for nombre in _orden_busqueda(list(pdfs.keys())):
         contenido = pdfs[nombre]
         try:
-            with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-                texto = ""
-                for page in pdf.pages[:2]:
-                    texto += (page.extract_text() or "") + "\n"
+            texto = extraer_texto(contenido, max_paginas=2)
         except Exception:  # noqa: BLE001
             continue
         if TITULO_RE.search(_norm(texto)):
@@ -285,6 +283,7 @@ def _extraer_tipo_proponente(pdf: pdfplumber.PDF) -> str | None:
             tablas = page.extract_tables()
         except Exception:  # noqa: BLE001
             continue
+        encontrado = None
         for tabla in tablas:
             for row in tabla:
                 for celda in row or []:
@@ -296,7 +295,10 @@ def _extraer_tipo_proponente(pdf: pdfplumber.PDF) -> str | None:
                         linea_norm = _norm(linea)
                         for patron, tipo in TIPO_PROPONENTE_PATRONES:
                             if patron.search(linea_norm):
-                                return tipo
+                                encontrado = tipo
+        page.flush_cache()
+        if encontrado is not None:
+            return encontrado
     return None
 
 
@@ -328,7 +330,11 @@ def obtener_tipo_proponente(pdfs: dict[str, bytes]) -> str | None:
     _, contenido = encontrado
     with pdfplumber.open(io.BytesIO(contenido)) as pdf:
         tipo_casilla = _extraer_tipo_proponente(pdf)
-        texto = "\n".join((page.extract_text() or "") for page in pdf.pages[:2])
+        partes = []
+        for page in pdf.pages[:2]:
+            partes.append(page.extract_text() or "")
+            page.flush_cache()
+        texto = "\n".join(partes)
     match = TIPO_PROPONENTE_FALLBACK_RE.search(_norm(texto))
     tipo_declaracion = _TIPO_PROPONENTE_FALLBACK_MAP[match.group(1)] if match else None
     return tipo_declaracion or tipo_casilla
@@ -412,6 +418,7 @@ def evaluar_formato1(pdf_bytes: bytes, proceso: ProcesoDocumentoBase) -> Resulta
             texto_completo += (page.extract_text() or "") + "\n"
             if page.images:
                 tiene_imagen = True
+            page.flush_cache()
         tipo_proponente = _extraer_tipo_proponente(pdf)
 
     texto_norm = _norm(texto_completo)

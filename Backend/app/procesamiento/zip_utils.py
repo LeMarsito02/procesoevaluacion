@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import shutil
 import subprocess
@@ -58,9 +59,33 @@ def _extraer_rar(contenido: bytes, _profundidad: int, _ruta: str) -> dict[str, b
     return pdfs
 
 
+def _deduplicar_por_contenido(pdfs: dict[str, bytes]) -> dict[str, bytes]:
+    """Muchos proponentes suben el mismo archivo .rar duplicado varias veces
+    (se vio un caso real: 'RUP_1.rar', 'RUP_2.rar' y 'RUP_3.rar' con
+    contenido idéntico byte a byte), y sin deduplicar cada evaluador termina
+    procesando 3 veces el mismo documento — con documentos grandes
+    (certificados de Cámara de Comercio de decenas de páginas con marcas de
+    agua/gráficos, que pdfplumber procesa con mucha memoria) esto multiplica
+    el uso de RAM y el tiempo sin ninguna ganancia. Se queda con una sola
+    copia por contenido, eligiendo la de ruta más corta (o alfabéticamente
+    primera) para que el resultado sea determinista entre corridas."""
+    por_hash: dict[str, str] = {}
+    resultado: dict[str, bytes] = {}
+    for ruta in sorted(pdfs.keys(), key=lambda r: (len(r), r)):
+        contenido = pdfs[ruta]
+        huella = hashlib.md5(contenido).hexdigest()
+        if huella in por_hash:
+            continue
+        por_hash[huella] = ruta
+        resultado[ruta] = contenido
+    return resultado
+
+
 def extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> dict[str, bytes]:
     """Extrae recursivamente todos los PDF de un zip, incluyendo zips y rars
-    anidados dentro de él (a cualquier profundidad, mezclados)."""
+    anidados dentro de él (a cualquier profundidad, mezclados). El resultado
+    del nivel superior queda deduplicado por contenido (ver
+    `_deduplicar_por_contenido`)."""
     if _profundidad > MAX_PROFUNDIDAD:
         return {}
 
@@ -87,5 +112,8 @@ def extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> di
     except zipfile.BadZipFile:
         # El nivel superior también podría venir como .rar en vez de .zip.
         pdfs.update(_extraer_rar(zip_bytes, _profundidad, _ruta))
+
+    if _profundidad == 0:
+        pdfs = _deduplicar_por_contenido(pdfs)
 
     return pdfs

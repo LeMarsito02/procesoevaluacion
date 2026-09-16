@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import io
 import re
 from dataclasses import dataclass
-
-import pdfplumber
 
 from app.evaluacion.formato1 import (
     _clave_cache,
@@ -19,6 +16,7 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from app.procesamiento.pdf_utils import extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # El título interno es siempre este, sin importar el nombre del archivo
@@ -97,8 +95,7 @@ def encontrar_formato2(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
     for nombre in _orden_busqueda_formato2(list(pdfs.keys())):
         contenido = pdfs[nombre]
         try:
-            with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-                texto = "\n".join((page.extract_text() or "") for page in pdf.pages[:PAGINAS_A_REVISAR])
+            texto = extraer_texto(contenido, max_paginas=PAGINAS_A_REVISAR)
         except Exception:  # noqa: BLE001
             continue
         if TITULO_FORMATO2_RE.search(_norm(texto)):
@@ -240,9 +237,7 @@ def obtener_personas_a_verificar(pdfs: dict[str, bytes], tipo_proponente: str | 
         if encontrado_f1 is None:
             return []
         _, contenido = encontrado_f1
-        with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-            texto = "\n".join((page.extract_text() or "") for page in pdf.pages)
-        texto_norm = _norm(texto)
+        texto_norm = _norm(extraer_texto(contenido))
         nombre = _extraer_representante_legal(texto_norm) or _extraer_nombre_apertura(texto_norm)
         if not nombre:
             return []

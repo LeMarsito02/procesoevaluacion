@@ -5,4 +5,5 @@ credentials/*.json
 storage/uploads/*
 storage/output/*
 cache/
-.xlsx
+*.xlsx
+.scratch/
