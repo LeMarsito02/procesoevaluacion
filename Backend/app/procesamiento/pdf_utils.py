@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import io
+import os
+import re
+import shutil
+import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 import pdfplumber
 from pdfplumber.utils.exceptions import PdfminerException
@@ -25,6 +31,62 @@ def _reparar_pdf(contenido: bytes) -> bytes | None:
         return None
 
 
+# --- OCR para páginas escaneadas -------------------------------------------
+# Varios proponentes aportan documentos escaneados (pólizas, COPNIA, cartas
+# consorciales) que no tienen capa de texto: sin OCR quedaban como "no
+# encontrado". Solo se aplica a páginas SIN texto útil que además traen una
+# imagen, así que los PDF digitales siguen leyéndose igual que antes. El
+# resultado se guarda en disco por (contenido del PDF, página), porque el OCR
+# cuesta segundos por página y cada requisito vuelve a leer los mismos
+# documentos.
+OCR_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "ocr"
+OCR_RESOLUCION = 250
+OCR_MINIMO_CARACTERES = 40
+OCR_TIMEOUT_SEGUNDOS = 90
+OCR_HABILITADO = os.environ.get("OCR_HABILITADO", "1") == "1" and shutil.which("tesseract") is not None
+# Las firmas digitales dejan una estampa de texto sobre páginas escaneadas
+# ("Digitally signed by ... Date: ...") que no es contenido del documento.
+_ESTAMPA_FIRMA_RE = re.compile(r"digitally signed by.*?(?:date:[^\n]*)?$", re.IGNORECASE | re.MULTILINE)
+
+
+def _ocr_pagina(page) -> str:
+    imagen = page.to_image(resolution=OCR_RESOLUCION).original
+    buffer = io.BytesIO()
+    imagen.save(buffer, format="PNG")
+    del imagen
+    entorno = {**os.environ, "OMP_THREAD_LIMIT": "2"}
+    salida = subprocess.run(
+        ["tesseract", "stdin", "stdout", "-l", "spa"],
+        input=buffer.getvalue(),
+        capture_output=True,
+        timeout=OCR_TIMEOUT_SEGUNDOS,
+        env=entorno,
+    )
+    return salida.stdout.decode("utf-8", errors="ignore")
+
+
+def texto_pagina(page) -> str:
+    """Texto de una página de pdfplumber; si la página es escaneada (sin
+    texto útil pero con imagen), se obtiene con OCR (tesseract), cacheado."""
+    texto = page.extract_text() or ""
+    if not OCR_HABILITADO or len(_ESTAMPA_FIRMA_RE.sub("", texto).strip()) >= OCR_MINIMO_CARACTERES:
+        return texto
+    try:
+        if not page.images:
+            return texto
+        huella = getattr(page.pdf, "_huella_contenido", None)
+        archivo_cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}.txt" if huella else None
+        if archivo_cache is not None and archivo_cache.exists():
+            return archivo_cache.read_text(encoding="utf-8")
+        texto_ocr = _ocr_pagina(page)
+        if archivo_cache is not None:
+            OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            archivo_cache.write_text(texto_ocr, encoding="utf-8")
+        return texto_ocr or texto
+    except Exception:  # noqa: BLE001
+        return texto
+
+
 @contextmanager
 def abrir_pdf(contenido: bytes) -> Iterator[pdfplumber.PDF]:
     """Igual que `pdfplumber.open`, pero si pdfminer no puede abrir el
@@ -38,6 +100,7 @@ def abrir_pdf(contenido: bytes) -> Iterator[pdfplumber.PDF]:
         if reparado is None:
             raise
         pdf = pdfplumber.open(io.BytesIO(reparado))
+    pdf._huella_contenido = hashlib.md5(contenido).hexdigest()
     with pdf:
         yield pdf
 
@@ -59,7 +122,7 @@ def extraer_texto(contenido: bytes, max_paginas: int | None = None) -> str:
         paginas = pdf.pages[:max_paginas] if max_paginas is not None else pdf.pages
         partes = []
         for page in paginas:
-            partes.append(page.extract_text() or "")
+            partes.append(texto_pagina(page))
             page.flush_cache()
         return "\n".join(partes)
 
@@ -82,7 +145,7 @@ def buscar_pagina(contenido: bytes, coincide, max_paginas: int = 6) -> str | Non
     partes: list[str] = []
     with abrir_pdf(contenido) as pdf:
         for page in pdf.pages[:max_paginas]:
-            partes.append(page.extract_text() or "")
+            partes.append(texto_pagina(page))
             page.flush_cache()
             acumulado = "\n".join(partes)
             if coincide(acumulado):

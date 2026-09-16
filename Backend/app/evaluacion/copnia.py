@@ -19,7 +19,7 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from app.procesamiento.pdf_utils import abrir_pdf, extraer_texto
+from app.procesamiento.pdf_utils import abrir_pdf, texto_pagina, extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # El certificado COPNIA (Consejo Profesional Nacional de Ingeniería) siempre
@@ -81,7 +81,7 @@ def encontrar_copnias(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
                 for indice, page in enumerate(pdf.pages[:PAGINAS_A_REVISAR_EN_CARTA]):
                     if indice >= limite:
                         break
-                    texto = page.extract_text() or ""
+                    texto = texto_pagina(page)
                     page.flush_cache()
                     texto_norm = _norm(texto)
                     if indice == 0 and es_titulo_formato1(texto_norm):

@@ -165,6 +165,13 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
         )
     else:
         fecha_hasta = _parsear_fecha_ddmmyyyy(fecha_hasta_texto)
+        # Pólizas escaneadas se leen con OCR, que puede confundir dígitos
+        # ("29/07/2026" -> "15/11/2826"): una fecha fuera de un rango
+        # razonable se trata como ilegible en vez de darla por buena.
+        if fecha_hasta is not None and not (
+            garantia.fecha_cierre.year <= fecha_hasta.year <= garantia.fecha_cierre.year + 2
+        ):
+            fecha_hasta = None
         if fecha_hasta is None:
             motivos.append("no se pudo leer la fecha de vencimiento de la vigencia de la póliza")
         elif fecha_hasta < garantia.fecha_vencimiento:
@@ -176,6 +183,8 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
         valor_asegurado_poliza = _parsear_valor_pesos(valor_texto)
         if valor_asegurado_poliza is None:
             motivos.append("no se pudo leer el valor asegurado de la póliza")
+        elif valor_asegurado_poliza > garantia.valor_asegurado * 20:
+            motivos.append("el valor asegurado leído de la póliza no es razonable — confirma manualmente")
         elif valor_asegurado_poliza < garantia.valor_asegurado:
             motivos.append(
                 f"la póliza asegura ${valor_asegurado_poliza:,.2f}, menos del valor mínimo requerido "

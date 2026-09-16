@@ -15,7 +15,7 @@ from app.evaluacion.formato1 import (
 from app.evaluacion.proponente_plural import obtener_personas_a_verificar
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from app.procesamiento.pdf_utils import abrir_pdf
+from app.procesamiento.pdf_utils import abrir_pdf, texto_pagina
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # Se leen al menos estas páginas de cada PDF buscando algún certificado de
@@ -78,7 +78,7 @@ def leer_certificados(pdfs: dict[str, bytes]) -> list[Certificado]:
                 for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_FUSIONADOS]):
                     if indice >= PAGINAS_MINIMAS and not encontro_alguno:
                         break
-                    texto = page.extract_text() or ""
+                    texto = texto_pagina(page)
                     page.flush_cache()
                     texto_norm = _norm(texto)
                     requisitos = frozenset(c.requisito for c in _configs() if c.titulo_re.search(texto_norm))
