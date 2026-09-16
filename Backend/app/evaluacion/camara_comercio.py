@@ -15,7 +15,7 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from app.procesamiento.pdf_utils import buscar_pagina, extraer_texto
+from app.procesamiento.pdf_utils import abrir_pdf, buscar_pagina, extraer_texto, texto_pagina
 from app.procesamiento.zip_utils import extraer_pdfs
 
 # Cuántas páginas se revisan buscando el título. No basta con la primera:
@@ -340,26 +340,64 @@ def evaluar_requisito8(pdfs: dict[str, bytes], tipo_proponente: str | None) -> R
     return ResultadoEvaluacionCamara(cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0])
 
 
+# Sección de sanciones del RUP, confirmada con RUP reales de este proceso:
+# cuando una entidad reportó una sanción, el certificado trae al final un
+# bloque "...EN RELACION CON LAS SANCIONES EN FIRMES ES LA SIGUIENTE:
+# SANCIONES ENTIDAD QUE REPORTO LA SANCION: INSTITUTO NACIONAL DE VIAS ...
+# DESCRIPCION DE LA SANCION: INCUMPLIMIENTO DEFINITIVO ... FECHA DE VIGENCIA
+# DE LA SANCION: 2028/10/13". Sin sanciones ese bloque no existe: solo queda
+# el encabezado genérico "REPORTE DE ... MULTAS, SANCIONES E INHABILIDADES EN
+# FIRME" y el aviso legal final, que por eso no cuentan como sanción.
+SANCION_REPORTADA_RE = re.compile(
+    r"ENTIDAD QUE REPORTO LA (?:SANCION|MULTA|INHABILIDAD)|DESCRIPCION DE LA (?:SANCION|MULTA)"
+)
+DETALLE_SANCION_RE = re.compile(r"ENTIDAD QUE REPORTO LA (?:SANCION|MULTA|INHABILIDAD):?\s*(.{0,250})")
+# La sección está siempre al final del RUP (se vio en la pág. 48 de 52, 187
+# de 194 y 378 de 379). Se leen solo las últimas páginas: hay RUP de más de
+# 500 páginas y leerlos completos dispara la memoria.
+PAGINAS_FINALES_RUP = 12
+MINIMO_TEXTO_PAGINAS_FINALES = 500
+
+
+def _texto_paginas_finales(contenido: bytes) -> str:
+    with abrir_pdf(contenido) as pdf:
+        partes = []
+        for page in pdf.pages[-PAGINAS_FINALES_RUP:]:
+            partes.append(texto_pagina(page))
+            page.flush_cache()
+        return "\n".join(partes)
+
+
 def evaluar_requisito10(pdfs: dict[str, bytes]) -> ResultadoEvaluacionCamara:
-    """Requisito 10: Sanciones dentro del RUP. Limitación conocida: se
-    revisó el RUP real de un proponente (32 páginas) y no existe una
-    sección de 'sanciones' o 'multas' identificable por texto — el
-    documento no la incluye cuando no hay novedades, así que no hay una
-    frase de 'sin novedad' que buscar (a diferencia de los certificados de
-    antecedentes). Por eso este requisito siempre se deja para revisión
-    humana en vez de arriesgar una confirmación automática sin base real."""
+    """Requisito 10: el RUP no debe reportar multas ni sanciones en firme.
+    Se revisan todos los RUP encontrados (uno por integrante si es plural).
+    Si se reporta alguna sanción NO se da por cumplido y se muestra el
+    detalle: si esa sanción inhabilita o no es un juicio del abogado."""
     encontrados = encontrar_documentos(pdfs, TITULO_RUP_RE, PISTAS_RUP)
     if not encontrados:
         return ResultadoEvaluacionCamara(
             cumple=False, motivo="No se encontró el RUP por título dentro de los documentos del proponente.", archivo=None
         )
+
+    motivos = []
+    for nombre in encontrados:
+        try:
+            texto_norm = _norm(_texto_paginas_finales(pdfs[nombre]))
+        except Exception:  # noqa: BLE001
+            motivos.append(f"no se pudieron leer las últimas páginas de '{nombre}' — confirma manualmente")
+            continue
+        if SANCION_REPORTADA_RE.search(texto_norm):
+            detalle = DETALLE_SANCION_RE.search(texto_norm)
+            resumen = re.sub(r"\s+", " ", detalle.group(1)).strip() if detalle else ""
+            motivos.append(
+                f"'{nombre}' reporta multas/sanciones en firme ({resumen}...) — revisa si inhabilitan al proponente"
+            )
+        elif len(texto_norm) < MINIMO_TEXTO_PAGINAS_FINALES:
+            motivos.append(f"las últimas páginas de '{nombre}' no tienen texto legible — confirma manualmente")
+
+    cumple = not motivos
     return ResultadoEvaluacionCamara(
-        cumple=False,
-        motivo=(
-            "El RUP no trae una sección de sanciones/multas identificable automáticamente — confirma manualmente "
-            "revisando el documento completo."
-        ),
-        archivo=encontrados[0],
+        cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0]
     )
 
 
