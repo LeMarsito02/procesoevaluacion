@@ -15,13 +15,19 @@ from app.evaluacion.formato1 import (
 from app.evaluacion.proponente_plural import obtener_personas_a_verificar
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from app.procesamiento.pdf_utils import extraer_texto
+from app.procesamiento.pdf_utils import abrir_pdf
 from app.procesamiento.zip_utils import extraer_pdfs
 
-# Cuántas páginas de cada PDF candidato se revisan: estos certificados son
-# de una sola página casi siempre, pero se deja el mismo margen que COPNIA
-# por si vienen fusionados con otros documentos del proponente.
-PAGINAS_A_REVISAR = 4
+# Se leen al menos estas páginas de cada PDF buscando algún certificado de
+# antecedentes. Si aparece alguno, se sigue leyendo hasta
+# PAGINAS_MAXIMAS_FUSIONADOS: hay proponentes que fusionan todos sus
+# certificados en un solo PDF (se confirmó uno real de 10 páginas con
+# Contraloría, Procuraduría, Policía, RNMC y REDAM de la empresa y del
+# representante, con el de Policía en la página 5). Los PDF sin ningún
+# certificado en sus primeras páginas (RUP, experiencia...) se dejan de leer
+# ahí, para no recorrer documentos de cientos de páginas.
+PAGINAS_MINIMAS = 4
+PAGINAS_MAXIMAS_FUSIONADOS = 20
 
 
 def _solo_digitos(texto: str) -> str:
@@ -45,30 +51,69 @@ class AntecedenteConfig:
     extraer_identidad: ExtractorIdentidad
 
 
-def _orden_busqueda_generico(nombres: list[str], pistas: tuple[str, ...]) -> list[str]:
-    def pista(nombre: str) -> int:
-        base = _norm(nombre.rsplit("/", 1)[-1])
-        return 0 if any(p.upper() in base for p in pistas) else 1
+@dataclass(frozen=True)
+class Certificado:
+    archivo: str
+    texto: str  # texto de la(s) página(s) de ESTE certificado, no del PDF entero
+    requisitos: frozenset[int]  # a qué entidad(es) corresponde, por título
 
-    return sorted(nombres, key=pista)
+
+def _configs() -> tuple[AntecedenteConfig, ...]:
+    return (CONFIG_REDAM, CONFIG_CONTRALORIA, CONFIG_PROCURADURIA, CONFIG_POLICIA, CONFIG_RNMC)
 
 
-def encontrar_documentos_antecedente(pdfs: dict[str, bytes], config: AntecedenteConfig) -> list[tuple[str, str]]:
-    """A diferencia de encontrar_formato1/encontrar_copnia (que devuelven solo
-    el primer PDF que calza), aquí se devuelven TODOS los que calzan con el
-    título: es común que un proponente aporte un certificado por cada
-    integrante o por cada persona (representante + suplente), y hay que
-    revisarlos todos para saber si cubren a las personas requeridas."""
-    encontrados = []
-    for nombre in _orden_busqueda_generico(list(pdfs.keys()), config.pistas_nombre):
-        contenido = pdfs[nombre]
+def leer_certificados(pdfs: dict[str, bytes]) -> list[Certificado]:
+    """Recorre los PDF del proponente página por página y separa cada
+    certificado de antecedentes que encuentre (de cualquier entidad), aunque
+    vengan varios fusionados en un mismo archivo. Un certificado empieza en
+    una página con título reconocible y puede seguir en la página siguiente
+    si esta no trae título propio (ej. la frase de "sin novedades" o el pie
+    quedan en la hoja 2)."""
+    certificados: list[Certificado] = []
+    for nombre, contenido in pdfs.items():
         try:
-            texto = extraer_texto(contenido, max_paginas=PAGINAS_A_REVISAR)
+            with abrir_pdf(contenido) as pdf:
+                actual: tuple[frozenset[int], list[str]] | None = None
+                encontro_alguno = False
+                for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_FUSIONADOS]):
+                    if indice >= PAGINAS_MINIMAS and not encontro_alguno:
+                        break
+                    texto = page.extract_text() or ""
+                    page.flush_cache()
+                    texto_norm = _norm(texto)
+                    requisitos = frozenset(c.requisito for c in _configs() if c.titulo_re.search(texto_norm))
+                    if requisitos:
+                        if actual is not None:
+                            certificados.append(Certificado(nombre, "\n".join(actual[1]), actual[0]))
+                        actual = (requisitos, [texto])
+                        encontro_alguno = True
+                    elif actual is not None and len(actual[1]) == 1:
+                        actual[1].append(texto)
+                    elif actual is not None:
+                        certificados.append(Certificado(nombre, "\n".join(actual[1]), actual[0]))
+                        actual = None
+                if actual is not None:
+                    certificados.append(Certificado(nombre, "\n".join(actual[1]), actual[0]))
         except Exception:  # noqa: BLE001
             continue
-        if config.titulo_re.search(_norm(texto)):
-            encontrados.append((nombre, texto))
-    return encontrados
+    return certificados
+
+
+def _cedulas_por_nombre(certificados: list[Certificado]) -> list[tuple[str, str]]:
+    """Pares (nombre, cédula) de los certificados que traen ambos datos
+    (Procuraduría, Policía, RNMC). Sirven para emparejar los certificados
+    que solo traen cédula (REDAM, Contraloría) cuando la carta de
+    presentación no declara la cédula del representante."""
+    pares = []
+    for certificado in certificados:
+        texto_norm = _norm(certificado.texto)
+        for config in _configs():
+            if config.requisito not in certificado.requisitos:
+                continue
+            nombre, cedula = config.extraer_identidad(texto_norm)
+            if nombre and cedula:
+                pares.append((nombre, cedula))
+    return pares
 
 
 class ResultadoEvaluacionAntecedente:
@@ -94,7 +139,8 @@ def evaluar_antecedente(
             archivo=None,
         )
 
-    candidatos = encontrar_documentos_antecedente(pdfs, config)
+    certificados = leer_certificados(pdfs)
+    candidatos = [c for c in certificados if config.requisito in c.requisitos]
     if not candidatos:
         return ResultadoEvaluacionAntecedente(
             cumple=False,
@@ -102,21 +148,26 @@ def evaluar_antecedente(
             archivo=None,
         )
 
-    identidades = [(nombre, texto, *config.extraer_identidad(_norm(texto))) for nombre, texto in candidatos]
+    identidades = [(c.archivo, c.texto, *config.extraer_identidad(_norm(c.texto))) for c in candidatos]
+    pares_conocidos = _cedulas_por_nombre(certificados)
 
     faltantes: list[str] = []
     archivo_evaluado: str | None = None
     for nombre_persona, cedula_persona in personas:
+        if not cedula_persona:
+            cedula_persona = next(
+                (cedula for nombre, cedula in pares_conocidos if _nombres_coinciden(nombre, nombre_persona)), None
+            )
         cedula_persona_digitos = _solo_digitos(cedula_persona) if cedula_persona else None
         encontrado = None
         for archivo, texto, nombre_doc, cedula_doc in identidades:
-            coincide_cedula = (
-                cedula_persona_digitos is not None
-                and cedula_doc is not None
-                and _solo_digitos(cedula_doc) == cedula_persona_digitos
-            )
-            coincide_nombre = nombre_doc is not None and _nombres_coinciden(nombre_doc, nombre_persona)
-            if coincide_cedula or (cedula_persona_digitos is None and coincide_nombre):
+            if cedula_persona_digitos and cedula_doc:
+                # Con ambas cédulas manda la cédula: dos personas pueden
+                # compartir nombre y apellido, no número de documento.
+                coincide = _solo_digitos(cedula_doc) == cedula_persona_digitos
+            else:
+                coincide = nombre_doc is not None and _nombres_coinciden(nombre_doc, nombre_persona)
+            if coincide:
                 encontrado = (archivo, texto)
                 break
         if encontrado is None:
