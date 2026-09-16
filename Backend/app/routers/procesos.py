@@ -120,16 +120,37 @@ EvaluadorProponente = Callable[[Proponente, ProcesoDocumentoBase], ResultadoRequ
 
 
 async def _evaluar_en_proceso(
-    evaluador: EvaluadorProponente, proponente: Proponente, proceso: ProcesoDocumentoBase
+    evaluador: EvaluadorProponente, proponente: Proponente, proceso: ProcesoDocumentoBase, requisito: int
 ) -> ResultadoRequisito:
     """Corre la evaluación en el pool de procesos (CPU real, no solo hilos).
-    Si el pool se rompió (ej. un worker murió con un PDF corrupto), se
-    recrea y se reintenta una vez antes de rendirse."""
+
+    Ningún fallo de un proponente puede tumbar la evaluación de los demás:
+    si el pool se rompió (un worker murió con un PDF corrupto) se recrea y
+    se reintenta una vez, y si aun así falla —o si el worker se quedó sin
+    memoria con un proponente especialmente pesado— se devuelve un
+    ResultadoRequisito con `error`, que la interfaz muestra como "revisar
+    manualmente". Antes, una sola excepción aquí devolvía un 500 y se
+    perdía el lote completo de 81 proponentes."""
     loop = asyncio.get_running_loop()
+    base = {
+        "hoja": proponente.hoja,
+        "numero_orden": proponente.numero_orden,
+        "nombre_proponente": proponente.nombre_proponente,
+        "requisito": requisito,
+    }
     try:
         return await loop.run_in_executor(obtener_pool(), evaluador, proponente, proceso)
     except BrokenProcessPool:
-        return await loop.run_in_executor(obtener_pool(), evaluador, proponente, proceso)
+        try:
+            return await loop.run_in_executor(obtener_pool(), evaluador, proponente, proceso)
+        except Exception as exc:  # noqa: BLE001
+            return ResultadoRequisito(**base, error=f"No se pudo evaluar (el proceso murió, posiblemente por falta de memoria): {exc}")
+    except MemoryError:
+        return ResultadoRequisito(
+            **base, error="No se pudo evaluar: el proponente superó el límite de memoria del servidor. Revísalo manualmente."
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ResultadoRequisito(**base, error=f"No se pudo evaluar automáticamente: {exc}")
 
 
 # Un evaluador por requisito: recibe (proponente, proceso) y devuelve su
@@ -163,12 +184,12 @@ def _registrar_rutas_requisito(numero: int, evaluador: EvaluadorProponente) -> N
         if not payload.proponentes:
             raise HTTPException(status_code=400, detail="No hay proponentes para evaluar.")
         resultados = await asyncio.gather(
-            *(_evaluar_en_proceso(evaluador, p, payload.documento_base) for p in payload.proponentes)
+            *(_evaluar_en_proceso(evaluador, p, payload.documento_base, numero) for p in payload.proponentes)
         )
         return sorted(resultados, key=lambda r: r.numero_orden)
 
     async def evaluar_individual(payload: EvaluarProponenteRequest) -> ResultadoRequisito:
-        return await _evaluar_en_proceso(evaluador, payload.proponente, payload.documento_base)
+        return await _evaluar_en_proceso(evaluador, payload.proponente, payload.documento_base, numero)
 
     router.add_api_route(
         f"/evaluar-requisito-{numero}",

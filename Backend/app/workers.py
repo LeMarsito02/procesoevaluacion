@@ -16,7 +16,7 @@ from concurrent.futures.process import BrokenProcessPool
 # escritorio normal (con Chrome, el IDE, etc. ya usando varios GB) 8 workers
 # en paralelo puede saturar la RAM y colgar el sistema, así que se limita a
 # un número más conservador aunque haya más núcleos disponibles.
-MAX_WORKERS = min(os.cpu_count() or 4, int(os.environ.get("MAX_WORKERS", "4")))
+MAX_WORKERS = min(os.cpu_count() or 4, int(os.environ.get("MAX_WORKERS", "2")))
 
 # pdfplumber no libera del todo la memoria entre archivos: se midió que
 # evaluar un solo proponente grande (un consorcio con ~230 PDF anidados,
@@ -36,9 +36,16 @@ MAX_TAREAS_POR_WORKER = int(os.environ.get("MAX_TAREAS_POR_WORKER", "3"))
 # hacer crecer al worker sin control hasta que el kernel se queda sin RAM y
 # empieza a matar procesos al azar para salvarse — en la práctica mataba el
 # VS Code del usuario y le colgaba el escritorio. Con el tope, el que muere
-# es el worker (con MemoryError, que se reporta como un error normal de esa
-# evaluación) y el resto del sistema sigue intacto.
-MEMORIA_MAX_WORKER_MB = int(os.environ.get("MEMORIA_MAX_WORKER_MB", "2048"))
+# es el worker (con MemoryError, que el router convierte en un error normal
+# de esa evaluación) y el resto del sistema sigue intacto.
+#
+# El valor se calibró midiendo el proponente más pesado del proceso real
+# (zip de 270MB, 92 PDF): llega a ~1.2GB de memoria residente. Como
+# RLIMIT_AS limita memoria VIRTUAL —bastante mayor que la residente en
+# Python— se deja 4GB, que equivale a holgura real de ~3x sobre ese peor
+# caso medido. Con 2 workers el techo total queda en 8GB, que una máquina
+# de 16GB aguanta sin tocar al resto del escritorio.
+MEMORIA_MAX_WORKER_MB = int(os.environ.get("MEMORIA_MAX_WORKER_MB", "4096"))
 
 _pool: ProcessPoolExecutor | None = None
 

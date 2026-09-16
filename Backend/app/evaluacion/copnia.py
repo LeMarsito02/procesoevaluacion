@@ -59,11 +59,17 @@ def _orden_busqueda_copnia(nombres: list[str]) -> list[str]:
     return sorted(nombres, key=pista)
 
 
-def encontrar_copnia(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
-    """Busca, entre los PDF del proponente, la página que trae el
-    certificado COPNIA, sin importar el nombre del archivo ni si está
-    fusionado con otros documentos (cédula, tarjeta profesional, REDAM...).
-    Devuelve (nombre_archivo, texto_de_esa_pagina) o None."""
+def encontrar_copnias(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
+    """Devuelve TODOS los certificados COPNIA del proponente, buscándolos por
+    su título interno (sin importar el nombre del archivo ni si vienen
+    fusionados con otros documentos: cédula, tarjeta profesional, REDAM...).
+
+    Se devuelven todos, no solo el primero, porque hay proponentes que
+    aportan el COPNIA de varios profesionales (se vio un caso real con dos:
+    uno del representante legal y otro de un tercero). Quedarse con el
+    primero que aparezca haría que el veredicto dependa del orden de los
+    archivos dentro del zip, que es arbitrario."""
+    encontrados: list[tuple[str, str]] = []
     for nombre in _orden_busqueda_copnia(list(pdfs.keys())):
         contenido = pdfs[nombre]
         try:
@@ -71,11 +77,38 @@ def encontrar_copnia(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
                 for page in pdf.pages[:PAGINAS_A_REVISAR]:
                     texto = page.extract_text() or ""
                     if TITULO_COPNIA_RE.search(_norm(texto)):
-                        return nombre, texto
+                        encontrados.append((nombre, texto))
+                        break
                     page.flush_cache()
         except Exception:  # noqa: BLE001
             continue
-    return None
+    return encontrados
+
+
+def encontrar_copnia(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
+    """Primer COPNIA hallado. Se conserva para el Requisito 3, que solo
+    necesita comprobar que el certificado no tenga antecedentes y esté
+    vigente, sin importar de quién sea."""
+    encontrados = encontrar_copnias(pdfs)
+    return encontrados[0] if encontrados else None
+
+
+def _elegir_copnia_del_profesional(
+    pdfs: dict[str, bytes], representante_legal: str | None
+) -> tuple[str, str] | None:
+    """Entre todos los COPNIA aportados, elige el del profesional que avala
+    la propuesta. Si ninguno coincide con ese nombre, devuelve el primero
+    para poder reportar con precisión a nombre de quién está el que sí
+    aportaron."""
+    encontrados = encontrar_copnias(pdfs)
+    if not encontrados:
+        return None
+    if representante_legal:
+        for nombre_archivo, texto in encontrados:
+            datos = extraer_datos_copnia(texto)
+            if datos.nombre and _nombres_coinciden(datos.nombre, representante_legal):
+                return nombre_archivo, texto
+    return encontrados[0]
 
 
 def _parsear_fecha_copnia(texto_norm: str) -> date | None:
@@ -146,7 +179,7 @@ ANTIGUEDAD_MAXIMA_MESES = 3
 def evaluar_requisito2(
     pdfs: dict[str, bytes], fecha_cierre: date, representante_legal: str | None
 ) -> ResultadoEvaluacionCopnia:
-    encontrado = encontrar_copnia(pdfs)
+    encontrado = _elegir_copnia_del_profesional(pdfs, representante_legal)
     if encontrado is None:
         return ResultadoEvaluacionCopnia(
             cumple=False,

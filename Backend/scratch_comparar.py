@@ -64,7 +64,20 @@ def main():
     proceso_json = json.loads(proceso.model_dump_json())
     del pdf_bytes
 
-    r = list_proponentes(DRIVE_FOLDER)
+    # La conexión se ha caído varias veces a mitad de corrida; sin reintento
+    # aquí, un corte de pocos segundos tumba todo el trabajo pendiente.
+    r = None
+    for intento in range(1, 11):
+        try:
+            r = list_proponentes(DRIVE_FOLDER)
+            break
+        except Exception as exc:  # noqa: BLE001
+            print(f"  fallo al listar proponentes (intento {intento}): {exc}", flush=True)
+            time.sleep(15)
+    if r is None:
+        print("No se pudo listar proponentes tras 10 intentos, abortando.")
+        return
+
     with open(".scratch/ground_truth.json") as f:
         ground_truth = json.load(f)
 
