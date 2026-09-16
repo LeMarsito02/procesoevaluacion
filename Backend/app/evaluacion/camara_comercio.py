@@ -15,13 +15,16 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from app.procesamiento.pdf_utils import extraer_texto
+from app.procesamiento.pdf_utils import buscar_pagina, extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
 
-# El título se repite como encabezado en cada página, así que basta revisar
-# la primera para identificar el documento — el contenido completo (objeto
-# social, facultades) se lee aparte, ya en las páginas que hagan falta.
-PAGINAS_PARA_TITULO = 1
+# Cuántas páginas se revisan buscando el título. No basta con la primera:
+# varios proponentes reales anteponen una carátula con el membrete de la
+# empresa y el certificado real arranca en la página 2 o 3, y antes quedaban
+# reportados como "no encontrado". Se recorre página por página cortando
+# apenas calza, así que en el caso común (título en la página 1) el costo es
+# el mismo.
+PAGINAS_PARA_TITULO = 6
 
 VIGENCIA_MAXIMA_MESES = 1
 
@@ -30,8 +33,30 @@ VIGENCIA_MAXIMA_MESES = 1
 # "...EN EL REGISTRO DE PROPONENTES", Medellín solo dice "CERTIFICADO DE
 # PROPONENTES". El ".{0,20}" tolera esas variaciones entre "CLASIFICACION"
 # y "PROPONENTES" sin depender de una redacción exacta.
-TITULO_EXISTENCIA_RE = re.compile(r"CERTIFICADO DE EXISTENCIA Y REPRESENTACION LEGAL")
-TITULO_RUP_RE = re.compile(r"CERTIFICADO DE (?:INSCRIPCION Y CLASIFICACION.{0,20})?PROPONENTES")
+# El "CERTIFICADO DE" es opcional: hay cámaras que titulan el documento
+# simplemente "EXISTENCIA Y REPRESENTACION LEGAL". Ampliarlo no abre la
+# puerta a falsos positivos porque `encontrar_documentos` exige además que
+# la misma página traiga el campo de fecha de expedición, que solo aparece
+# en el certificado de verdad y no en documentos que lo mencionan de paso.
+# Las sucursales de sociedad extranjera no tienen Certificado de Existencia:
+# la Cámara expide en su lugar el "CERTIFICADO DE MATRICULA DE SUCURSAL DE
+# SOCIEDAD EXTRANJERA", que cumple la misma función.
+TITULO_EXISTENCIA_RE = re.compile(
+    r"(?:CERTIFICADO DE\s+)?EXISTENCIA Y REPRESENTACION LEGAL"
+    r"|CERTIFICADO DE MATRICULA DE SUCURSAL DE SOCIEDAD EXTRANJERA"
+)
+# Igual que con el Certificado de Existencia, el "CERTIFICADO DE" es
+# opcional: Bucaramanga titula el documento "REGISTRO UNICO DE PROPONENTES -
+# RUP" a secas. El filtro de fecha de expedición evita que esto agarre otros
+# documentos que solo mencionan el RUP (por ejemplo el Formato 2).
+# Además, el RUP de Bucaramanga (plataforma virtual) no trae título: solo se
+# reconoce por los campos propios del registro de proponentes.
+TITULO_RUP_RE = re.compile(
+    r"CERTIFICADO DE (?:INSCRIPCION Y CLASIFICACION.{0,20})?PROPONENTES"
+    r"|REGISTRO UNICO DE PROPONENTES"
+    r"|NUMERO DEL PROPONENTE EN LA CAMARA DE COMERCIO"
+    r"|FECHA DE INSCRIPCION EN EL REGISTRO DE (?:LOS )?PROPONENTES"
+)
 
 PISTAS_EXISTENCIA = ("existencia", "camara de comercio", "camara comercio", "rep legal", "representacion legal")
 PISTAS_RUP = ("rup",)
@@ -50,8 +75,15 @@ MESES = {
 #   - "CODIGO VERIFICACION: <codigo> 20 DE JULIO DE 2026 HORA ..." (Bogotá,
 #     portada del RUP — sin ninguna etiqueta "fecha expedición")
 # Se prueban en orden hasta que uno calce.
-_FECHA_NUMERICA_RE = re.compile(r"FECHA(?:\s+DE)?\s+EXPEDICION:\s*(\d{2,4})/(\d{2})/(\d{2,4})")
-_FECHA_MES_TEXTO_RE = re.compile(r"FECHA(?:\s+DE)?\s+EXPEDICION:\s*(\d{1,2})\s+DE\s+([A-Z]+)\s+DE\s+(\d{4})")
+# Variaciones reales del encabezado de fecha, todas de cámaras distintas:
+#   - "FECHA EXPEDICION: 08/07/2026"        (pegado)
+#   - "FECHA EXPEDICION : 24/07/2026"       (espacio antes de los dos puntos)
+#   - "LUGAR Y FECHA DE EXPEDICION: BUCARAMANGA, 2026/07/24"  (ciudad en medio)
+# De ahí el prefijo opcional "LUGAR Y", el `\s*:?\s*` y el grupo opcional que
+# se come el nombre de la ciudad antes de la fecha.
+_PREFIJO_FECHA = r"(?:LUGAR Y\s+)?FECHA(?:\s+DE)?\s+EXPEDICION\s*:?\s*(?:[A-ZÑ][A-ZÑ .]*,\s*)?"
+_FECHA_NUMERICA_RE = re.compile(_PREFIJO_FECHA + r"(\d{2,4})/(\d{2})/(\d{2,4})")
+_FECHA_MES_TEXTO_RE = re.compile(_PREFIJO_FECHA + r"(\d{1,2})\s+DE\s+([A-Z]+)\s+DE\s+(\d{4})")
 _FECHA_TRAS_CODIGO_VERIFICACION_RE = re.compile(
     r"CODIGO VERIFICACION:?\s*\S+\s+(\d{1,2})\s+DE\s+([A-Z]+)\s+DE\s+(\d{4})\s+HORA"
 )
@@ -108,16 +140,17 @@ def encontrar_documentos(pdfs: dict[str, bytes], titulo_re: re.Pattern[str], pis
     pasada "el certificado de existencia y representación legal..." sin ser
     el certificado real — un certificado real siempre trae ese campo de
     fecha en el encabezado, esos otros documentos no."""
+    def es_el_documento(texto: str) -> bool:
+        texto_norm = _norm(texto)
+        return bool(titulo_re.search(texto_norm)) and _tiene_fecha_expedicion(texto_norm)
+
     encontrados = []
     for nombre in _orden_busqueda(list(pdfs.keys()), pistas):
-        contenido = pdfs[nombre]
         try:
-            texto = extraer_texto(contenido, max_paginas=PAGINAS_PARA_TITULO)
+            if buscar_pagina(pdfs[nombre], es_el_documento, max_paginas=PAGINAS_PARA_TITULO) is not None:
+                encontrados.append(nombre)
         except Exception:  # noqa: BLE001
             continue
-        texto_norm = _norm(texto)
-        if titulo_re.search(texto_norm) and _tiene_fecha_expedicion(texto_norm):
-            encontrados.append(nombre)
     return encontrados
 
 
