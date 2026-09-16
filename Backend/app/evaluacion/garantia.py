@@ -20,7 +20,14 @@ PISTAS_POLIZA = ("poliza", "garantia", "seriedad")
 # no siempre aparece ese texto literal en la extracción, y en esta etapa
 # (documentos de la propuesta, antes de la adjudicación) no existe todavía
 # ninguna póliza de cumplimiento del contrato con la que pueda confundirse.
-TITULO_POLIZA_RE = re.compile(r"POLIZA DE SEGURO DE CUMPLIMIENTO")
+#
+# Variantes de título confirmadas: "POLIZA DE SEGURO DE CUMPLIMIENTO ENTIDAD
+# ESTATAL" (Seguros del Estado, Mundial) y "POLIZA DE GARANTIA UNICA DE
+# CUMPLIMIENTO EN FAVOR DE ENTIDADES ESTATALES" (Confianza). Como la frase
+# "póliza de cumplimiento" puede citarse en otros documentos, se exige además
+# el campo de vigencia propio de la carátula de una póliza.
+TITULO_POLIZA_RE = re.compile(r"POLIZA DE (?:SEGURO DE |GARANTIA UNICA DE )?CUMPLIMIENTO")
+CAMPO_VIGENCIA_RE = re.compile(r"VIGENCIA\s+HASTA")
 
 # "BENEFICIARIO INSTITUTO DE CAMINOS Y CONSTRUCCIONES DE CUNDINAMARCA - ICCU
 # NO. DOC. IDENTIDAD ..." — se exige la sigla de la entidad cerca de la
@@ -28,13 +35,31 @@ TITULO_POLIZA_RE = re.compile(r"POLIZA DE SEGURO DE CUMPLIMIENTO")
 # con leves variaciones de redacción).
 BENEFICIARIO_RE = re.compile(r"BENEFICIARIO.{0,150}ICCU")
 
-# "SERIEDAD DE LA OFERTA 00:00 HORAS DEL 29/07/2026 24:00 HORAS DEL
-# 10/11/2026 129.970.022,40 129.970,00 TOTAL ASEGURADO" — la fila del amparo
-# específico de seriedad de la oferta, con sus propias fechas de vigencia y
-# la suma asegurada (formato colombiano: "." de miles, "," decimal).
-VALOR_PESOS_RE = r"\d{1,3}(?:\.\d{3})*(?:,\d{2})?"
+# Fila del amparo específico de seriedad de la oferta, con sus propias fechas
+# de vigencia y la suma asegurada. Formatos confirmados:
+#   Mundial:            "SERIEDAD DE LA OFERTA 00:00 HORAS DEL 29/07/2026 24:00 HORAS DEL 10/11/2026 129.970.022,40"
+#   Seguros del Estado: "SERIEDAD DE LA OFERTA 29/07/2026 13/11/2026 $129,970,022.40"
+#   Confianza:          "SERIEDAD DE LA OFERTA 29/07/2026 10/11/2026 129,971,000.00"
+# El separador decimal cambia según la aseguradora (ver _parsear_valor_pesos).
+VALOR_PESOS_RE = r"\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?"
 AMPARO_SERIEDAD_RE = re.compile(
-    rf"SERIEDAD DE LA OFERTA\s+00:00\s*HORAS\s*DEL\s*(\d{{2}}/\d{{2}}/\d{{4}})\s+24:00\s*HORAS\s*DEL\s*(\d{{2}}/\d{{2}}/\d{{4}})\s+({VALOR_PESOS_RE})"
+    r"SERIEDAD DE LA OFERTA\s+(?:00:00\s*HORAS\s*DEL\s*)?(\d{2}/\d{2}/\d{4})\s+"
+    rf"(?:24:00\s*HORAS\s*DEL\s*)?(\d{{2}}/\d{{2}}/\d{{4}})\s+\$?\s*({VALOR_PESOS_RE})"
+)
+
+# Seguros del Estado a veces no deja la fila del amparo como texto (queda en
+# una capa no extraíble) pero sí la carátula: "TIPO MOVIMIENTO 24 07 2026
+# 29 07 2026 00:00 29 12 2026 23:59" (expedición, vigencia desde, vigencia
+# hasta) y "VALOR ASEGURADO TOTAL PLAN DE PAGO $ ***prima $ ***gastos $ ***iva
+# $ ***total $ ***valor asegurado". Una póliza de seriedad de la oferta solo
+# tiene ese amparo, así que la vigencia y el valor total de la póliza son los
+# del amparo; se usa solo cuando no se encontró la fila del amparo.
+_FECHA_ESPACIOS = r"(\d{2})\s+(\d{2})\s+(\d{4})"
+VIGENCIA_CARATULA_RE = re.compile(
+    rf"TIPO MOVIMIENTO\s+{_FECHA_ESPACIOS}\s+{_FECHA_ESPACIOS}\s+\d{{2}}:\d{{2}}\s+{_FECHA_ESPACIOS}\s+\d{{2}}:\d{{2}}"
+)
+VALOR_CARATULA_RE = re.compile(
+    rf"VALOR ASEGURADO TOTAL PLAN DE PAGO(?:\s*\$\s*\**{VALOR_PESOS_RE}){{4}}\s*\$\s*\**({VALOR_PESOS_RE})"
 )
 
 
@@ -84,9 +109,23 @@ def encontrar_poliza(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
         except Exception:  # noqa: BLE001
             continue
         texto_norm = _norm(texto)
-        if TITULO_POLIZA_RE.search(texto_norm):
+        if TITULO_POLIZA_RE.search(texto_norm) and CAMPO_VIGENCIA_RE.search(texto_norm):
             return nombre, texto
     return None
+
+
+def _leer_vigencia_y_valor(texto_norm: str) -> tuple[str | None, str | None]:
+    """Devuelve (vigencia_hasta 'dd/mm/aaaa', valor asegurado) leídos de la
+    fila del amparo de seriedad o, si no está, de la carátula de la póliza."""
+    amparo = AMPARO_SERIEDAD_RE.search(texto_norm)
+    if amparo is not None:
+        return amparo.group(2), amparo.group(3)
+    vigencia = VIGENCIA_CARATULA_RE.search(texto_norm)
+    valor = VALOR_CARATULA_RE.search(texto_norm)
+    if vigencia is None or valor is None:
+        return None, None
+    dia, mes, anio = vigencia.groups()[6:9]
+    return f"{dia}/{mes}/{anio}", valor.group(1)
 
 
 class ResultadoEvaluacionGarantia:
@@ -119,13 +158,12 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
     if not BENEFICIARIO_RE.search(texto_norm):
         motivos.append("no se pudo confirmar que el beneficiario de la póliza sea la entidad (ICCU)")
 
-    amparo_match = AMPARO_SERIEDAD_RE.search(texto_norm)
-    if amparo_match is None:
+    fecha_hasta_texto, valor_texto = _leer_vigencia_y_valor(texto_norm)
+    if fecha_hasta_texto is None or valor_texto is None:
         motivos.append(
             "no se pudieron leer la vigencia y el valor asegurado del amparo de seriedad de la oferta — confirma manualmente"
         )
     else:
-        fecha_desde_texto, fecha_hasta_texto, valor_texto = amparo_match.groups()
         fecha_hasta = _parsear_fecha_ddmmyyyy(fecha_hasta_texto)
         if fecha_hasta is None:
             motivos.append("no se pudo leer la fecha de vencimiento de la vigencia de la póliza")
