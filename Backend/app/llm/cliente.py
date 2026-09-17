@@ -12,6 +12,7 @@ Principios (ver conversación con el usuario, no negociables):
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -29,7 +30,10 @@ LLM_HABILITADO = os.environ.get("LLM_HABILITADO", "1") == "1"
 # consulta puede esperar en cola a las demás, de ahí el margen.
 LLM_TIMEOUT_SEGUNDOS = float(os.environ.get("LLM_TIMEOUT_SEGUNDOS", "240"))
 LLM_REINTENTOS = int(os.environ.get("LLM_REINTENTOS", "2"))
-LLM_CONTEXTO_TOKENS = int(os.environ.get("LLM_CONTEXTO_TOKENS", "8192"))
+# Con 8192 tokens Ollama retuvo ~9,6 GB de RAM en la medición real y llevó el
+# PC a usar toda la swap. Las secciones que se analizan (facultades, Formato 2,
+# carátula de la póliza) caben en 6144.
+LLM_CONTEXTO_TOKENS = int(os.environ.get("LLM_CONTEXTO_TOKENS", "6144"))
 # ~3.5 caracteres por token en español; se deja espacio para instrucciones
 # y respuesta.
 MAX_CARACTERES_DOCUMENTO = int(LLM_CONTEXTO_TOKENS * 2.6)
@@ -53,7 +57,22 @@ def _clave_cache(modelo: str, instruccion: str, documento: str) -> str:
     return hashlib.sha256(f"{modelo}\n{_SISTEMA}\n{instruccion}\n{documento}".encode()).hexdigest()
 
 
+# Una sola consulta al modelo a la vez en toda la máquina (entre workers):
+# consultas simultáneas hacen que Ollama reserve memoria para cada una y el
+# modelo, que no cabe entero en la GPU, termina compitiendo por RAM.
+_CANDADO_LLM = Path(os.environ.get("LLM_CANDADO", "/tmp/evaluador-juridico-llm.lock"))
+
+
 def _llamar(instruccion: str, documento: str) -> str:
+    with open(_CANDADO_LLM, "a") as candado:
+        fcntl.flock(candado, fcntl.LOCK_EX)
+        try:
+            return _llamar_sin_candado(instruccion, documento)
+        finally:
+            fcntl.flock(candado, fcntl.LOCK_UN)
+
+
+def _llamar_sin_candado(instruccion: str, documento: str) -> str:
     cuerpo = {
         "model": LLM_MODELO,
         "stream": False,

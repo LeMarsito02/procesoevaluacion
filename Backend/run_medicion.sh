@@ -11,4 +11,5 @@ inicio=$(date +%s)
 DRIVE_SOLO_CACHE=1 python3 -u scratch_medicion.py
 echo "TIEMPO TOTAL (reloj): $(( ($(date +%s) - inicio) / 60 )) min"
 pkill -9 -f "uvicorn app.main:app" 2>/dev/null
+pkill -9 -f "multiprocessing.spawn|multiprocessing.forkserver" 2>/dev/null
 echo "MEDICION TERMINADA"
