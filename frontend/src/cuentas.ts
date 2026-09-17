@@ -1,4 +1,4 @@
-/** API de cuentas: sesión, 2FA, invitaciones, equipo y entidades. */
+/** API de cuentas: sesión, 2FA, credenciales, equipo y entidades. */
 import { enviarJson, fijarCsrf, pedirJson } from './http'
 
 export type Rol = 'superadmin' | 'admin_entidad' | 'jefe_area' | 'evaluador' | 'consulta' | 'soporte'
@@ -24,17 +24,13 @@ export interface Usuario {
 export interface Miembro extends Usuario {
   activo: boolean
   ultimo_ingreso: string | null
+  debe_cambiar_clave: boolean
 }
 
-export interface Invitacion {
-  id: string
-  email: string
-  rol: Rol
-  rol_nombre: string
-  areas: TipoArea[]
-  creada_en: string
-  expira_en: string
-  vigente: boolean
+/** Solo llega una vez, al crear la cuenta o al reiniciar la contraseña. */
+export interface Credenciales {
+  usuario: Miembro
+  password_temporal: string
 }
 
 export interface Entidad {
@@ -56,7 +52,7 @@ export interface EventoAuditoria {
   ip: string | null
 }
 
-export type EstadoLogin = 'ok' | 'verificar_2fa' | 'configurar_2fa'
+export type EstadoLogin = 'ok' | 'cambiar_clave' | 'verificar_2fa' | 'configurar_2fa'
 
 interface LoginOut {
   estado: EstadoLogin
@@ -94,19 +90,15 @@ export const cambiarClave = (actual: string, nueva: string) =>
 export const solicitarRecuperacion = (email: string) => enviarJson<{ ok: boolean }>('/api/auth/recuperar', 'POST', { email })
 export const restablecerClave = (uid: string, token: string, password: string) =>
   enviarJson<{ ok: boolean }>('/api/auth/restablecer', 'POST', { uid, token, password })
-export const verInvitacion = (token: string) =>
-  pedirJson<{ email: string; entidad: string; rol_nombre: string }>(`/api/auth/invitaciones/${encodeURIComponent(token)}`)
-export const aceptarInvitacion = (token: string, nombre_completo: string, password: string) =>
-  conCsrf(enviarJson<LoginOut>(`/api/auth/invitaciones/${encodeURIComponent(token)}/aceptar`, 'POST', { nombre_completo, password }))
+export const fijarClaveInicial = (nueva: string) => conCsrf(enviarJson<LoginOut>('/api/auth/clave-inicial', 'POST', { nueva }))
 
 const q = (entidadId?: string | null) => (entidadId ? `?entidad_id=${entidadId}` : '')
 export const listarUsuarios = (entidadId?: string | null) => pedirJson<Miembro[]>(`/api/equipo/usuarios${q(entidadId)}`)
 export const actualizarUsuario = (id: string, cambios: { rol?: Rol; areas?: TipoArea[]; activo?: boolean }) =>
   enviarJson<Miembro>(`/api/equipo/usuarios/${id}`, 'PATCH', cambios)
-export const listarInvitaciones = (entidadId?: string | null) => pedirJson<Invitacion[]>(`/api/equipo/invitaciones${q(entidadId)}`)
-export const invitar = (datos: { email: string; rol: Rol; areas: TipoArea[] }, entidadId?: string | null) =>
-  enviarJson<Invitacion>(`/api/equipo/invitaciones${q(entidadId)}`, 'POST', datos)
-export const revocarInvitacion = (id: string) => enviarJson<void>(`/api/equipo/invitaciones/${id}`, 'DELETE')
+export const crearUsuario = (datos: { nombre_completo: string; email: string; rol: Rol; areas: TipoArea[] }, entidadId?: string | null) =>
+  enviarJson<Credenciales>(`/api/equipo/usuarios${q(entidadId)}`, 'POST', datos)
+export const reiniciarClave = (id: string) => enviarJson<Credenciales>(`/api/equipo/usuarios/${id}/clave`, 'POST')
 export const listarAuditoria = (entidadId?: string | null) => pedirJson<EventoAuditoria[]>(`/api/equipo/auditoria${q(entidadId)}`)
 
 export const listarEntidades = () => pedirJson<Entidad[]>('/api/plataforma/entidades')
@@ -114,11 +106,11 @@ export const crearEntidad = (datos: {
   nombre: string
   nit: string
   email_admin: string
+  nombre_admin: string
   sigla: string
   base: 'sistema' | 'copiar'
   copiar_de: string | null
-}) =>
-  enviarJson<Entidad>('/api/plataforma/entidades', 'POST', datos)
+}) => enviarJson<{ entidad: Entidad; credenciales: Credenciales }>('/api/plataforma/entidades', 'POST', datos)
 export const cambiarEstadoEntidad = (id: string, activa: boolean) =>
   enviarJson<Entidad>(`/api/plataforma/entidades/${id}`, 'PATCH', { activa })
 
@@ -151,4 +143,4 @@ export const otorgarSoporte = (datos: { soporte_id: string; horas: number; motiv
 export const revocarSoporte = (id: string) => enviarJson<void>(`/api/equipo/soporte/${id}`, 'DELETE')
 export const personalDeSoporte = () => pedirJson<PersonaSoporte[]>('/api/plataforma/soporte')
 export const crearCuentaSoporte = (email: string, nombre_completo: string) =>
-  enviarJson<PersonaSoporte>('/api/plataforma/soporte', 'POST', { email, nombre_completo })
+  enviarJson<{ soporte: PersonaSoporte; password_temporal: string }>('/api/plataforma/soporte', 'POST', { email, nombre_completo })

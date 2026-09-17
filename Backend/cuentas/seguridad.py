@@ -6,7 +6,6 @@ datos de su propia entidad. Las consultas de datos de entidad deben pasar por
 """
 from __future__ import annotations
 
-import hashlib
 import secrets
 from datetime import timedelta
 from typing import Iterable
@@ -28,14 +27,17 @@ MAX_FALLOS_POR_IP = 30
 
 
 class SesionActiva(APIKeyCookie):
-    """Sesión de Django válida, usuario activo, entidad activa y, si el rol
-    lo exige, segundo factor verificado. Verifica también el token CSRF."""
+    """Sesión de Django válida, usuario activo, entidad activa, contraseña
+    definitiva y, si el rol lo exige, segundo factor verificado. Verifica
+    también el token CSRF."""
 
     param_name = settings.SESSION_COOKIE_NAME
 
     def authenticate(self, request: HttpRequest, key: str | None) -> Usuario | None:
         usuario = request.user
         if not usuario.is_authenticated or not usuario.is_active:
+            return None
+        if usuario.debe_cambiar_clave:  # entró con una contraseña temporal
             return None
         if usuario.requiere_2fa and not request.session.get("segundo_factor_ok"):
             return None
@@ -139,15 +141,15 @@ def auditar(
     )
 
 
-# --- Tokens de un solo uso (invitaciones) ---
-def nuevo_token() -> tuple[str, str]:
-    """Devuelve (token para el enlace, hash para guardar)."""
-    token = secrets.token_urlsafe(32)
-    return token, hash_token(token)
+# --- Contraseñas temporales ---
+# Sin caracteres que se confunden al dictar o copiar una contraseña (l/I/1, O/0).
+ALFABETO_CLAVE = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
-def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
+def clave_temporal() -> str:
+    """Contraseña temporal legible, en tres grupos: `Kf7m-Qp2x-Rt9v`."""
+    grupos = ["".join(secrets.choice(ALFABETO_CLAVE) for _ in range(4)) for _ in range(3)]
+    return "-".join(grupos)
 
 
 ROLES_GESTION_EQUIPO = (Rol.ADMIN_ENTIDAD,)

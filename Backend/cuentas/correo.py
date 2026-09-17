@@ -4,22 +4,39 @@ from __future__ import annotations
 from django.conf import settings
 from django.core.mail import send_mail
 
-from cuentas.models import Invitacion, Usuario
+from cuentas.models import Usuario
 
 
 def _enviar(destinatario: str, asunto: str, cuerpo: str) -> None:
     send_mail(asunto, cuerpo, settings.DEFAULT_FROM_EMAIL, [destinatario])
 
 
-def enviar_invitacion(invitacion: Invitacion, token: str) -> None:
-    enlace = f"{settings.FRONTEND_URL}/invitacion/{token}"
+def enviar_cuenta_creada(usuario: Usuario, creada_por: Usuario | None) -> None:
+    """Avisa que la cuenta existe. La contraseña temporal NO viaja por correo:
+    la entrega en persona quien creó la cuenta."""
+    quien = creada_por.nombre_completo if creada_por else "El administrador"
+    donde = f" de {usuario.entidad.nombre}" if usuario.entidad else ""
     _enviar(
-        invitacion.email,
-        f"Invitación a MiEvaluador · {invitacion.entidad.nombre}",
-        f"Hola,\n\n"
-        f"Te invitaron a MiEvaluador como {invitacion.get_rol_display().lower()} de {invitacion.entidad.nombre}.\n\n"
-        f"Crea tu contraseña aquí (el enlace vence el {invitacion.expira_en:%d/%m/%Y}):\n{enlace}\n\n"
-        f"Si no esperabas este correo, ignóralo.\n\n— MiEvaluador by LeMarTek",
+        usuario.email,
+        f"Su cuenta de MiEvaluador{donde}",
+        f"Hola {usuario.nombre_completo},\n\n"
+        f"{quien} le creó una cuenta en MiEvaluador{donde} como {usuario.get_rol_display().lower()}.\n\n"
+        f"Ingrese en {settings.FRONTEND_URL} con este correo y la contraseña temporal que {quien} le entregó.\n"
+        f"Por seguridad, el sistema le pedirá cambiarla la primera vez que entre.\n\n"
+        f"Si no esperaba este correo, avísele a quien administra su entidad.\n\n— MiEvaluador by LeMarTek",
+    )
+
+
+def enviar_clave_reiniciada(usuario: Usuario, reiniciada_por: Usuario | None) -> None:
+    """Avisa que un administrador le puso una contraseña temporal nueva."""
+    quien = reiniciada_por.nombre_completo if reiniciada_por else "Un administrador"
+    _enviar(
+        usuario.email,
+        "Su contraseña de MiEvaluador fue reiniciada",
+        f"Hola {usuario.nombre_completo},\n\n"
+        f"{quien} reinició su contraseña. Entre con la contraseña temporal que le entregó y elija una nueva.\n\n"
+        f"{settings.FRONTEND_URL}\n\n"
+        f"Si no pidió este cambio, avísele de inmediato a quien administra su entidad.\n\n— MiEvaluador by LeMarTek",
     )
 
 

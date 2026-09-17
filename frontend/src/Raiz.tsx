@@ -14,7 +14,6 @@ import PaginaInicio from './paginas/PaginaInicio'
 import PaginaNuevoProceso from './paginas/PaginaNuevoProceso'
 import PaginaProcesos from './paginas/PaginaProcesos'
 import PaginaSoporte from './paginas/PaginaSoporte'
-import PaginaInvitacion from './paginas/PaginaInvitacion'
 import PaginaRestablecer from './paginas/PaginaRestablecer'
 import { encajar, navegar, useRuta } from './rutas'
 import { ContextoSesion, puedeCrearProcesos, puedeGestionarEquipo } from './sesion'
@@ -57,7 +56,7 @@ export default function Raiz() {
 
   const entrar = (u: Usuario) => {
     setUsuario(u)
-    if (encajar('/invitacion/:token', ruta) || encajar('/restablecer/:uid/:token', ruta)) navegar('/', true)
+    if (encajar('/restablecer/:uid/:token', ruta)) navegar('/', true)
   }
 
   const salir = useCallback(async () => {
@@ -70,8 +69,6 @@ export default function Raiz() {
   }, [])
 
   // Rutas públicas (con o sin sesión).
-  const invitacion = encajar('/invitacion/:token', ruta)
-  if (invitacion) return <PaginaInvitacion token={invitacion.token} onEntrar={entrar} />
   const restablecer = encajar('/restablecer/:uid/:token', ruta)
   if (restablecer) return <PaginaRestablecer uid={restablecer.uid} token={restablecer.token} />
 

@@ -23,7 +23,7 @@ export function useRuta(): string {
   return ruta
 }
 
-/** Devuelve los segmentos variables si `ruta` encaja con `patron` ("/invitacion/:token"). */
+/** Devuelve los segmentos variables si `ruta` encaja con `patron` ("/restablecer/:uid/:token"). */
 export function encajar(patron: string, ruta: string): Record<string, string> | null {
   const p = patron.split('/').filter(Boolean)
   const r = ruta.split('/').filter(Boolean)

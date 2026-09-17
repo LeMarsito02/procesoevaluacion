@@ -94,6 +94,9 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     # Segundo factor (TOTP). Obligatorio para el superadministrador.
     totp_secreto = models.CharField(max_length=64, blank=True, editable=False)
     totp_activo = models.BooleanField("2FA activo", default=False)
+    # La cuenta se creó (o se reinició) con una contraseña temporal: la persona
+    # debe elegir una propia antes de poder usar el sistema.
+    debe_cambiar_clave = models.BooleanField("debe cambiar la contraseña", default=False)
 
     objects = UsuarioManager()
 
@@ -129,34 +132,6 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     @property
     def es_soporte(self) -> bool:
         return self.rol == Rol.SOPORTE
-
-
-class Invitacion(models.Model):
-    """Invitación a una entidad. Solo se guarda el hash del token: quien lea
-    la base de datos no puede usar las invitaciones pendientes."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    entidad = models.ForeignKey(Entidad, on_delete=models.CASCADE, related_name="invitaciones")
-    email = models.EmailField("correo electrónico")
-    rol = models.CharField(max_length=20, choices=[c for c in Rol.choices if c[0] != Rol.SUPERADMIN])
-    areas = models.ManyToManyField(Area, blank=True)
-    token_hash = models.CharField(max_length=64, unique=True)
-    invitada_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name="+")
-    creada_en = models.DateTimeField(auto_now_add=True)
-    expira_en = models.DateTimeField()
-    aceptada_en = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        verbose_name = "invitación"
-        verbose_name_plural = "invitaciones"
-        ordering = ["-creada_en"]
-
-    def __str__(self) -> str:
-        return f"{self.email} → {self.entidad}"
-
-    @property
-    def vigente(self) -> bool:
-        return self.aceptada_en is None and self.expira_en > timezone.now()
 
 
 class IntentoInicioSesion(models.Model):

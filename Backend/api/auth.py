@@ -1,4 +1,5 @@
-"""Inicio de sesión, segundo factor, recuperación de contraseña e invitaciones."""
+"""Inicio de sesión, segundo factor, cambio obligatorio de la contraseña
+temporal y recuperación de contraseña."""
 from __future__ import annotations
 
 import time
@@ -11,7 +12,6 @@ from django.contrib.auth import authenticate, login, logout, update_session_auth
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError
-from django.db import transaction
 from django.http import HttpRequest
 from django.middleware.csrf import get_token
 from django.utils import timezone
@@ -22,12 +22,12 @@ from ninja.errors import HttpError
 from ninja.utils import check_csrf
 
 from cuentas.correo import enviar_recuperacion
-from cuentas.models import AccesoSoporte, Invitacion, Usuario
-from cuentas.seguridad import auditar, hash_token, inicio_bloqueado, ip_de, registrar_intento, sesion_activa
+from cuentas.models import AccesoSoporte, Usuario
+from cuentas.seguridad import auditar, inicio_bloqueado, ip_de, registrar_intento, sesion_activa
 
 router = Router(tags=["autenticación"])
 
-VIGENCIA_2FA_PENDIENTE = 5 * 60
+VIGENCIA_PENDIENTE = 5 * 60
 MAX_FALLOS_2FA = 5
 MENSAJE_CREDENCIALES = "Correo o contraseña incorrectos."
 
@@ -66,7 +66,8 @@ class LoginIn(Schema):
 
 
 class LoginOut(Schema):
-    # "ok": sesión iniciada. "verificar_2fa": falta el código de la app.
+    # "ok": sesión iniciada. "cambiar_clave": entró con la contraseña temporal
+    # y debe elegir una propia. "verificar_2fa": falta el código de la app.
     # "configurar_2fa": el rol exige 2FA y aún no está configurado.
     estado: str
     csrf: str
@@ -97,15 +98,8 @@ class CambiarClaveIn(Schema):
     nueva: str
 
 
-class InvitacionInfoOut(Schema):
-    email: str
-    entidad: str
-    rol_nombre: str
-
-
-class AceptarInvitacionIn(Schema):
-    nombre_completo: str
-    password: str
+class ClaveInicialIn(Schema):
+    nueva: str
 
 
 def usuario_out(usuario: Usuario) -> UsuarioOut:
@@ -142,16 +136,34 @@ def _iniciar(request: HttpRequest, usuario: Usuario, segundo_factor: bool) -> Lo
     return LoginOut(estado="ok", csrf=get_token(request), usuario=usuario_out(usuario))
 
 
-def _usuario_2fa_pendiente(request: HttpRequest) -> Usuario:
-    usuario_id = request.session.get("2fa_usuario")
-    desde = request.session.get("2fa_desde", 0)
-    if not usuario_id or time.time() - desde > VIGENCIA_2FA_PENDIENTE:
-        request.session.pop("2fa_usuario", None)
+def _usuario_pendiente(request: HttpRequest) -> Usuario:
+    """Quien ya acertó su contraseña pero aún no tiene sesión: le falta cambiar
+    la contraseña temporal o pasar el segundo factor."""
+    usuario_id = request.session.get("pendiente_usuario")
+    desde = request.session.get("pendiente_desde", 0)
+    if not usuario_id or time.time() - desde > VIGENCIA_PENDIENTE:
+        request.session.pop("pendiente_usuario", None)
         raise HttpError(401, "Vuelve a ingresar tu correo y contraseña.")
     usuario = Usuario.objects.filter(pk=usuario_id, is_active=True).first()
     if usuario is None:
         raise HttpError(401, "Vuelve a ingresar tu correo y contraseña.")
     return usuario
+
+
+def _pendiente(request: HttpRequest, usuario: Usuario, estado: str) -> LoginOut:
+    request.session["pendiente_usuario"] = str(usuario.pk)
+    request.session["pendiente_desde"] = time.time()
+    return LoginOut(estado=estado, csrf=get_token(request))
+
+
+def _siguiente_paso(request: HttpRequest, usuario: Usuario) -> LoginOut:
+    """Qué falta después de acertar la contraseña: cambiarla si es temporal,
+    luego el segundo factor si el rol lo exige, y si no, entrar."""
+    if usuario.debe_cambiar_clave:
+        return _pendiente(request, usuario, "cambiar_clave")
+    if not usuario.requiere_2fa:
+        return _iniciar(request, usuario, segundo_factor=False)
+    return _pendiente(request, usuario, "verificar_2fa" if usuario.totp_activo else "configurar_2fa")
 
 
 # --- Rutas ---
@@ -173,22 +185,18 @@ def iniciar_sesion(request: HttpRequest, datos: LoginIn) -> LoginOut:
         registrar_intento(email, ip, exitoso=False)
         raise HttpError(401, MENSAJE_CREDENCIALES)
 
-    if not usuario.requiere_2fa:
-        return _iniciar(request, usuario, segundo_factor=False)
-
-    # Contraseña correcta, pero falta el segundo factor: aún no hay sesión.
+    # Contraseña correcta; si falta algún paso, aún no hay sesión.
     request.session.cycle_key()
-    request.session["2fa_usuario"] = str(usuario.pk)
-    request.session["2fa_desde"] = time.time()
     request.session["2fa_fallos"] = 0
-    estado = "verificar_2fa" if usuario.totp_activo else "configurar_2fa"
-    return LoginOut(estado=estado, csrf=get_token(request))
+    return _siguiente_paso(request, usuario)
 
 
 @router.post("/2fa/configurar", response=Configurar2faOut)
 def configurar_2fa(request: HttpRequest) -> Configurar2faOut:
     _exigir_csrf(request)
-    usuario = _usuario_2fa_pendiente(request)
+    usuario = _usuario_pendiente(request)
+    if usuario.debe_cambiar_clave:
+        raise HttpError(400, "Primero cambia tu contraseña temporal.")
     if usuario.totp_activo:
         raise HttpError(400, "El segundo factor ya está configurado.")
     usuario.totp_secreto = pyotp.random_base32()
@@ -204,7 +212,9 @@ def configurar_2fa(request: HttpRequest) -> Configurar2faOut:
 @router.post("/2fa/verificar", response=LoginOut)
 def verificar_2fa(request: HttpRequest, datos: CodigoIn) -> LoginOut:
     _exigir_csrf(request)
-    usuario = _usuario_2fa_pendiente(request)
+    usuario = _usuario_pendiente(request)
+    if usuario.debe_cambiar_clave:
+        raise HttpError(400, "Primero cambia tu contraseña temporal.")
     codigo = "".join(c for c in datos.codigo if c.isdigit())
     if not usuario.totp_secreto or not pyotp.TOTP(usuario.totp_secreto).verify(codigo, valid_window=1):
         fallos = request.session.get("2fa_fallos", 0) + 1
@@ -215,7 +225,7 @@ def verificar_2fa(request: HttpRequest, datos: CodigoIn) -> LoginOut:
             raise HttpError(401, "Demasiados códigos incorrectos. Vuelve a iniciar sesión.")
         raise HttpError(401, "Código incorrecto.")
 
-    for clave in ("2fa_usuario", "2fa_desde", "2fa_fallos"):
+    for clave in ("pendiente_usuario", "pendiente_desde", "2fa_fallos"):
         request.session.pop(clave, None)
     if not usuario.totp_activo:
         usuario.totp_activo = True
@@ -243,7 +253,8 @@ def cambiar_clave(request: HttpRequest, datos: CambiarClaveIn) -> dict[str, bool
         raise HttpError(400, "La contraseña actual no es correcta.")
     _validar_clave(datos.nueva, usuario)
     usuario.set_password(datos.nueva)
-    usuario.save(update_fields=["password"])
+    usuario.debe_cambiar_clave = False
+    usuario.save(update_fields=["password", "debe_cambiar_clave"])
     update_session_auth_hash(request, usuario)  # cierra las demás sesiones, conserva esta
     auditar(request, "usuario.cambio_clave", objeto=usuario)
     return {"ok": True}
@@ -278,51 +289,28 @@ def restablecer_clave(request: HttpRequest, datos: RestablecerIn) -> dict[str, b
         raise HttpError(400, "El enlace no es válido o ya venció. Solicita uno nuevo.")
     _validar_clave(datos.password, usuario)
     usuario.set_password(datos.password)
-    usuario.save(update_fields=["password"])  # invalida el enlace y las sesiones abiertas
+    usuario.debe_cambiar_clave = False
+    usuario.save(update_fields=["password", "debe_cambiar_clave"])  # invalida el enlace y las sesiones abiertas
     auditar(request, "usuario.clave_restablecida", usuario=usuario, objeto=usuario)
     return {"ok": True}
 
 
-def _invitacion_vigente(token: str) -> Invitacion:
-    invitacion = Invitacion.objects.select_related("entidad").filter(token_hash=hash_token(token)).first()
-    if invitacion is None or not invitacion.vigente or not invitacion.entidad.activa:
-        raise HttpError(404, "La invitación no existe, ya se usó o venció. Pide una nueva al administrador.")
-    return invitacion
-
-
-@router.get("/invitaciones/{token}", response=InvitacionInfoOut)
-def ver_invitacion(request: HttpRequest, token: str) -> InvitacionInfoOut:
-    invitacion = _invitacion_vigente(token)
-    return InvitacionInfoOut(
-        email=invitacion.email, entidad=invitacion.entidad.nombre, rol_nombre=invitacion.get_rol_display()
-    )
-
-
-@router.post("/invitaciones/{token}/aceptar", response=LoginOut)
-def aceptar_invitacion(request: HttpRequest, token: str, datos: AceptarInvitacionIn) -> LoginOut:
+@router.post("/clave-inicial", response=LoginOut)
+def fijar_clave_inicial(request: HttpRequest, datos: ClaveInicialIn) -> LoginOut:
+    """Cambio obligatorio de la contraseña temporal, antes de tener sesión."""
     _exigir_csrf(request)
-    nombre = " ".join(datos.nombre_completo.split())
-    if len(nombre) < 5:
-        raise HttpError(400, "Escribe tu nombre completo.")
-    with transaction.atomic():
-        invitacion = _invitacion_vigente(token)
-        invitacion = Invitacion.objects.select_for_update().get(pk=invitacion.pk)
-        if not invitacion.vigente:
-            raise HttpError(404, "La invitación ya se usó.")
-        if Usuario.objects.filter(email=invitacion.email).exists():
-            raise HttpError(409, "Ya existe una cuenta con ese correo. Inicia sesión o recupera tu contraseña.")
-        usuario = Usuario(
-            email=invitacion.email, nombre_completo=nombre, entidad=invitacion.entidad, rol=invitacion.rol
-        )
-        _validar_clave(datos.password, usuario)
-        usuario.set_password(datos.password)
-        usuario.full_clean(exclude=["password"])
-        usuario.save()
-        usuario.areas.set(invitacion.areas.all())
-        invitacion.aceptada_en = timezone.now()
-        invitacion.save(update_fields=["aceptada_en"])
-        auditar(request, "invitacion.aceptada", usuario=usuario, objeto=invitacion)
-    return _iniciar(request, usuario, segundo_factor=False)
+    usuario = _usuario_pendiente(request)
+    if not usuario.debe_cambiar_clave:
+        raise HttpError(400, "Esta cuenta ya tiene contraseña definitiva.")
+    if usuario.check_password(datos.nueva):
+        raise HttpError(400, "Elige una contraseña distinta de la temporal.")
+    _validar_clave(datos.nueva, usuario)
+    usuario.set_password(datos.nueva)
+    usuario.debe_cambiar_clave = False
+    usuario.save(update_fields=["password", "debe_cambiar_clave"])
+    auditar(request, "usuario.clave_inicial", usuario=usuario, objeto=usuario)
+    # Sigue el camino normal: si su rol exige segundo factor, aún falta ese paso.
+    return _siguiente_paso(request, usuario)
 
 
 # --- Soporte de LeMarTek ---

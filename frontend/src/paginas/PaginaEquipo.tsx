@@ -1,23 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import Icono from '../components/Icono'
+import TarjetaCredenciales from '../components/TarjetaCredenciales'
 import {
   actualizarUsuario,
   otorgarSoporte,
+  reiniciarClave,
   revocarSoporte,
   soporteDeLaEntidad,
   type AccesoSoporte,
   type PersonaSoporte,
   AREAS,
-  invitar,
+  crearUsuario,
   listarAuditoria,
   listarEntidades,
-  listarInvitaciones,
   listarUsuarios,
-  revocarInvitacion,
   ROLES,
+  type Credenciales,
   type Entidad,
   type EventoAuditoria,
-  type Invitacion,
   type Miembro,
   type Rol,
   type TipoArea,
@@ -25,7 +25,7 @@ import {
 import { useSesion } from '../sesion'
 import { mensajeDe } from '../http'
 
-type Pestana = 'usuarios' | 'invitaciones' | 'actividad' | 'soporte'
+type Pestana = 'usuarios' | 'actividad' | 'soporte'
 
 const fecha = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
@@ -33,9 +33,9 @@ const fecha = (iso: string | null) =>
 const ACCIONES: Record<string, string> = {
   'sesion.inicio': 'Inició sesión',
   'sesion.cierre': 'Cerró sesión',
-  'invitacion.creada': 'Envió una invitación',
-  'invitacion.aceptada': 'Aceptó la invitación',
-  'invitacion.revocada': 'Revocó una invitación',
+  'usuario.creado': 'Creó una cuenta',
+  'usuario.clave_reiniciada': 'Reinició la contraseña de alguien',
+  'usuario.clave_inicial': 'Cambió su contraseña temporal',
   'usuario.actualizado': 'Modificó un usuario',
   'usuario.cambio_clave': 'Cambió su contraseña',
   'usuario.clave_restablecida': 'Restableció su contraseña',
@@ -64,11 +64,12 @@ export default function PaginaEquipo() {
   const [entidadId, setEntidadId] = useState<string | null>(esSuper ? null : (yo.entidad?.id ?? null))
   const [pestana, setPestana] = useState<Pestana>('usuarios')
   const [usuarios, setUsuarios] = useState<Miembro[]>([])
-  const [invitaciones, setInvitaciones] = useState<Invitacion[]>([])
   const [eventos, setEventos] = useState<EventoAuditoria[]>([])
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
-  const [invitando, setInvitando] = useState(false)
+  const [creando, setCreando] = useState(false)
+  // Credenciales recién generadas: se muestran una sola vez para entregarlas.
+  const [credenciales, setCredenciales] = useState<Credenciales | null>(null)
   const [filtro, setFiltro] = useState('')
 
   useEffect(() => {
@@ -89,15 +90,10 @@ export default function PaginaEquipo() {
   useEffect(() => {
     if (claveCarga === null) return
     let vigente = true
-    Promise.all([
-      listarUsuarios(idConsulta),
-      esAdmin ? listarInvitaciones(idConsulta) : Promise.resolve([]),
-      esAdmin ? listarAuditoria(idConsulta) : Promise.resolve([]),
-    ])
-      .then(([u, i, a]) => {
+    Promise.all([listarUsuarios(idConsulta), esAdmin ? listarAuditoria(idConsulta) : Promise.resolve([])])
+      .then(([u, a]) => {
         if (!vigente) return
         setUsuarios(u)
-        setInvitaciones(i)
         setEventos(a)
         setError(null)
       })
@@ -124,6 +120,17 @@ export default function PaginaEquipo() {
     }
   }
 
+  async function reiniciar(u: Miembro) {
+    if (!window.confirm(`¿Darle una contraseña temporal nueva a ${u.nombre_completo}? La actual dejará de servir.`)) return
+    try {
+      const nuevas = await reiniciarClave(u.id)
+      setUsuarios((lista) => lista.map((x) => (x.id === u.id ? nuevas.usuario : x)))
+      setCredenciales(nuevas)
+    } catch (e) {
+      setError(mensajeDe(e, 'No se pudo reiniciar la contraseña.'))
+    }
+  }
+
   const visibles = useMemo(() => {
     const t = filtro.trim().toLowerCase()
     return t ? usuarios.filter((u) => `${u.nombre_completo} ${u.email}`.toLowerCase().includes(t)) : usuarios
@@ -137,7 +144,7 @@ export default function PaginaEquipo() {
         <div>
           <div className="eyebrow">{nombreEntidad ?? 'Equipo'}</div>
           <h1>Equipo</h1>
-          <p>{esAdmin ? 'Invite personas, asígneles un rol y las áreas donde evalúan.' : 'Personas de sus áreas.'}</p>
+          <p>{esAdmin ? 'Cree las cuentas de su equipo, con su rol y las áreas donde evalúan.' : 'Personas de sus áreas.'}</p>
         </div>
         <div className="acciones">
           {esSuper && (
@@ -150,8 +157,8 @@ export default function PaginaEquipo() {
             </select>
           )}
           {esAdmin && (
-            <button className="btn btn-primary" type="button" onClick={() => setInvitando(true)} disabled={!entidadId}>
-              <Icono nombre="mas" /> Invitar persona
+            <button className="btn btn-primary" type="button" onClick={() => setCreando(true)} disabled={!entidadId}>
+              <Icono nombre="mas" /> Crear usuario
             </button>
           )}
         </div>
@@ -172,9 +179,6 @@ export default function PaginaEquipo() {
           <div className="segmented" role="tablist">
             <button type="button" aria-pressed={pestana === 'usuarios'} onClick={() => setPestana('usuarios')}>
               Usuarios ({usuarios.length})
-            </button>
-            <button type="button" aria-pressed={pestana === 'invitaciones'} onClick={() => setPestana('invitaciones')}>
-              Invitaciones pendientes ({invitaciones.length})
             </button>
             <button type="button" aria-pressed={pestana === 'actividad'} onClick={() => setPestana('actividad')}>
               Actividad
@@ -263,23 +267,29 @@ export default function PaginaEquipo() {
                     </td>
                     <td className="small muted nowrap">{fecha(u.ultimo_ingreso)}</td>
                     <td>
-                      {editable ? (
-                        <button
-                          type="button"
-                          className={`btn btn-sm ${u.activo ? 'btn-ghost' : 'btn-secondary'}`}
-                          onClick={() => {
-                            if (!u.activo || window.confirm(`¿Desactivar a ${u.nombre_completo}? Perderá el acceso de inmediato.`)) {
-                              cambiar(u, { activo: !u.activo })
-                            }
-                          }}
-                        >
-                          {u.activo ? 'Desactivar' : 'Reactivar'}
-                        </button>
-                      ) : (
-                        <span className="pill" data-estado={u.activo ? 'cumple' : 'no_aplica'}>
-                          <span className="dot" /> {u.activo ? 'Activo' : 'Inactivo'}
+                      <div className="acciones">
+                        <span className="pill" data-estado={!u.activo ? 'no_aplica' : u.debe_cambiar_clave ? 'revisar' : 'cumple'}>
+                          <span className="dot" /> {!u.activo ? 'Inactivo' : u.debe_cambiar_clave ? 'Sin estrenar' : 'Activo'}
                         </span>
-                      )}
+                        {editable && (
+                          <>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => reiniciar(u)}>
+                              <Icono nombre="llave" tam={14} /> Contraseña
+                            </button>
+                            <button
+                              type="button"
+                              className={`btn btn-sm ${u.activo ? 'btn-ghost' : 'btn-secondary'}`}
+                              onClick={() => {
+                                if (!u.activo || window.confirm(`¿Desactivar a ${u.nombre_completo}? Perderá el acceso de inmediato.`)) {
+                                  cambiar(u, { activo: !u.activo })
+                                }
+                              }}
+                            >
+                              {u.activo ? 'Desactivar' : 'Reactivar'}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -296,58 +306,6 @@ export default function PaginaEquipo() {
         </div>
       ) : pestana === 'soporte' ? (
         <SoporteEntidad entidadId={idConsulta} onAviso={setAviso} onError={setError} />
-      ) : pestana === 'invitaciones' ? (
-        <div className="tabla-wrap">
-          <table className="tabla">
-            <thead>
-              <tr>
-                <th>Correo</th>
-                <th>Rol</th>
-                <th>Áreas</th>
-                <th>Vence</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {invitaciones.map((i) => (
-                <tr key={i.id}>
-                  <td>
-                    <strong>{i.email}</strong>
-                  </td>
-                  <td>{i.rol_nombre}</td>
-                  <td className="small">{i.areas.map((t) => AREAS.find((a) => a.id === t)?.nombre).join(', ') || '—'}</td>
-                  <td className="small nowrap">
-                    {i.vigente ? fecha(i.expira_en) : <span className="pill" data-estado="error">Vencida</span>}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <button
-                      type="button"
-                      className="btn btn-bad btn-sm"
-                      onClick={async () => {
-                        try {
-                          await revocarInvitacion(i.id)
-                          setInvitaciones((l) => l.filter((x) => x.id !== i.id))
-                          setAviso('Invitación revocada')
-                        } catch (e) {
-                          setError(mensajeDe(e, 'No se pudo revocar.'))
-                        }
-                      }}
-                    >
-                      Revocar
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {invitaciones.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="vacio">
-                    No hay invitaciones pendientes.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
       ) : (
         <div className="tabla-wrap">
           <table className="tabla">
@@ -380,17 +338,18 @@ export default function PaginaEquipo() {
         </div>
       )}
 
-      {invitando && entidadId && (
-        <DialogoInvitar
+      {creando && entidadId && (
+        <DialogoCrearUsuario
           entidadId={idConsulta}
-          onCerrar={() => setInvitando(false)}
-          onInvitado={(inv) => {
-            setInvitando(false)
-            setInvitaciones((l) => [inv, ...l.filter((x) => x.email !== inv.email)])
-            setAviso(`Invitación enviada a ${inv.email}`)
+          onCerrar={() => setCreando(false)}
+          onCreado={(nuevas) => {
+            setCreando(false)
+            setUsuarios((l) => [nuevas.usuario, ...l])
+            setCredenciales(nuevas)
           }}
         />
       )}
+      {credenciales && <DialogoCredenciales datos={credenciales} onCerrar={() => setCredenciales(null)} />}
       {aviso && <div className="toast">{aviso}</div>}
     </main>
   )
@@ -411,15 +370,16 @@ function detalle(d: Record<string, unknown>) {
     .join(' · ')
 }
 
-function DialogoInvitar({
+function DialogoCrearUsuario({
   entidadId,
   onCerrar,
-  onInvitado,
+  onCreado,
 }: {
   entidadId: string | null
   onCerrar: () => void
-  onInvitado: (i: Invitacion) => void
+  onCreado: (c: Credenciales) => void
 }) {
+  const [nombre, setNombre] = useState('')
   const [email, setEmail] = useState('')
   const [rol, setRol] = useState<Rol>('evaluador')
   const [areas, setAreas] = useState<TipoArea[]>(['juridica'])
@@ -432,9 +392,9 @@ function DialogoInvitar({
     setEnviando(true)
     setError(null)
     try {
-      onInvitado(await invitar({ email, rol, areas }, entidadId))
+      onCreado(await crearUsuario({ nombre_completo: nombre, email, rol, areas }, entidadId))
     } catch (e) {
-      setError(mensajeDe(e, 'No se pudo invitar.'))
+      setError(mensajeDe(e, 'No se pudo crear la cuenta.'))
       setEnviando(false)
     }
   }
@@ -442,7 +402,7 @@ function DialogoInvitar({
   return (
     <>
       <div className="overlay" onClick={onCerrar} />
-      <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="titulo-invitar">
+      <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="titulo-crear-usuario">
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -451,16 +411,21 @@ function DialogoInvitar({
         >
           <div className="card-head">
             <div>
-              <h2 id="titulo-invitar">Invitar persona</h2>
-              <p>Recibirá un correo para crear su contraseña. El enlace vence en 7 días.</p>
+              <h2 id="titulo-crear-usuario">Crear usuario</h2>
+              <p>El sistema genera una contraseña temporal para que usted se la entregue. La persona la cambia al entrar.</p>
             </div>
             <button type="button" className="btn btn-ghost btn-icon" onClick={onCerrar} aria-label="Cerrar">
               <Icono nombre="x" />
             </button>
           </div>
           <div className="field" style={{ marginBottom: 18 }}>
-            <label htmlFor="inv-email">Correo electrónico</label>
-            <input id="inv-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required />
+            <label htmlFor="usr-nombre">Nombre completo</label>
+            <input id="usr-nombre" className="input" value={nombre} onChange={(e) => setNombre(e.target.value)} autoFocus required />
+          </div>
+          <div className="field" style={{ marginBottom: 18 }}>
+            <label htmlFor="usr-email">Correo electrónico</label>
+            <input id="usr-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <span className="hint">Con este correo inicia sesión; le llega un aviso de que su cuenta existe.</span>
           </div>
           <div className="field" style={{ marginBottom: 18 }}>
             <label>Rol</label>
@@ -508,10 +473,33 @@ function DialogoInvitar({
               Cancelar
             </button>
             <button type="submit" className="btn btn-primary" disabled={enviando || (necesitaArea && areas.length === 0)}>
-              {enviando ? <span className="spinner" /> : 'Enviar invitación'}
+              {enviando ? <span className="spinner" /> : 'Crear y generar contraseña'}
             </button>
           </div>
         </form>
+      </div>
+    </>
+  )
+}
+
+function DialogoCredenciales({ datos, onCerrar }: { datos: Credenciales; onCerrar: () => void }) {
+  return (
+    <>
+      <div className="overlay" onClick={onCerrar} />
+      <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="titulo-credenciales">
+        <div className="card-head">
+          <div>
+            <h2 id="titulo-credenciales">Credenciales de acceso</h2>
+            <p>Anótelas o cópielas antes de cerrar: no se vuelven a mostrar.</p>
+          </div>
+          <Icono nombre="llave" tam={22} />
+        </div>
+        <TarjetaCredenciales nombre={datos.usuario.nombre_completo} email={datos.usuario.email} password={datos.password_temporal} />
+        <div className="dialogo-pie">
+          <button type="button" className="btn btn-primary" onClick={onCerrar}>
+            Ya las entregué
+          </button>
+        </div>
       </div>
     </>
   )

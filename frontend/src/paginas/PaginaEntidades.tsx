@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Icono from '../components/Icono'
+import TarjetaCredenciales from '../components/TarjetaCredenciales'
 import { subirPlantilla } from '../configuracion'
 import {
   cambiarEstadoEntidad,
@@ -7,6 +8,7 @@ import {
   crearEntidad,
   listarEntidades,
   personalDeSoporte,
+  type Credenciales,
   type Entidad,
   type PersonaSoporte,
 } from '../cuentas'
@@ -115,10 +117,9 @@ export default function PaginaEntidades() {
         <DialogoEntidad
           onCerrar={() => setCreando(false)}
           entidades={entidades ?? []}
-          onCreada={(e, email, plantillas) => {
-            setCreando(false)
+          onCreada={(e, plantillas) => {
             setEntidades((l) => [...(l ?? []), e].sort((a, b) => a.nombre.localeCompare(b.nombre)))
-            setAviso(`Entidad creada${plantillas ? ` con ${plantillas} plantilla(s) de Excel` : ''}. Invitación enviada a ${email}`)
+            setAviso(`Entidad creada${plantillas ? ` con ${plantillas} plantilla(s) de Excel` : ''}.`)
           }}
         />
       )}
@@ -140,16 +141,19 @@ function DialogoEntidad({
 }: {
   entidades: Entidad[]
   onCerrar: () => void
-  onCreada: (e: Entidad, email: string, plantillas: number) => void
+  onCreada: (e: Entidad, plantillas: number) => void
 }) {
   const [nombre, setNombre] = useState('')
   const [nit, setNit] = useState('')
   const [sigla, setSigla] = useState('')
   const [email, setEmail] = useState('')
+  const [nombreAdmin, setNombreAdmin] = useState('')
   const [base, setBase] = useState<'sistema' | 'copiar'>('sistema')
   const [copiarDe, setCopiarDe] = useState('')
   const [excel, setExcel] = useState<Record<string, File | null>>({})
   const [creada, setCreada] = useState<Entidad | null>(null)
+  const [credenciales, setCredenciales] = useState<Credenciales | null>(null)
+  const [listo, setListo] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -158,9 +162,15 @@ function DialogoEntidad({
     setError(null)
     try {
       // Si falla una plantilla, la entidad ya existe: al reintentar solo se suben las que faltan.
-      const entidad =
-        creada ?? (await crearEntidad({ nombre, nit, email_admin: email, sigla, base, copiar_de: base === 'copiar' ? copiarDe : null }))
-      setCreada(entidad)
+      let entidad = creada
+      if (entidad === null) {
+        const r = await crearEntidad({
+          nombre, nit, email_admin: email, nombre_admin: nombreAdmin, sigla, base, copiar_de: base === 'copiar' ? copiarDe : null,
+        })
+        entidad = r.entidad
+        setCreada(entidad)
+        setCredenciales(r.credenciales)
+      }
       let subidas = 0
       for (const [tipo, archivo] of Object.entries(excel)) {
         if (!archivo) continue
@@ -168,14 +178,45 @@ function DialogoEntidad({
         subidas++
         setExcel((p) => ({ ...p, [tipo]: null }))
       }
-      onCreada(entidad, email, subidas)
+      onCreada(entidad, subidas)
+      setListo(true)
     } catch (e) {
       setError(mensajeDe(e, 'No se pudo crear la entidad.'))
+    } finally {
       setEnviando(false)
     }
   }
 
   const bloqueado = !!creada
+
+  // Ya está todo: solo queda entregarle las credenciales a su administrador.
+  if (listo && credenciales) {
+    return (
+      <>
+        <div className="overlay" onClick={onCerrar} />
+        <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="titulo-entidad-lista">
+          <div className="card-head">
+            <div>
+              <h2 id="titulo-entidad-lista">{creada?.nombre} quedó creada</h2>
+              <p>Entregue estas credenciales a su administrador: no se vuelven a mostrar.</p>
+            </div>
+            <Icono nombre="llave" tam={22} />
+          </div>
+          <TarjetaCredenciales
+            nombre={credenciales.usuario.nombre_completo}
+            email={credenciales.usuario.email}
+            password={credenciales.password_temporal}
+            contexto="Es el administrador de la entidad."
+          />
+          <div className="dialogo-pie">
+            <button type="button" className="btn btn-primary" onClick={onCerrar}>
+              Ya las entregué
+            </button>
+          </div>
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -190,7 +231,7 @@ function DialogoEntidad({
           <div className="card-head">
             <div>
               <h2 id="titulo-entidad">Nueva entidad</h2>
-              <p>Se crean sus áreas, su forma de evaluar y se invita a su primer administrador.</p>
+              <p>Se crean sus áreas, su forma de evaluar y la cuenta de su primer administrador.</p>
             </div>
             <button type="button" className="btn btn-ghost btn-icon" onClick={onCerrar} aria-label="Cerrar">
               <Icono nombre="x" />
@@ -211,9 +252,14 @@ function DialogoEntidad({
               <input id="ent-sigla" className="input" value={sigla} onChange={(e) => setSigla(e.target.value)} placeholder="IDU" disabled={bloqueado} />
               <span className="hint">Como aparece en los códigos de proceso y en las pólizas.</span>
             </div>
-            <div className="field" style={{ gridColumn: '1 / -1' }}>
-              <label htmlFor="ent-email">Correo del administrador de la entidad</label>
+            <div className="field">
+              <label htmlFor="ent-admin">Administrador de la entidad</label>
+              <input id="ent-admin" className="input" value={nombreAdmin} onChange={(e) => setNombreAdmin(e.target.value)} placeholder="Nombre completo" required disabled={bloqueado} />
+            </div>
+            <div className="field">
+              <label htmlFor="ent-email">Su correo</label>
               <input id="ent-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required disabled={bloqueado} />
+              <span className="hint">Se le crea la cuenta con una contraseña temporal que usted le entrega.</span>
             </div>
           </div>
 
@@ -277,7 +323,7 @@ function DialogoEntidad({
               {bloqueado ? 'Cerrar' : 'Cancelar'}
             </button>
             <button type="submit" className="btn btn-primary" disabled={enviando || (base === 'copiar' && !copiarDe)}>
-              {enviando ? <span className="spinner" /> : bloqueado ? 'Reintentar plantillas' : 'Crear e invitar'}
+              {enviando ? <span className="spinner" /> : bloqueado ? 'Reintentar plantillas' : 'Crear entidad'}
             </button>
           </div>
         </form>
@@ -291,6 +337,7 @@ function PersonalSoporte({ onAviso, onError }: { onAviso: (t: string) => void; o
   const [email, setEmail] = useState('')
   const [nombre, setNombre] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [nuevas, setNuevas] = useState<{ soporte: PersonaSoporte; password_temporal: string } | null>(null)
 
   useEffect(() => {
     personalDeSoporte()
@@ -301,11 +348,11 @@ function PersonalSoporte({ onAviso, onError }: { onAviso: (t: string) => void; o
   async function crear() {
     setEnviando(true)
     try {
-      const p = await crearCuentaSoporte(email, nombre)
-      setPersonal((l) => [...l, p])
+      const r = await crearCuentaSoporte(email, nombre)
+      setPersonal((l) => [...l, r.soporte])
       setEmail('')
       setNombre('')
-      onAviso(`Cuenta de soporte creada. ${p.email} recibe un enlace para crear su contraseña.`)
+      setNuevas(r)
     } catch (e) {
       onError(mensajeDe(e))
     } finally {
@@ -344,6 +391,38 @@ function PersonalSoporte({ onAviso, onError }: { onAviso: (t: string) => void; o
           {enviando ? <span className="spinner oscuro" /> : 'Crear cuenta'}
         </button>
       </form>
+      {nuevas && (
+        <>
+          <div className="overlay" onClick={() => setNuevas(null)} />
+          <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="titulo-soporte-nuevo">
+            <div className="card-head">
+              <div>
+                <h2 id="titulo-soporte-nuevo">Cuenta de soporte creada</h2>
+                <p>Entréguele estas credenciales: no se vuelven a mostrar.</p>
+              </div>
+              <Icono nombre="llave" tam={22} />
+            </div>
+            <TarjetaCredenciales
+              nombre={nuevas.soporte.nombre_completo}
+              email={nuevas.soporte.email}
+              password={nuevas.password_temporal}
+              contexto="Al entrar tendrá que cambiarla y configurar su verificación en dos pasos."
+            />
+            <div className="dialogo-pie">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  onAviso('Cuenta de soporte creada')
+                  setNuevas(null)
+                }}
+              >
+                Ya las entregué
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </section>
   )
 }

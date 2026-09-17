@@ -1,5 +1,9 @@
-"""Gestión del equipo de una entidad (usuarios, invitaciones, áreas) y de las
-entidades de la plataforma (solo superadministrador)."""
+"""Gestión del equipo de una entidad (usuarios, áreas) y de las entidades de
+la plataforma (solo superadministrador).
+
+Las cuentas las crea el administrador: el sistema genera una contraseña
+temporal, se muestra una sola vez para entregarla a la persona, y esta debe
+cambiarla al primer ingreso."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -8,10 +12,7 @@ from uuid import UUID
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.http import HttpRequest
-from django.contrib.auth.tokens import default_token_generator
 from django.shortcuts import get_object_or_404
-from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
 from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
@@ -24,32 +25,22 @@ from api.auth import AreaOut, UsuarioOut, usuario_out
 from evaluaciones import servicios
 from evaluaciones.models import PlantillaEvaluacion, PlantillaInforme
 from motor import criterios
-from cuentas.correo import enviar_acceso_soporte, enviar_invitacion, enviar_recuperacion
-from cuentas.models import AccesoSoporte, Area, Entidad, EventoAuditoria, Invitacion, Rol, TipoArea, Usuario
-from cuentas.seguridad import auditar, de_mi_entidad, nuevo_token, requiere_rol, sesion_activa
+from cuentas.correo import enviar_acceso_soporte, enviar_clave_reiniciada, enviar_cuenta_creada
+from cuentas.models import AccesoSoporte, Area, Entidad, EventoAuditoria, Rol, TipoArea, Usuario
+from cuentas.seguridad import auditar, clave_temporal, de_mi_entidad, requiere_rol, sesion_activa
 
 equipo = Router(tags=["equipo"], auth=sesion_activa)
 plataforma = Router(tags=["plataforma"], auth=sesion_activa)
 
-ROLES_INVITABLES = {Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA, Rol.EVALUADOR, Rol.CONSULTA}
+ROLES_ASIGNABLES = {Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA, Rol.EVALUADOR, Rol.CONSULTA}
 
 
 # --- Esquemas ---
-class InvitarIn(Schema):
+class CrearUsuarioIn(Schema):
+    nombre_completo: str
     email: str
     rol: str
     areas: list[str] = []  # tipos: juridica / tecnica / financiera
-
-
-class InvitacionOut(Schema):
-    id: UUID
-    email: str
-    rol: str
-    rol_nombre: str
-    areas: list[str]
-    creada_en: datetime
-    expira_en: datetime
-    vigente: bool
 
 
 class ActualizarUsuarioIn(Schema):
@@ -61,12 +52,22 @@ class ActualizarUsuarioIn(Schema):
 class MiembroOut(UsuarioOut):
     activo: bool
     ultimo_ingreso: datetime | None
+    # Aún no ha entrado a cambiar la contraseña temporal que le entregaron.
+    debe_cambiar_clave: bool
+
+
+class CredencialesOut(Schema):
+    """Se devuelve una sola vez: la contraseña no queda guardada en claro."""
+
+    usuario: MiembroOut
+    password_temporal: str
 
 
 class EntidadIn(Schema):
     nombre: str
     nit: str
     email_admin: str
+    nombre_admin: str
     # Sigla con la que aparece en códigos de proceso y pólizas (ej. IDU, ANI).
     sigla: str = ""
     # Cómo evaluará: "sistema" = base del sistema adaptada a su sigla;
@@ -82,6 +83,11 @@ class EntidadOut(Schema):
     activa: bool
     usuarios: int
     creada_en: datetime
+
+
+class EntidadCreadaOut(Schema):
+    entidad: EntidadOut
+    credenciales: CredencialesOut
 
 
 class ActualizarEntidadIn(Schema):
@@ -119,47 +125,37 @@ def _areas(entidad: Entidad, tipos: list[str]) -> list[Area]:
 
 
 def _miembro_out(u: Usuario) -> MiembroOut:
-    return MiembroOut(**usuario_out(u).dict(), activo=u.is_active, ultimo_ingreso=u.last_login)
-
-
-def _invitacion_out(inv: Invitacion) -> InvitacionOut:
-    return InvitacionOut(
-        id=inv.id,
-        email=inv.email,
-        rol=inv.rol,
-        rol_nombre=inv.get_rol_display(),
-        areas=[a.tipo for a in inv.areas.all()],
-        creada_en=inv.creada_en,
-        expira_en=inv.expira_en,
-        vigente=inv.vigente,
+    return MiembroOut(
+        **usuario_out(u).dict(), activo=u.is_active, ultimo_ingreso=u.last_login, debe_cambiar_clave=u.debe_cambiar_clave
     )
 
 
-def crear_invitacion(request: HttpRequest, entidad: Entidad, email: str, rol: str, tipos_area: list[str]) -> Invitacion:
+def crear_usuario_con_clave(
+    request: HttpRequest, entidad: Entidad, nombre: str, email: str, rol: str, tipos_area: list[str]
+) -> tuple[Usuario, str]:
+    """Crea la cuenta con una contraseña temporal y la devuelve para entregarla
+    en persona. Nunca se guarda en claro ni se envía por correo."""
     email = email.strip().lower()
-    if rol not in ROLES_INVITABLES:
+    nombre = " ".join(nombre.split())
+    if rol not in ROLES_ASIGNABLES:
         raise HttpError(400, "Rol no válido.")
     if "@" not in email:
         raise HttpError(400, "Correo no válido.")
+    if len(nombre) < 5:
+        raise HttpError(400, "Escriba el nombre completo de la persona.")
     if Usuario.objects.filter(email=email).exists():
         raise HttpError(409, "Ya existe un usuario con ese correo.")
     areas = _areas(entidad, tipos_area)
-    token, token_hash = nuevo_token()
+    clave = clave_temporal()
     with transaction.atomic():
-        # Una invitación nueva reemplaza las pendientes del mismo correo.
-        Invitacion.objects.filter(entidad=entidad, email=email, aceptada_en__isnull=True).delete()
-        invitacion = Invitacion.objects.create(
-            entidad=entidad,
-            email=email,
-            rol=rol,
-            token_hash=token_hash,
-            invitada_por=request.auth,
-            expira_en=timezone.now() + timedelta(days=settings.INVITACION_VIGENCIA_DIAS),
+        usuario = Usuario.objects.create_user(
+            email, clave, nombre_completo=nombre, entidad=entidad, rol=rol, debe_cambiar_clave=True
         )
-        invitacion.areas.set(areas)
-        auditar(request, "invitacion.creada", entidad_id=entidad.id, objeto=invitacion, email=email, rol=rol)
-        transaction.on_commit(lambda: enviar_invitacion(invitacion, token))
-    return invitacion
+        usuario.areas.set(areas)
+        auditar(request, "usuario.creado", entidad_id=entidad.id, objeto=usuario, email=email, rol=rol)
+        creador = request.auth
+        transaction.on_commit(lambda: enviar_cuenta_creada(usuario, creador))
+    return usuario, clave
 
 
 # --- Equipo de la entidad ---
@@ -191,7 +187,7 @@ def actualizar_usuario(request: HttpRequest, usuario_id: UUID, datos: Actualizar
 
     cambios: dict = {}
     if datos.rol is not None and datos.rol != objetivo.rol:
-        if datos.rol not in ROLES_INVITABLES:
+        if datos.rol not in ROLES_ASIGNABLES:
             raise HttpError(400, "Rol no válido.")
         cambios["rol"] = [objetivo.rol, datos.rol]
         objetivo.rol = datos.rol
@@ -212,30 +208,30 @@ def actualizar_usuario(request: HttpRequest, usuario_id: UUID, datos: Actualizar
     return _miembro_out(objetivo)
 
 
-@equipo.get("/invitaciones", response=list[InvitacionOut])
-def listar_invitaciones(request: HttpRequest, entidad_id: UUID | None = None) -> list[InvitacionOut]:
+@equipo.post("/usuarios", response={201: CredencialesOut})
+def crear_usuario(request: HttpRequest, datos: CrearUsuarioIn, entidad_id: UUID | None = None):
+    """Crea la cuenta y devuelve la contraseña temporal (se muestra una vez)."""
     requiere_rol(request.auth, (Rol.ADMIN_ENTIDAD,))
     entidad = _entidad_objetivo(request.auth, entidad_id)
-    qs = Invitacion.objects.filter(entidad=entidad, aceptada_en__isnull=True).prefetch_related("areas")
-    return [_invitacion_out(i) for i in qs]
+    usuario, clave = crear_usuario_con_clave(request, entidad, datos.nombre_completo, datos.email, datos.rol, datos.areas)
+    return 201, CredencialesOut(usuario=_miembro_out(usuario), password_temporal=clave)
 
 
-@equipo.post("/invitaciones", response={201: InvitacionOut})
-def invitar(request: HttpRequest, datos: InvitarIn, entidad_id: UUID | None = None):
-    requiere_rol(request.auth, (Rol.ADMIN_ENTIDAD,))
-    entidad = _entidad_objetivo(request.auth, entidad_id)
-    return 201, _invitacion_out(crear_invitacion(request, entidad, datos.email, datos.rol, datos.areas))
-
-
-@equipo.delete("/invitaciones/{invitacion_id}", response={204: None})
-def revocar_invitacion(request: HttpRequest, invitacion_id: UUID):
-    requiere_rol(request.auth, (Rol.ADMIN_ENTIDAD,))
-    invitacion = get_object_or_404(
-        de_mi_entidad(Invitacion.objects.filter(aceptada_en__isnull=True), request.auth), pk=invitacion_id
-    )
-    auditar(request, "invitacion.revocada", entidad_id=invitacion.entidad_id, objeto=invitacion, email=invitacion.email)
-    invitacion.delete()
-    return 204, None
+@equipo.post("/usuarios/{usuario_id}/clave", response=CredencialesOut)
+def reiniciar_clave(request: HttpRequest, usuario_id: UUID) -> CredencialesOut:
+    """Le pone una contraseña temporal nueva a alguien que perdió la suya."""
+    actor: Usuario = request.auth
+    requiere_rol(actor, (Rol.ADMIN_ENTIDAD,))
+    objetivo = get_object_or_404(de_mi_entidad(Usuario.objects.exclude(rol=Rol.SUPERADMIN), actor), pk=usuario_id)
+    if objetivo.pk == actor.pk:
+        raise HttpError(400, "Cambie su propia contraseña desde «Mi cuenta».")
+    clave = clave_temporal()
+    objetivo.set_password(clave)  # invalida sus sesiones abiertas
+    objetivo.debe_cambiar_clave = True
+    objetivo.save(update_fields=["password", "debe_cambiar_clave"])
+    auditar(request, "usuario.clave_reiniciada", entidad_id=objetivo.entidad_id, objeto=objetivo, email=objetivo.email)
+    transaction.on_commit(lambda: enviar_clave_reiniciada(objetivo, actor))
+    return CredencialesOut(usuario=_miembro_out(objetivo), password_temporal=clave)
 
 
 # --- Plataforma (solo superadministrador) ---
@@ -254,9 +250,10 @@ def listar_entidades(request: HttpRequest) -> list[EntidadOut]:
     return [_entidad_out(e) for e in Entidad.objects.all()]
 
 
-@plataforma.post("/entidades", response={201: EntidadOut})
+@plataforma.post("/entidades", response={201: EntidadCreadaOut})
 def crear_entidad(request: HttpRequest, datos: EntidadIn):
-    """Crea la entidad con sus tres áreas e invita a su primer administrador."""
+    """Crea la entidad con sus tres áreas y la cuenta de su primer administrador,
+    cuya contraseña temporal se devuelve una sola vez."""
     _solo_superadmin(request)
     nombre = " ".join(datos.nombre.split())
     nit = datos.nit.strip()
@@ -268,10 +265,14 @@ def crear_entidad(request: HttpRequest, datos: EntidadIn):
             Area.objects.bulk_create([Area(entidad=entidad, tipo=t) for t in TipoArea.values])
             auditar(request, "entidad.creada", entidad_id=entidad.id, objeto=entidad, nombre=nombre, nit=nit)
             _plantillas_iniciales(request, entidad, datos)
-            crear_invitacion(request, entidad, datos.email_admin, Rol.ADMIN_ENTIDAD, [])
+            admin, clave = crear_usuario_con_clave(
+                request, entidad, datos.nombre_admin, datos.email_admin, Rol.ADMIN_ENTIDAD, []
+            )
     except IntegrityError as exc:
         raise HttpError(409, "Ya existe una entidad con ese NIT.") from exc
-    return 201, _entidad_out(entidad)
+    return 201, EntidadCreadaOut(
+        entidad=_entidad_out(entidad), credenciales=CredencialesOut(usuario=_miembro_out(admin), password_temporal=clave)
+    )
 
 
 def _plantillas_iniciales(request: HttpRequest, entidad: Entidad, datos: EntidadIn) -> None:
@@ -364,6 +365,11 @@ class CrearSoporteIn(Schema):
     nombre_completo: str
 
 
+class CredencialesSoporteOut(Schema):
+    soporte: SoporteOut
+    password_temporal: str
+
+
 def _acceso_out(a: AccesoSoporte) -> AccesoSoporteOut:
     return AccesoSoporteOut(
         id=a.id,
@@ -429,18 +435,23 @@ def personal_de_soporte(request: HttpRequest) -> list[SoporteOut]:
     return [SoporteOut(id=u.id, nombre_completo=u.nombre_completo, email=u.email) for u in Usuario.objects.filter(rol=Rol.SOPORTE)]
 
 
-@plataforma.post("/soporte", response={201: SoporteOut})
+@plataforma.post("/soporte", response={201: CredencialesSoporteOut})
 def crear_soporte(request: HttpRequest, datos: CrearSoporteIn):
-    """Crea una cuenta de soporte de LeMarTek; la persona define su contraseña
-    con el enlace de recuperación que le llega al correo."""
+    """Crea una cuenta de soporte de LeMarTek con contraseña temporal; la
+    persona la cambia y configura su segundo factor al primer ingreso."""
     _solo_superadmin(request)
     email = datos.email.strip().lower()
+    nombre = " ".join(datos.nombre_completo.split())
     if not email.endswith("@lemartek.com"):
         raise HttpError(400, "El soporte debe usar un correo @lemartek.com.")
     if Usuario.objects.filter(email=email).exists():
         raise HttpError(409, "Ya existe un usuario con ese correo.")
-    usuario = Usuario.objects.create_user(email, None, nombre_completo=" ".join(datos.nombre_completo.split()), rol=Rol.SOPORTE)
-    uid = urlsafe_base64_encode(force_bytes(usuario.pk))
-    transaction.on_commit(lambda: enviar_recuperacion(usuario, uid, default_token_generator.make_token(usuario)))
+    clave = clave_temporal()
+    usuario = Usuario.objects.create_user(email, clave, nombre_completo=nombre, rol=Rol.SOPORTE, debe_cambiar_clave=True)
+    creador = request.auth
+    transaction.on_commit(lambda: enviar_cuenta_creada(usuario, creador))
     auditar(request, "soporte.cuenta_creada", entidad_id=None, objeto=usuario, email=email)
-    return 201, SoporteOut(id=usuario.id, nombre_completo=usuario.nombre_completo, email=usuario.email)
+    return 201, CredencialesSoporteOut(
+        soporte=SoporteOut(id=usuario.id, nombre_completo=usuario.nombre_completo, email=usuario.email),
+        password_temporal=clave,
+    )

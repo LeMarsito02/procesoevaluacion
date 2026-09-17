@@ -24,6 +24,8 @@ const TRAZOS = {
   usuarios: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8',
   mas: 'M12 5v14M5 12h14',
   escudo: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4',
+  copiar: 'M9 9h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V11a2 2 0 0 1 2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+  llave: 'M21 2l-2 2m-3.5 3.5L19 4M9.5 14.5a5 5 0 1 0-4-4 5 5 0 0 0 4 4zM12.5 11.5 19 5',
 } as const
 
 export type NombreIcono = keyof typeof TRAZOS

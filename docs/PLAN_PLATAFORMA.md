@@ -110,14 +110,14 @@ Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión 
 
 | Página | Para quién | Contenido |
 |---|---|---|
-| **Login** | Todos | Correo y contraseña; botones Microsoft / Google / Empleados LeMarTek (próximamente); recuperar contraseña; aceptar invitación. |
+| **Login** | Todos | Correo y contraseña; botones Microsoft / Google / Empleados LeMarTek (próximamente); recuperar contraseña; cambio obligatorio de la contraseña temporal al primer ingreso. |
 | **Mis evaluaciones** | Evaluador, jefe | Lista de mis evaluaciones con **barra de progreso animada**, estado, posición en fila, **tiempo estimado**, pendientes por revisar, fecha de cierre; filtros y búsqueda. |
 | **Procesos de la entidad** | Todos (lectura) | Todos los procesos con sus evaluaciones, avance, responsables y estado. |
 | **Equipo y asignaciones** | Jefe de área | Evaluaciones sin asignar, carga de trabajo de cada integrante (evaluaciones y pendientes), asignar/reasignar, avance del equipo. |
 | **Nuevo proceso** | Jefe / evaluador | Asistente actual (Documento Base, Drive, datos), eligiendo qué evaluaciones incluye. |
 | **Evaluación** | Asignados | Matriz, revisión e informe (lo actual), por tipo de evaluación. |
 | **Fila de trabajos** | Administrador, superadmin | Qué se está evaluando, cola, workers, tiempos. |
-| **Administración de la entidad** | Administrador | Usuarios, áreas, roles, invitaciones; criterios y requisitos (§5); plantillas de informe; Drive; permisos temporales de soporte. |
+| **Administración de la entidad** | Administrador | Usuarios (creación de cuentas y reinicio de contraseñas), áreas, roles; criterios y requisitos (§5); plantillas de informe; Drive; permisos temporales de soporte. |
 | **Superadministración** | Superadmin | Entidades, uso, salud del sistema, auditoría global. |
 | **Mi perfil** | Todos | Datos, contraseña, notificaciones. |
 
@@ -146,7 +146,7 @@ Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión 
 | Fase | Contenido | Resultado verificable |
 |---|---|---|
 | **F0. Base** ✅ | Migración de FastAPI a Django + Django Ninja, PostgreSQL, migraciones, configuración, estructura del motor común y registro de tipos (jurídica migrada sin cambiar su acierto) | La medición jurídica da el mismo 85,5 %. |
-| **F1. Identidad y aislamiento** ✅ | Entidades, áreas, usuarios, roles, login (+ botones de próximamente), invitaciones, recuperación, auditoría, superadmin con 2FA, pruebas de aislamiento. La RLS se aplica en F2 sobre las tablas de datos de la entidad (procesos, evaluaciones, documentos) | Dos entidades de prueba no se ven entre sí. |
+| **F1. Identidad y aislamiento** ✅ | Entidades, áreas, usuarios, roles, login (+ botones de próximamente), credenciales creadas por el administrador, recuperación, auditoría, superadmin con 2FA, pruebas de aislamiento. La RLS se aplica en F2 sobre las tablas de datos de la entidad (procesos, evaluaciones, documentos) | Dos entidades de prueba no se ven entre sí. |
 | **F2. Procesos, evaluaciones y asignaciones** ✅ | Procesos con varias evaluaciones; asignación por jefe; "Mis evaluaciones", "Procesos de la entidad", "Equipo y asignaciones"; revisiones guardadas en el servidor; RLS de PostgreSQL con rol de base de datos sin privilegios | Un jefe asigna, el evaluador revisa desde otro equipo sin perder nada. |
 | **F3. Fila de trabajos** ✅ | Worker separado, reparto justo, barras de progreso y ETA en vivo, pausar/cancelar, recuperación, correos | Varias evaluaciones de distintos usuarios avanzan en orden y avisan por correo. |
 | **F4. Plantillas de evaluación por entidad** ✅ | Cada entidad define, por tipo, sus requisitos (numeración, nombre, grupo), la verificación de cada uno (del motor o armada con bloques), parámetros (vigencias, sigla, beneficiario), su Excel con mapeo y versiones; prueba contra ofertas reales y propuesta con IA; el superadmin elige la base al crear la entidad | Una entidad crea un requisito nuevo sin programar y lo prueba. |

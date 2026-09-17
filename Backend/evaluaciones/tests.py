@@ -705,9 +705,12 @@ class PlantillaEvaluacionTests(BaseEvaluaciones):
         c.entrar("santiagopebe01@lemartek.com")
         secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
         c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
-        r = c.post("/api/plataforma/entidades", {"nombre": "Tercera Entidad", "nit": "899000003", "email_admin": "admin@tercera.gov.co", "sigla": "ent3"})
+        r = c.post(
+            "/api/plataforma/entidades",
+            {"nombre": "Tercera Entidad", "nit": "899000003", "email_admin": "admin@tercera.gov.co", "nombre_admin": "Admin Tercera", "sigla": "ent3"},
+        )
         self.assertEqual(r.status_code, 201, r.content)
-        tercera = r.json()["id"]
+        tercera = r.json()["entidad"]["id"]
         juridica = c.get(f"/api/configuracion/evaluaciones?entidad_id={tercera}").json()[0]
         self.assertEqual(juridica["activa"]["version"], 1)
         self.assertEqual(juridica["definicion"]["parametros"]["prefijo_codigo"], "ENT3")
@@ -715,10 +718,13 @@ class PlantillaEvaluacionTests(BaseEvaluaciones):
 
         r = c.post(
             "/api/plataforma/entidades",
-            {"nombre": "Entidad Copiada", "nit": "123", "email_admin": "a@copia.gov.co", "base": "copiar", "copiar_de": str(self.entidad1.id)},
+            {
+                "nombre": "Entidad Copiada", "nit": "123", "email_admin": "a@copia.gov.co", "nombre_admin": "Admin Copia",
+                "base": "copiar", "copiar_de": str(self.entidad1.id),
+            },
         )
         self.assertEqual(r.status_code, 201, r.content)
-        copia = c.get(f"/api/configuracion/evaluaciones?entidad_id={r.json()['id']}").json()[0]
+        copia = c.get(f"/api/configuracion/evaluaciones?entidad_id={r.json()['entidad']['id']}").json()[0]
         self.assertEqual(copia["activa"]["nombre"], "Jurídica Entidad 2026")
         self.assertEqual(len(copia["definicion"]["requisitos"]), 17)
 

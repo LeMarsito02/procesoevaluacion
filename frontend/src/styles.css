@@ -349,6 +349,11 @@ kbd { font-family: var(--sans); font-size: 11.5px; border: 1px solid var(--line-
 .qr { display: grid; place-items: center; min-height: 200px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); padding: 12px; }
 .qr img { width: 200px; height: 200px; }
 .secreto { font-size: 12px; background: var(--na-soft); padding: 2px 6px; border-radius: 6px; overflow-wrap: anywhere; user-select: all; }
+.credenciales { display: flex; flex-direction: column; gap: 14px; }
+.credenciales-datos { display: grid; gap: 10px; margin: 0; }
+.credenciales-datos dt { font-size: 12.5px; color: var(--ink-3); margin-bottom: 3px; }
+.credenciales-datos dd { margin: 0; }
+.clave-temporal { font-size: 17px; letter-spacing: 0.06em; padding: 8px 10px; display: inline-block; }
 .input-codigo { font-size: 24px; letter-spacing: 0.35em; text-align: center; font-variant-numeric: tabular-nums; height: 54px; }
 .pantalla-carga { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
 @media (max-width: 860px) {

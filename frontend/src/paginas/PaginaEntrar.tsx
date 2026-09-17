@@ -1,12 +1,12 @@
 import QRCode from 'qrcode'
 import { useEffect, useState } from 'react'
 import Icono from '../components/Icono'
-import { configurar2fa, iniciarSesion, solicitarRecuperacion, verificar2fa, type Usuario } from '../cuentas'
-import CampoClave from './CampoClave'
+import { configurar2fa, fijarClaveInicial, iniciarSesion, solicitarRecuperacion, verificar2fa, type Usuario } from '../cuentas'
+import CampoClave, { ReglasClave } from './CampoClave'
 import MarcoAcceso from './MarcoAcceso'
 import { mensajeDe } from '../http'
 
-type Etapa = 'credenciales' | 'verificar_2fa' | 'configurar_2fa' | 'recuperar' | 'recuperar_enviado'
+type Etapa = 'credenciales' | 'cambiar_clave' | 'verificar_2fa' | 'configurar_2fa' | 'recuperar' | 'recuperar_enviado'
 
 const PROVEEDORES = ['Microsoft', 'Google', 'Empleados LeMarTek']
 
@@ -15,6 +15,8 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
   const [email, setEmail] = useState('')
   const [clave, setClave] = useState('')
   const [codigo, setCodigo] = useState('')
+  const [nueva, setNueva] = useState('')
+  const [confirmacion, setConfirmacion] = useState('')
   const [qr, setQr] = useState<string | null>(null)
   const [secreto, setSecreto] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
@@ -50,6 +52,16 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
       else setEtapa(r.estado as Etapa)
     })
 
+  // Primer ingreso (o contraseña reiniciada): elige su contraseña definitiva.
+  const cambiar = () =>
+    ejecutar(async () => {
+      const r = await fijarClaveInicial(nueva)
+      setNueva('')
+      setConfirmacion('')
+      if (r.estado === 'ok' && r.usuario) onEntrar(r.usuario)
+      else setEtapa(r.estado as Etapa)
+    })
+
   const verificar = () =>
     ejecutar(async () => {
       try {
@@ -78,6 +90,43 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
       <div>{error}</div>
     </div>
   )
+
+  if (etapa === 'cambiar_clave') {
+    return (
+      <MarcoAcceso>
+        <div className="eyebrow">Primer ingreso</div>
+        <h1 className="acceso-titulo">Elija su contraseña</h1>
+        <p className="muted">
+          Entró con la contraseña temporal que le entregaron. Escoja una propia: nadie más debe conocerla, ni siquiera quien creó su
+          cuenta.
+        </p>
+        <form
+          className="acceso-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            cambiar()
+          }}
+        >
+          <div className="field">
+            <label htmlFor="nueva">Contraseña nueva</label>
+            <CampoClave id="nueva" valor={nueva} onCambiar={setNueva} autoComplete="new-password" autoFocus />
+          </div>
+          <div className="field">
+            <label htmlFor="nueva2">Repita la contraseña</label>
+            <CampoClave id="nueva2" valor={confirmacion} onCambiar={setConfirmacion} autoComplete="new-password" />
+            <ReglasClave clave={nueva} confirmacion={confirmacion} />
+          </div>
+          {alerta}
+          <button className="btn btn-primary btn-lg btn-bloque" type="submit" disabled={enviando || nueva !== confirmacion || nueva.length < 10}>
+            {enviando ? <span className="spinner" /> : 'Guardar y entrar'}
+          </button>
+          <button type="button" className="btn btn-ghost btn-bloque" onClick={() => window.location.reload()}>
+            Volver al inicio
+          </button>
+        </form>
+      </MarcoAcceso>
+    )
+  }
 
   if (etapa === 'verificar_2fa' || etapa === 'configurar_2fa') {
     return (
@@ -221,7 +270,7 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
           </button>
         ))}
       </div>
-      <p className="small muted acceso-nota">¿No tiene cuenta? El administrador de su entidad debe invitarlo.</p>
+      <p className="small muted acceso-nota">¿No tiene cuenta? El administrador de su entidad debe crearla y entregarle sus credenciales.</p>
     </MarcoAcceso>
   )
 }

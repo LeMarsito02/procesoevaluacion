@@ -7,7 +7,7 @@ import pyotp
 from django.core import mail
 from django.test import Client, TestCase
 
-from cuentas.models import Area, Entidad, EventoAuditoria, Invitacion, Rol, TipoArea, Usuario
+from cuentas.models import Area, Entidad, EventoAuditoria, Rol, TipoArea, Usuario
 
 CLAVE = "Clave-Segura-2026"
 
@@ -182,12 +182,12 @@ class AislamientoTests(BaseCuentas):
         self.admin_otra.refresh_from_db()
         self.assertTrue(self.admin_otra.is_active)
 
-    def test_admin_no_revoca_invitacion_de_otra_entidad(self):
-        inv = Invitacion.objects.create(entidad=self.otra, email="x@otraentidad.gov.co", rol=Rol.EVALUADOR, token_hash="h" * 64, expira_en="2099-01-01T00:00:00Z")
+    def test_admin_no_reinicia_la_clave_de_otra_entidad(self):
         c = Cliente()
         c.entrar("admin@entidad.gov.co")
-        self.assertEqual(c.delete(f"/api/equipo/invitaciones/{inv.id}").status_code, 404)
-        self.assertTrue(Invitacion.objects.filter(pk=inv.pk).exists())
+        self.assertEqual(c.post(f"/api/equipo/usuarios/{self.admin_otra.id}/clave").status_code, 404)
+        self.admin_otra.refresh_from_db()
+        self.assertFalse(self.admin_otra.debe_cambiar_clave)
 
     def test_admin_no_ve_auditoria_de_otra_entidad(self):
         EventoAuditoria.objects.create(entidad=self.otra, accion="secreto.otra")
@@ -207,7 +207,9 @@ class AislamientoTests(BaseCuentas):
         c = Cliente()
         c.entrar("abogado@entidad.gov.co")
         self.assertEqual(c.get("/api/equipo/usuarios").status_code, 403)
-        self.assertEqual(c.post("/api/equipo/invitaciones", {"email": "n@entidad.gov.co", "rol": "evaluador"}).status_code, 403)
+        self.assertEqual(
+            c.post("/api/equipo/usuarios", {"nombre_completo": "Nueva Persona", "email": "n@entidad.gov.co", "rol": "evaluador"}).status_code, 403
+        )
 
     def test_solo_superadmin_gestiona_entidades(self):
         c = Cliente()
@@ -219,7 +221,7 @@ class AislamientoTests(BaseCuentas):
         c.entrar("admin@entidad.gov.co")
         r = c.patch(f"/api/equipo/usuarios/{self.evaluador.id}", {"rol": "superadmin"})
         self.assertEqual(r.status_code, 400)
-        r = c.post("/api/equipo/invitaciones", {"email": "n@entidad.gov.co", "rol": "superadmin"})
+        r = c.post("/api/equipo/usuarios", {"nombre_completo": "Nueva Persona", "email": "n@entidad.gov.co", "rol": "superadmin"})
         self.assertEqual(r.status_code, 400)
 
     def test_admin_no_se_desactiva_a_si_mismo(self):
@@ -229,45 +231,81 @@ class AislamientoTests(BaseCuentas):
         self.assertEqual(r.status_code, 400)
 
 
-class InvitacionYRecuperacionTests(BaseCuentas):
-    def _token_de_correo(self, patron: str) -> str:
-        cuerpo = mail.outbox[-1].body
-        return re.search(patron, cuerpo).group(1)
-
-    def test_flujo_invitacion(self):
+class CredencialesYRecuperacionTests(BaseCuentas):
+    def test_flujo_credenciales(self):
+        """El administrador crea la cuenta, entrega la contraseña temporal y la
+        persona debe cambiarla antes de poder usar el sistema."""
         c = Cliente()
         c.entrar("admin@entidad.gov.co")
         with self.captureOnCommitCallbacks(execute=True):
-            r = c.post("/api/equipo/invitaciones", {"email": "Nuevo@entidad.gov.co", "rol": "evaluador", "areas": ["juridica"]})
+            r = c.post(
+                "/api/equipo/usuarios",
+                {"nombre_completo": "Nuevo Abogado", "email": "Nuevo@entidad.gov.co", "rol": "evaluador", "areas": ["juridica"]},
+            )
         self.assertEqual(r.status_code, 201, r.content)
-        token = self._token_de_correo(r"/invitacion/(\S+)")
-        # En la base de datos no queda el token, solo su hash.
-        self.assertFalse(Invitacion.objects.filter(token_hash=token).exists())
+        temporal = r.json()["password_temporal"]
+        self.assertTrue(r.json()["usuario"]["debe_cambiar_clave"])
+        # El correo avisa de la cuenta, pero nunca lleva la contraseña.
+        self.assertEqual(mail.outbox[-1].to, ["nuevo@entidad.gov.co"])
+        self.assertNotIn(temporal, mail.outbox[-1].body)
 
         nuevo = Cliente()
-        info = nuevo.get(f"/api/auth/invitaciones/{token}").json()
-        self.assertEqual(info["entidad"], "Entidad de Ejemplo")
-        self.assertEqual(nuevo.post(f"/api/auth/invitaciones/{token}/aceptar", {"nombre_completo": "Nuevo Abogado", "password": "123"}).status_code, 400)
-        r = nuevo.post(f"/api/auth/invitaciones/{token}/aceptar", {"nombre_completo": "Nuevo Abogado", "password": CLAVE})
+        self.assertEqual(nuevo.post("/api/auth/login", {"email": "nuevo@entidad.gov.co", "password": "otra"}).status_code, 401)
+        self.assertEqual(nuevo.entrar("nuevo@entidad.gov.co", temporal)["estado"], "cambiar_clave")
+        # Con la contraseña temporal todavía no hay sesión.
+        self.assertEqual(nuevo.get("/api/auth/yo").status_code, 401)
+        # Ni sirve repetir la temporal ni una débil.
+        self.assertEqual(nuevo.post("/api/auth/clave-inicial", {"nueva": temporal}).status_code, 400)
+        self.assertEqual(nuevo.post("/api/auth/clave-inicial", {"nueva": "123"}).status_code, 400)
+        r = nuevo.post("/api/auth/clave-inicial", {"nueva": CLAVE})
         self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["estado"], "ok")
         yo = nuevo.get("/api/auth/yo").json()
         self.assertEqual(yo["email"], "nuevo@entidad.gov.co")
         self.assertEqual([a["tipo"] for a in yo["areas"]], ["juridica"])
-        # No se reutiliza.
-        self.assertEqual(Cliente().get(f"/api/auth/invitaciones/{token}").status_code, 404)
+
+        # La temporal ya no sirve; la definitiva sí, y sin volver a pedir cambio.
+        otro = Cliente()
+        self.assertEqual(otro.post("/api/auth/login", {"email": "nuevo@entidad.gov.co", "password": temporal}).status_code, 401)
+        self.assertEqual(otro.entrar("nuevo@entidad.gov.co", CLAVE)["estado"], "ok")
+
+    def test_no_se_repite_el_correo(self):
+        c = Cliente()
+        c.entrar("admin@entidad.gov.co")
+        datos = {"nombre_completo": "Abogado Uno", "email": "abogado@entidad.gov.co", "rol": "evaluador"}
+        self.assertEqual(c.post("/api/equipo/usuarios", datos).status_code, 409)
+
+    def test_admin_reinicia_la_clave_de_su_equipo(self):
+        c = Cliente()
+        c.entrar("admin@entidad.gov.co")
+        with self.captureOnCommitCallbacks(execute=True):
+            r = c.post(f"/api/equipo/usuarios/{self.evaluador.id}/clave")
+        self.assertEqual(r.status_code, 200, r.content)
+        temporal = r.json()["password_temporal"]
+        self.assertEqual(mail.outbox[-1].to, ["abogado@entidad.gov.co"])
+        # La contraseña anterior deja de servir y la nueva obliga a cambiarla.
+        otro = Cliente()
+        self.assertEqual(otro.post("/api/auth/login", {"email": "abogado@entidad.gov.co", "password": CLAVE}).status_code, 401)
+        self.assertEqual(otro.entrar("abogado@entidad.gov.co", temporal)["estado"], "cambiar_clave")
+        # El administrador no reinicia la suya propia por esta vía.
+        self.assertEqual(c.post(f"/api/equipo/usuarios/{self.admin_entidad1.id}/clave").status_code, 400)
 
     def test_superadmin_crea_entidad_con_admin(self):
         c = Cliente()
         c.entrar("santiagopebe01@lemartek.com")
         secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
         c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
+        datos = {"nombre": "ENT3", "nit": "899999081", "email_admin": "admin@ent3.gov.co", "nombre_admin": "Admin Tercera"}
         with self.captureOnCommitCallbacks(execute=True):
-            r = c.post("/api/plataforma/entidades", {"nombre": "ENT3", "nit": "899999081", "email_admin": "admin@idu.gov.co"})
+            r = c.post("/api/plataforma/entidades", datos)
         self.assertEqual(r.status_code, 201, r.content)
         entidad = Entidad.objects.get(nit="899999081")
         self.assertEqual(entidad.areas.count(), 3)
-        self.assertEqual(mail.outbox[-1].to, ["admin@idu.gov.co"])
-        self.assertEqual(c.post("/api/plataforma/entidades", {"nombre": "IDU 2", "nit": "899999081", "email_admin": "b@idu.gov.co"}).status_code, 409)
+        self.assertEqual(mail.outbox[-1].to, ["admin@ent3.gov.co"])
+        # Su administrador entra con la contraseña temporal que se devolvió.
+        temporal = r.json()["credenciales"]["password_temporal"]
+        self.assertEqual(Cliente().entrar("admin@ent3.gov.co", temporal)["estado"], "cambiar_clave")
+        self.assertEqual(c.post("/api/plataforma/entidades", {**datos, "email_admin": "b@ent3.gov.co"}).status_code, 409)
 
     def test_recuperar_clave(self):
         c = Cliente()
@@ -325,7 +363,9 @@ class SoporteTests(BaseCuentas):
         self.assertIsNotNone(yo["acceso_soporte_hasta"])
         # Ve la entidad pero no puede gestionar ni crear.
         self.assertEqual(self.c.get("/api/equipo/usuarios").status_code, 403)
-        self.assertEqual(self.c.post("/api/equipo/invitaciones", {"email": "x@entidad.gov.co", "rol": "evaluador"}).status_code, 403)
+        self.assertEqual(
+            self.c.post("/api/equipo/usuarios", {"nombre_completo": "Otra Persona", "email": "x@entidad.gov.co", "rol": "evaluador"}).status_code, 403
+        )
         from evaluaciones.permisos import puede_crear_procesos
 
         self.assertFalse(puede_crear_procesos(self.soporte))
