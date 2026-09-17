@@ -96,30 +96,57 @@ def encontrar_copnias(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
     return encontrados
 
 
-def encontrar_copnia(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
-    """Primer COPNIA hallado. Se conserva para el Requisito 3, que solo
-    necesita comprobar que el certificado no tenga antecedentes y esté
-    vigente, sin importar de quién sea."""
-    encontrados = encontrar_copnias(pdfs)
-    return encontrados[0] if encontrados else None
-
-
 def _elegir_copnia_del_profesional(
-    pdfs: dict[str, bytes], representante_legal: str | None
+    pdfs: dict[str, bytes], personas: list[str]
 ) -> tuple[str, str] | None:
     """Entre todos los COPNIA aportados, elige el del profesional que avala
-    la propuesta. Si ninguno coincide con ese nombre, devuelve el primero
-    para poder reportar con precisión a nombre de quién está el que sí
-    aportaron."""
+    o suscribe la propuesta (en ese orden de preferencia). Si ninguno
+    coincide, devuelve el primero para poder reportar con precisión a
+    nombre de quién está el que sí aportaron."""
     encontrados = encontrar_copnias(pdfs)
     if not encontrados:
         return None
-    if representante_legal:
+    for persona in personas:
         for nombre_archivo, texto in encontrados:
             datos = extraer_datos_copnia(texto)
-            if datos.nombre and _nombres_coinciden(datos.nombre, representante_legal):
+            if datos.nombre and _nombres_coinciden(datos.nombre, persona):
                 return nombre_archivo, texto
     return encontrados[0]
+
+
+# Aval del ingeniero dentro del Formato 1 (el Documento Base dice que "hace
+# parte integral" de la carta): "...DEBIDO A QUE EL SUSCRIPTOR DE LA
+# PRESENTE PROPUESTA NO ES INGENIERO MATRICULADO, YO LUIS FELIPE RUIZ MEJIA,
+# INGENIERO CON MATRICULA PROFESIONAL NO. ... AVALO LA PRESENTE PROPUESTA".
+# Confirmado con cartas reales de varios proponentes; algunos además lo
+# aportan como documento aparte ("Aval de la oferta - <nombre>.pdf").
+AVAL_RE = re.compile(
+    r"\bYO,?\s+([A-ZÑ][A-ZÑ .]{4,80}?),?\s+INGENIER[OA]\b.{0,250}?AVALO LA PRESENTE (?:PROPUESTA|OFERTA)",
+    re.DOTALL,
+)
+
+
+@memo_por_pdfs
+def obtener_avalista(pdfs: dict[str, bytes]) -> str | None:
+    """Nombre del ingeniero que avala la oferta, si la carta (o un documento
+    de aval aparte) lo trae; None si no hay aval (ej. el representante legal
+    es ingeniero y firma él mismo)."""
+    candidatos = []
+    encontrado = encontrar_formato1(pdfs)
+    if encontrado is not None:
+        candidatos.append(encontrado[1])
+    candidatos.extend(contenido for nombre, contenido in pdfs.items() if "AVAL" in _norm(nombre.rsplit("/", 1)[-1]))
+    for contenido in candidatos:
+        try:
+            texto_norm = _norm(extraer_texto(contenido))
+        except Exception:  # noqa: BLE001
+            continue
+        match = AVAL_RE.search(texto_norm)
+        if match:
+            nombre = re.sub(r"\s+", " ", match.group(1)).strip(" .,")
+            if len(nombre.split()) >= 2:
+                return nombre
+    return None
 
 
 def _parsear_fecha_copnia(texto_norm: str) -> date | None:
@@ -188,9 +215,13 @@ ANTIGUEDAD_MAXIMA_MESES = 3
 
 
 def evaluar_requisito2(
-    pdfs: dict[str, bytes], fecha_cierre: date, representante_legal: str | None
+    pdfs: dict[str, bytes], fecha_cierre: date, representante_legal: str | None, avalista: str | None = None
 ) -> ResultadoEvaluacionCopnia:
-    encontrado = _elegir_copnia_del_profesional(pdfs, representante_legal)
+    """Requisito 2: la propuesta debe estar suscrita por un ingeniero o, si
+    quien la suscribe no lo es, avalada por uno (Documento Base, Ley 842 de
+    2003 art. 20). El COPNIA debe ser del que avala o del que suscribe."""
+    personas = [p for p in (avalista, representante_legal) if p]
+    encontrado = _elegir_copnia_del_profesional(pdfs, personas)
     if encontrado is None:
         return ResultadoEvaluacionCopnia(
             cumple=False,
@@ -223,15 +254,15 @@ def evaluar_requisito2(
             f"({fecha_cierre.strftime('%d/%m/%Y')})"
         )
 
-    if not datos.nombre or not representante_legal:
+    if not datos.nombre or not personas:
         motivos.append(
-            "no se pudo confirmar que el nombre del COPNIA coincida con quien firma la propuesta — revisa manualmente"
+            "no se pudo confirmar que el nombre del COPNIA coincida con quien firma o avala la propuesta — revisa manualmente"
         )
-    elif not _nombres_coinciden(datos.nombre, representante_legal):
-        motivos.append(
-            f"el nombre en el COPNIA ('{datos.nombre}') no coincide con quien firma la propuesta "
-            f"('{representante_legal}')"
-        )
+    elif not any(_nombres_coinciden(datos.nombre, persona) for persona in personas):
+        quienes = f"quien firma ('{representante_legal}')" if representante_legal else ""
+        if avalista:
+            quienes = f"{quienes} ni con quien avala ('{avalista}')" if quienes else f"quien avala ('{avalista}')"
+        motivos.append(f"el nombre en el COPNIA ('{datos.nombre}') no coincide con {quienes}")
 
     cumple = not motivos
     motivo = "; ".join(motivos) if motivos else None
@@ -245,12 +276,14 @@ def evaluar_requisito2(
     )
 
 
-def evaluar_requisito3(pdfs: dict[str, bytes], fecha_cierre: date) -> ResultadoEvaluacionCopnia:
+def evaluar_requisito3(
+    pdfs: dict[str, bytes], fecha_cierre: date, personas: list[str] | None = None
+) -> ResultadoEvaluacionCopnia:
     """Requisito 3: antecedentes disciplinarios del mismo ingeniero/arquitecto
     del Requisito 2. Usa el mismo COPNIA (el abogado confirmó que es el mismo
     documento), solo cambia el criterio: aquí importa que no tenga
     antecedentes y que esté vigente, no a nombre de quién está."""
-    encontrado = encontrar_copnia(pdfs)
+    encontrado = _elegir_copnia_del_profesional(pdfs, personas or [])
     if encontrado is None:
         return ResultadoEvaluacionCopnia(
             cumple=False,
@@ -324,7 +357,8 @@ def evaluar_proponente_requisito3(proponente: Proponente, proceso: ProcesoDocume
             cacheable=False,
         )
 
-    resultado = evaluar_requisito3(pdfs, proceso.fecha_cierre)
+    personas = [p for p in (obtener_avalista(pdfs), _obtener_representante_legal(pdfs)) if p]
+    resultado = evaluar_requisito3(pdfs, proceso.fecha_cierre, personas)
     datos = resultado.datos
     return finalizar(
         ResultadoRequisito(
@@ -393,7 +427,7 @@ def evaluar_proponente_requisito2(proponente: Proponente, proceso: ProcesoDocume
         )
 
     representante_legal = _obtener_representante_legal(pdfs)
-    resultado = evaluar_requisito2(pdfs, proceso.fecha_cierre, representante_legal)
+    resultado = evaluar_requisito2(pdfs, proceso.fecha_cierre, representante_legal, obtener_avalista(pdfs))
 
     datos = resultado.datos
     return finalizar(

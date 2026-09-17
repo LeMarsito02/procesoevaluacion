@@ -57,7 +57,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 25
+VERSION_LOGICA = 26
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -191,11 +191,20 @@ NOMBRE_APERTURA_RE = re.compile(
 _ID_GENERICO_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
+# Encabezados de cortesía que algunas cartas ponen antes del nombre ("EL
+# SUSCRITO INGENIERO RICARDO ...", "ING. DIEGO ...").
+_PREFIJO_NOMBRE_RE = re.compile(r"^(?:(?:EL|LA)\s+SUSCRIT[OA]\s+|INGENIER[OA]\s+|ING\.\s*|ARQ(?:UITECT[OA])?\.?\s+)+")
+
+
+def _limpiar_nombre(nombre: str) -> str:
+    return _PREFIJO_NOMBRE_RE.sub("", re.sub(r"\s+", " ", nombre).strip(" .,")).strip(" .,")
+
+
 def _extraer_representante_legal(texto_norm: str) -> str | None:
     match = NOMBRE_REPRESENTANTE_RE.search(texto_norm)
     if not match:
         return None
-    nombre = re.sub(r"\s+", " ", match.group(1)).strip(" .")
+    nombre = _limpiar_nombre(match.group(1))
     return nombre or None
 
 
@@ -215,7 +224,7 @@ def _extraer_nombre_apertura(texto_norm: str) -> str | None:
     match = NOMBRE_APERTURA_RE.search(texto_norm)
     if not match:
         return None
-    nombre = re.sub(r"\s+", " ", match.group(1)).strip(" .,")
+    nombre = _limpiar_nombre(match.group(1))
     return nombre or None
 
 
