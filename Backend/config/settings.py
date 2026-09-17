@@ -131,17 +131,24 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 _CORREO_BACKEND = os.environ.get("CORREO_BACKEND", "django.core.mail.backends.console.EmailBackend")
-MAILERS = {
-    "default": {
-        "BACKEND": _CORREO_BACKEND,
-        # Con el backend "filebased" (desarrollo) cada correo queda como archivo en esta carpeta.
-        "OPTIONS": (
-            {"file_path": os.environ.get("CORREO_CARPETA", str(BASE_DIR / ".scratch" / "correos"))}
-            if _CORREO_BACKEND.endswith("filebased.EmailBackend")
-            else {}
-        ),
-    },
-}
+if _CORREO_BACKEND.endswith("smtp.EmailBackend"):
+    _CORREO_PUERTO = int(os.environ.get("CORREO_PUERTO", "587"))
+    _CORREO_OPCIONES = {
+        "host": os.environ["CORREO_SERVIDOR"],
+        "port": _CORREO_PUERTO,
+        "username": os.environ.get("CORREO_USUARIO", ""),
+        "password": os.environ.get("CORREO_CLAVE", ""),
+        # 465 = SSL directo; 587 = STARTTLS.
+        "use_ssl": _CORREO_PUERTO == 465,
+        "use_tls": _CORREO_PUERTO != 465 and os.environ.get("CORREO_TLS", "1") == "1",
+        "timeout": 20,
+    }
+elif _CORREO_BACKEND.endswith("filebased.EmailBackend"):
+    # Desarrollo: cada correo queda como archivo en esta carpeta.
+    _CORREO_OPCIONES = {"file_path": os.environ.get("CORREO_CARPETA", str(BASE_DIR / ".scratch" / "correos"))}
+else:
+    _CORREO_OPCIONES = {}
+MAILERS = {"default": {"BACKEND": _CORREO_BACKEND, "OPTIONS": _CORREO_OPCIONES}}
 
 DEFAULT_FROM_EMAIL = os.environ.get("CORREO_REMITENTE", "MiEvaluador <no-responder@lemartek.com>")
 # Enlaces de los correos (invitaciones, recuperación de contraseña).
