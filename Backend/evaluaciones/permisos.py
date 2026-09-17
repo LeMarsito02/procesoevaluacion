@@ -33,9 +33,8 @@ def puede_trabajar(usuario: Usuario, evaluacion: Evaluacion) -> bool:
 
 
 def puede_crear_procesos(usuario: Usuario) -> bool:
-    return usuario.rol in (Rol.SUPERADMIN, Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA, Rol.EVALUADOR) and (
-        usuario.es_superadmin or usuario.entidad_id is not None
-    )
+    """Todos menos consulta: los abogados también crean sus propios procesos."""
+    return usuario.rol in (Rol.SUPERADMIN, Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA, Rol.EVALUADOR)
 
 
 def exigir_trabajo(usuario: Usuario, evaluacion: Evaluacion) -> None:

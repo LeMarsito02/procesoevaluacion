@@ -107,6 +107,70 @@ class CrearYAsignarTests(BaseEvaluaciones):
         self.assertEqual(ev["estado"], EstadoEvaluacion.ASIGNADA)
         self.assertEqual(ev["responsable"]["email"], "abogado@iccu.gov.co")
 
+    def test_abogado_crea_su_propio_proceso_aunque_no_tenga_el_area(self):
+        _, ev = self.crear("tecnico@iccu.gov.co")
+        self.assertEqual(ev["estado"], EstadoEvaluacion.ASIGNADA)
+        self.assertEqual(ev["responsable"]["email"], "tecnico@iccu.gov.co")
+        c = Cliente()
+        c.entrar("tecnico@iccu.gov.co")
+        self.assertTrue(c.get(f"/api/evaluaciones/{ev['id']}").json()["evaluacion"]["puede_trabajar"])
+
+    def test_abogado_no_asigna_a_otro_al_crear(self):
+        c = Cliente()
+        c.entrar("abogado@iccu.gov.co")
+        r = c.post(
+            "/api/evaluaciones/procesos",
+            {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "responsable_id": str(self.abogado2.id)},
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_jefe_asigna_al_crear(self):
+        c = Cliente()
+        c.entrar("jefe@iccu.gov.co")
+        with self.captureOnCommitCallbacks(execute=True):
+            r = c.post(
+                "/api/evaluaciones/procesos",
+                {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "responsable_id": str(self.abogado2.id)},
+            )
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.json()[0]["responsable"]["email"], "abogado2@iccu.gov.co")
+        self.assertEqual(mail.outbox[-1].to, ["abogado2@iccu.gov.co"])
+
+    def test_superadmin_crea_asigna_y_ve_equipo_de_cualquier_entidad(self):
+        import pyotp
+
+        c = Cliente()
+        c.entrar("santiagopebe01@lemartek.com")
+        secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
+        c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
+        # Debe elegir la entidad.
+        r = c.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES})
+        self.assertEqual(r.status_code, 400)
+        r = c.post(
+            "/api/evaluaciones/procesos",
+            {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "entidad_id": str(self.otra.id), "responsable_id": str(self.eval_otra.id)},
+        )
+        self.assertEqual(r.status_code, 201, r.content)
+        ev = r.json()[0]
+        self.assertEqual(ev["entidad_nombre"], "Gobernación de Prueba")
+        self.assertEqual(ev["estado"], EstadoEvaluacion.ASIGNADA)
+        # No puede asignar a alguien de otra entidad.
+        self.assertEqual(c.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)}).status_code, 400)
+        # Reasigna, ve el equipo de esa entidad, evalúa y aprueba.
+        self.assertEqual(c.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": None}).status_code, 200)
+        equipo = {m["email"] for m in c.get(f"/api/evaluaciones/equipo?entidad_id={self.otra.id}").json()}
+        self.assertIn("abogado@otra.gov.co", equipo)
+        self.assertNotIn("abogado@iccu.gov.co", equipo)
+        detalle = self.evaluar_todo(c, ev["id"])
+        for p in detalle["proponentes"]:
+            c.http.put(
+                f"/api/evaluaciones/{ev['id']}/revisiones",
+                {"proponente_id": p["id"], "requisito": 2, "cumple": True},
+                content_type="application/json",
+                headers={"X-CSRFToken": c.csrf},
+            )
+        self.assertEqual(c.post(f"/api/evaluaciones/{ev['id']}/aprobar").json()["estado"], EstadoEvaluacion.APROBADA)
+
     def test_no_asigna_a_otra_area_ni_otra_entidad(self):
         jefe, ev = self.crear()
         self.assertEqual(jefe.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": str(self.tecnico.id)}).status_code, 400)

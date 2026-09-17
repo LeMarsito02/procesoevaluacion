@@ -4,7 +4,7 @@ import { listarProcesos, type ProcesoResumen } from '../evaluaciones'
 import { formatFechaCorta } from '../format'
 import { mensajeDe } from '../http'
 import { navegar } from '../rutas'
-import { useSesion } from '../sesion'
+import { puedeCrearProcesos, useSesion } from '../sesion'
 import { porcentajeAvance, textoCierre } from './avance'
 import { EstadoEvaluacionPill } from './TarjetaEvaluacion'
 
@@ -29,7 +29,7 @@ export default function PaginaProcesos() {
     )
   }, [procesos, busqueda])
 
-  const puedeCrear = usuario.rol !== 'consulta' && usuario.rol !== 'superadmin'
+  const puedeCrear = puedeCrearProcesos(usuario)
 
   return (
     <main className="page">

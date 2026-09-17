@@ -432,12 +432,15 @@ function BarraEvaluacion({
 
   useEffect(() => {
     if (!resumen.puede_gestionar) return
-    cargaEquipo()
+    cargaEquipo(resumen.entidad_id)
       .then(setEquipo)
       .catch(() => setEquipo([]))
-  }, [resumen.puede_gestionar])
+  }, [resumen.puede_gestionar, resumen.entidad_id])
 
-  const candidatos = useMemo(() => (equipo ?? []).filter((m) => m.areas.includes(resumen.tipo)), [equipo, resumen.tipo])
+  const candidatos = useMemo(
+    () => (equipo ?? []).filter((m) => m.areas.includes(resumen.tipo) || m.rol !== 'evaluador' || m.id === resumen.responsable?.id),
+    [equipo, resumen.tipo, resumen.responsable],
+  )
 
   async function accion(f: () => Promise<EvaluacionResumen>, exito: string) {
     setOcupado(true)

@@ -24,6 +24,9 @@ interface Props {
   /** Texto del botón principal; por defecto "Evaluar N proponentes". */
   textoAccion?: string
   ocupado?: boolean
+  deshabilitado?: boolean
+  /** Contenido extra antes de los botones (p. ej. quién evalúa). */
+  antesDeAcciones?: React.ReactNode
   onCambiarObjeto: (v: string) => void
   onCambiarLote: (indice: number, cambios: Partial<Lote>) => void
   onCambiarGarantia: (cambios: { vigenciaMeses?: number; porcentajePct?: number; baseCalculo?: BaseCalculo }) => void
@@ -303,6 +306,8 @@ export default function PasoDatos(p: Props) {
 
       </fieldset>
 
+      {p.antesDeAcciones}
+
       <div className="acciones-pie">
         {p.onVolver ? (
           <button className="btn btn-ghost" type="button" onClick={p.onVolver}>
@@ -317,7 +322,7 @@ export default function PasoDatos(p: Props) {
               <Icono nombre="reloj" tam={15} /> Hasta ~{estimacionMinutos(n)} min · puede revisar mientras avanza
             </span>
           )}
-          <button className="btn btn-primary btn-lg" type="button" onClick={p.onEvaluar} disabled={n === 0 || p.ocupado}>
+          <button className="btn btn-primary btn-lg" type="button" onClick={p.onEvaluar} disabled={n === 0 || p.ocupado || p.deshabilitado}>
             {p.ocupado && <span className="spinner" />}
             {p.textoAccion ?? (p.hayResultados ? 'Ver evaluación' : `Evaluar ${n} proponentes`)} <Icono nombre="flecha" />
           </button>

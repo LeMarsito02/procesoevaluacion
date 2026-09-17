@@ -11,7 +11,15 @@ export function EstadoEvaluacionPill({ e }: { e: EvaluacionResumen }) {
   )
 }
 
-export default function TarjetaEvaluacion({ e, accion }: { e: EvaluacionResumen; accion?: React.ReactNode }) {
+export default function TarjetaEvaluacion({
+  e,
+  accion,
+  mostrarEntidad = false,
+}: {
+  e: EvaluacionResumen
+  accion?: React.ReactNode
+  mostrarEntidad?: boolean
+}) {
   const pct = porcentajeAvance(e)
   const dias = diasParaCierre(e.fecha_cierre)
   return (
@@ -24,6 +32,7 @@ export default function TarjetaEvaluacion({ e, accion }: { e: EvaluacionResumen;
             <Icono nombre="calendario" tam={14} /> {textoCierre(e.fecha_cierre)}
           </span>
         </div>
+        {mostrarEntidad && <span className="eyebrow" style={{ margin: 0 }}>{e.entidad_nombre}</span>}
         <h3>{e.proceso_codigo}</h3>
         <p className="tarjeta-ev-objeto">{e.proceso_objeto || 'Sin objeto registrado'}</p>
         <div className="tarjeta-ev-avance">

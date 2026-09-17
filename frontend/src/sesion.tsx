@@ -13,3 +13,9 @@ export function useSesion(): Sesion | null {
 }
 
 export const puedeGestionarEquipo = (u: Usuario) => u.rol === 'superadmin' || u.rol === 'admin_entidad' || u.rol === 'jefe_area'
+
+/** Todos menos consulta: los abogados también crean sus propios procesos. */
+export const puedeCrearProcesos = (u: Usuario) => u.rol !== 'consulta'
+
+/** Asignan, aprueban y ven la carga del equipo. */
+export const gestionaEvaluaciones = (u: Usuario) => u.rol === 'superadmin' || u.rol === 'admin_entidad' || u.rol === 'jefe_area'

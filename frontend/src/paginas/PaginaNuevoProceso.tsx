@@ -8,6 +8,8 @@ import { propsDatos, useDatosProceso } from '../datosProceso'
 import { crearProceso } from '../evaluaciones'
 import { mensajeDe } from '../http'
 import { navegar } from '../rutas'
+import { useSesion } from '../sesion'
+import QuienEvalua, { type Eleccion } from './QuienEvalua'
 
 /** Asistente: Documento Base y carpeta de Drive → datos del proceso → crear. */
 export default function PaginaNuevoProceso() {
@@ -24,6 +26,10 @@ export default function PaginaNuevoProceso() {
   const [creando, setCreando] = useState(false)
   const [errorCrear, setErrorCrear] = useState<string | null>(null)
   const datos = useDatosProceso()
+  const { usuario } = useSesion()!
+  const esSuper = usuario.rol === 'superadmin'
+  const [entidadId, setEntidadId] = useState<string | null>(esSuper ? null : (usuario.entidad?.id ?? null))
+  const [eleccion, setEleccion] = useState<Eleccion>('')
 
   async function analizar() {
     if (!archivo) return
@@ -53,6 +59,12 @@ export default function PaginaNuevoProceso() {
         proponentes,
         proponentes_no_reconocidos: noReconocidos,
         tipos: ['juridica'],
+        entidad_id: esSuper ? entidadId : null,
+        ...(usuario.rol === 'evaluador'
+          ? {}
+          : eleccion === ''
+            ? { sin_responsable: true }
+            : { responsable_id: eleccion === 'yo' ? usuario.id : eleccion }),
       })
       navegar(`/evaluaciones/${evaluacion.id}`, true)
     } catch (err) {
@@ -106,6 +118,8 @@ export default function PaginaNuevoProceso() {
             hayResultados={false}
             textoAccion={`Crear proceso con ${proponentes.length} proponentes`}
             ocupado={creando}
+            deshabilitado={esSuper && !entidadId}
+            antesDeAcciones={<QuienEvalua entidadId={entidadId} eleccion={eleccion} onEntidad={setEntidadId} onEleccion={setEleccion} />}
             onVolver={() => setPaso('nuevo')}
             onEvaluar={crear}
           />

@@ -26,6 +26,8 @@ export interface EvaluacionResumen {
   estado_nombre: string
   responsable: Persona | null
   avance: Avance
+  entidad_id: string
+  entidad_nombre: string
   proceso_id: string
   proceso_codigo: string
   proceso_objeto: string
@@ -81,7 +83,8 @@ export interface MiembroCarga extends Persona {
 
 export const listarProcesos = () => pedirJson<ProcesoResumen[]>('/api/evaluaciones/procesos')
 export const misEvaluaciones = () => pedirJson<EvaluacionResumen[]>('/api/evaluaciones/mias')
-export const cargaEquipo = () => pedirJson<MiembroCarga[]>('/api/evaluaciones/equipo')
+export const cargaEquipo = (entidadId?: string | null) =>
+  pedirJson<MiembroCarga[]>(`/api/evaluaciones/equipo${entidadId ? `?entidad_id=${entidadId}` : ''}`)
 export const obtenerEvaluacion = (id: string) => pedirJson<EvaluacionDetalle>(`/api/evaluaciones/${id}`)
 
 export const crearProceso = (datos: {
@@ -90,6 +93,9 @@ export const crearProceso = (datos: {
   proponentes: Proponente[]
   proponentes_no_reconocidos: string[]
   tipos: string[]
+  entidad_id?: string | null
+  responsable_id?: string | null
+  sin_responsable?: boolean
 }) => enviarJson<EvaluacionResumen[]>('/api/evaluaciones/procesos', 'POST', datos)
 
 export const guardarDocumentoBase = (id: string, doc: ProcesoDocumentoBase) =>

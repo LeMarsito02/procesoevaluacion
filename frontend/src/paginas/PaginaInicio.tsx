@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Icono from '../components/Icono'
 import { asignarEvaluacion, cargaEquipo, misEvaluaciones, type EvaluacionResumen, type MiembroCarga } from '../evaluaciones'
 import { mensajeDe } from '../http'
 import { navegar } from '../rutas'
-import { useSesion } from '../sesion'
+import { gestionaEvaluaciones, puedeCrearProcesos, useSesion } from '../sesion'
 import TarjetaEvaluacion from './TarjetaEvaluacion'
 
 type Filtro = 'activas' | 'por_revisar' | 'aprobadas' | 'todas'
@@ -11,14 +11,16 @@ type Filtro = 'activas' | 'por_revisar' | 'aprobadas' | 'todas'
 export default function PaginaInicio() {
   const { usuario } = useSesion()!
   const [evaluaciones, setEvaluaciones] = useState<EvaluacionResumen[] | null>(null)
-  const [equipo, setEquipo] = useState<MiembroCarga[]>([])
+  // Equipo por entidad (el superadmin gestiona varias).
+  const [equipos, setEquipos] = useState<Record<string, MiembroCarga[]>>({})
   const [error, setError] = useState<string | null>(null)
   const [filtro, setFiltro] = useState<Filtro>('activas')
   const [busqueda, setBusqueda] = useState('')
   const [aviso, setAviso] = useState<string | null>(null)
 
-  const gestiona = usuario.rol === 'admin_entidad' || usuario.rol === 'jefe_area'
-  const puedeCrear = usuario.rol !== 'consulta' && usuario.rol !== 'superadmin'
+  const gestiona = gestionaEvaluaciones(usuario)
+  const puedeCrear = puedeCrearProcesos(usuario)
+  const esSuper = usuario.rol === 'superadmin'
 
   useEffect(() => {
     let vigente = true
@@ -35,12 +37,20 @@ export default function PaginaInicio() {
     }
   }, [])
 
+  const entidadesPorAsignar = useMemo(
+    () => [...new Set((evaluaciones ?? []).filter((e) => e.estado === 'sin_asignar' && e.puede_gestionar).map((e) => e.entidad_id))].sort().join(','),
+    [evaluaciones],
+  )
+  const recargarEquipos = useCallback(() => {
+    for (const entidadId of entidadesPorAsignar.split(',').filter(Boolean)) {
+      cargaEquipo(esSuper ? entidadId : null)
+        .then((lista) => setEquipos((prev) => ({ ...prev, [entidadId]: lista })))
+        .catch(() => undefined)
+    }
+  }, [entidadesPorAsignar, esSuper])
   useEffect(() => {
-    if (!gestiona) return
-    cargaEquipo()
-      .then(setEquipo)
-      .catch(() => setEquipo([]))
-  }, [gestiona])
+    if (gestiona) recargarEquipos()
+  }, [gestiona, recargarEquipos])
 
   useEffect(() => {
     if (!aviso) return
@@ -77,7 +87,7 @@ export default function PaginaInicio() {
       const nueva = await asignarEvaluacion(e.id, responsableId)
       setEvaluaciones((l) => l?.map((x) => (x.id === e.id ? nueva : x)) ?? null)
       setAviso(`Asignada a ${nueva.responsable?.nombre_completo}`)
-      cargaEquipo().then(setEquipo).catch(() => undefined)
+      recargarEquipos()
     } catch (err) {
       setAviso(mensajeDe(err))
     }
@@ -145,11 +155,12 @@ export default function PaginaInicio() {
           </h2>
           <div className="tarjetas">
             {porAsignar.map((e) => {
-              const candidatos = equipo.filter((m) => m.areas.includes(e.tipo))
+              const candidatos = (equipos[e.entidad_id] ?? []).filter((m) => m.areas.includes(e.tipo) || m.rol !== 'evaluador')
               return (
                 <TarjetaEvaluacion
                   key={e.id}
                   e={e}
+                  mostrarEntidad={esSuper}
                   accion={
                     <select className="select select-sm" value="" onChange={(ev) => ev.target.value && asignar(e, ev.target.value)} aria-label="Asignar a">
                       <option value="">Asignar a…</option>
@@ -207,7 +218,7 @@ export default function PaginaInicio() {
         ) : (
           <div className="tarjetas">
             {mias.map((e) => (
-              <TarjetaEvaluacion key={e.id} e={e} />
+              <TarjetaEvaluacion key={e.id} e={e} mostrarEntidad={esSuper} />
             ))}
           </div>
         )}

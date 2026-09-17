@@ -409,7 +409,8 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 .fieldset-limpio { border: 0; padding: 0; margin: 0; min-width: 0; }
 .nav-principal[data-compacta='true'] { margin-left: 16px; }
 .nav-principal[data-compacta='true'] + .stepper { margin-left: auto; }
-@media (max-width: 1280px) { .nav-principal[data-compacta='true'] { display: none; } }
+@media (max-width: 1600px) { .nav-principal[data-compacta='true'] { display: none; } }
+.nav-principal a, .step { white-space: nowrap; }
 
 /* ---------- Barra de la evaluación ---------- */
 .barra-evaluacion { background: var(--surface); border-bottom: 1px solid var(--line); }

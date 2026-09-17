@@ -18,7 +18,7 @@ from ninja.errors import HttpError
 
 from api.ejecucion import evaluar_todos_en_proceso
 from cuentas.correo import enviar_asignacion
-from cuentas.models import Rol, TipoArea, Usuario
+from cuentas.models import Entidad, Rol, TipoArea, Usuario
 from cuentas.seguridad import auditar, sesion_activa
 from evaluaciones.models import (
     REQUISITOS_IGNORADOS,
@@ -75,6 +75,8 @@ class EvaluacionResumenOut(Schema):
     estado_nombre: str
     responsable: PersonaOut | None
     avance: AvanceOut
+    entidad_id: UUID
+    entidad_nombre: str
     proceso_id: UUID
     proceso_codigo: str
     proceso_objeto: str
@@ -111,6 +113,12 @@ class CrearProcesoIn(Schema):
     proponentes: list[ProponenteIn]
     proponentes_no_reconocidos: list[str] = []
     tipos: list[str] = [TipoArea.JURIDICA]
+    # Solo el superadministrador elige la entidad; los demás crean en la suya.
+    entidad_id: UUID | None = None
+    # Quién evalúa. Sin enviar: el evaluador que crea queda como responsable;
+    # jefes y administradores dejan la evaluación sin asignar.
+    responsable_id: UUID | None = None
+    sin_responsable: bool = False
 
 
 class ProponenteOut(Schema):
@@ -215,6 +223,8 @@ def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[Evaluac
             estado_nombre=e.get_estado_display(),
             responsable=_persona(e.responsable),
             avance=avances[e.id],
+            entidad_id=e.entidad_id,
+            entidad_nombre=e.entidad.nombre,
             proceso_id=e.proceso_id,
             proceso_codigo=e.proceso.codigo,
             proceso_objeto=e.proceso.objeto,
@@ -229,7 +239,7 @@ def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[Evaluac
 
 
 def _evaluaciones_qs(usuario: Usuario):
-    qs = Evaluacion.objects.select_related("proceso", "responsable")
+    qs = Evaluacion.objects.select_related("proceso", "responsable", "entidad")
     if not usuario.es_superadmin:
         qs = qs.filter(entidad_id=usuario.entidad_id)
     return qs
@@ -240,6 +250,22 @@ def _evaluacion(usuario: Usuario, evaluacion_id: UUID) -> Evaluacion:
     if not puede_ver(usuario, evaluacion):
         raise HttpError(404, "No encontrado.")
     return evaluacion
+
+
+def _responsable_valido(entidad_id: UUID, tipo: str, responsable_id: UUID, actor: Usuario) -> Usuario:
+    """Persona activa de la entidad que puede evaluar ese tipo. Quien se asigna
+    a sí mismo no necesita tener el área (p. ej. un abogado con su propio proceso)."""
+    persona = (
+        Usuario.objects.filter(pk=responsable_id, entidad_id=entidad_id, is_active=True)
+        .exclude(rol=Rol.CONSULTA)
+        .prefetch_related("areas")
+        .first()
+    )
+    if persona is None:
+        raise HttpError(400, "Esa persona no existe en la entidad o no puede evaluar.")
+    if persona.id != actor.id and persona.rol == Rol.EVALUADOR and not tiene_area(persona, tipo):
+        raise HttpError(400, f"{persona.nombre_completo} no pertenece al área {TipoArea(tipo).label.lower()}.")
+    return persona
 
 
 def _requiere_revision(r: ResultadoRequisito) -> bool:
@@ -302,10 +328,18 @@ def listar_procesos(request: HttpRequest) -> list[ProcesoResumenOut]:
 @router.post("/procesos", response={201: list[EvaluacionResumenOut]})
 def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
     usuario: Usuario = request.auth
-    if usuario.es_superadmin:
-        raise HttpError(400, "El superadministrador no pertenece a una entidad; cree el proceso con un usuario de la entidad.")
     if not puede_crear_procesos(usuario):
         raise HttpError(403, "Su rol no permite crear procesos.")
+    if usuario.es_superadmin:
+        if datos.entidad_id is None:
+            raise HttpError(400, "Elija la entidad del proceso.")
+        entidad = get_object_or_404(Entidad, pk=datos.entidad_id)
+    else:
+        if datos.entidad_id is not None and datos.entidad_id != usuario.entidad_id:
+            raise HttpError(404, "No encontrado.")
+        entidad = usuario.entidad
+    if not entidad.activa:
+        raise HttpError(400, "La entidad está suspendida.")
     tipos = list(dict.fromkeys(datos.tipos))
     if not tipos:
         raise HttpError(400, "Elija al menos un tipo de evaluación.")
@@ -314,11 +348,25 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
         raise HttpError(400, "Por ahora solo está disponible la evaluación jurídica.")
     if not datos.proponentes:
         raise HttpError(400, "El proceso no tiene proponentes. Revise la carpeta de Drive.")
+
+    gestiona = usuario.es_superadmin or usuario.rol in (Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA)
+    responsables: dict[str, Usuario | None] = {}
+    for tipo in tipos:
+        if datos.sin_responsable:
+            responsables[tipo] = None
+        elif datos.responsable_id is not None:
+            if datos.responsable_id != usuario.id and not gestiona:
+                raise HttpError(403, "Solo el jefe del área o el administrador pueden asignar a otra persona.")
+            responsables[tipo] = _responsable_valido(entidad.id, tipo, datos.responsable_id, usuario)
+        else:
+            # El abogado que crea su propio proceso queda a cargo.
+            responsables[tipo] = usuario if usuario.rol == Rol.EVALUADOR else None
+
     doc = datos.documento_base
     try:
         with transaction.atomic():
             proceso = Proceso.objects.create(
-                entidad_id=usuario.entidad_id,
+                entidad=entidad,
                 codigo=doc.codigo_proceso.strip(),
                 fecha_cierre=doc.fecha_cierre,
                 objeto=doc.objeto_general,
@@ -329,7 +377,7 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
             )
             Proponente.objects.bulk_create(
                 Proponente(
-                    entidad_id=usuario.entidad_id,
+                    entidad=entidad,
                     proceso=proceso,
                     numero_orden=p.numero_orden,
                     hoja=p.hoja,
@@ -342,24 +390,34 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
             )
             evaluaciones = []
             for tipo in tipos:
-                # Un evaluador que crea el proceso queda como responsable de su área.
-                propia = usuario.rol == Rol.EVALUADOR and tiene_area(usuario, tipo)
-                evaluaciones.append(
-                    Evaluacion.objects.create(
-                        entidad_id=usuario.entidad_id,
-                        proceso=proceso,
-                        tipo=tipo,
-                        responsable=usuario if propia else None,
-                        asignada_por=usuario if propia else None,
-                        asignada_en=timezone.now() if propia else None,
-                        estado=EstadoEvaluacion.ASIGNADA if propia else EstadoEvaluacion.SIN_ASIGNAR,
-                    )
+                responsable = responsables[tipo]
+                evaluacion = Evaluacion.objects.create(
+                    entidad=entidad,
+                    proceso=proceso,
+                    tipo=tipo,
+                    responsable=responsable,
+                    asignada_por=usuario if responsable else None,
+                    asignada_en=timezone.now() if responsable else None,
+                    estado=EstadoEvaluacion.ASIGNADA if responsable else EstadoEvaluacion.SIN_ASIGNAR,
                 )
-            auditar(request, "proceso.creado", objeto=proceso, codigo=proceso.codigo, proponentes=len(datos.proponentes), tipos=tipos)
+                evaluaciones.append(evaluacion)
+                if responsable and responsable.id != usuario.id:
+                    transaction.on_commit(lambda e=evaluacion, r=responsable: enviar_asignacion(e, r, usuario))
+            auditar(
+                request,
+                "proceso.creado",
+                entidad_id=entidad.id,
+                objeto=proceso,
+                codigo=proceso.codigo,
+                proponentes=len(datos.proponentes),
+                tipos=tipos,
+                responsables={t: (r.email if r else None) for t, r in responsables.items()},
+            )
     except IntegrityError as exc:
-        raise HttpError(409, f"Ya existe un proceso con el código {doc.codigo_proceso} en su entidad.") from exc
+        raise HttpError(409, f"Ya existe un proceso con el código {doc.codigo_proceso} en esa entidad.") from exc
     for e in evaluaciones:
         e.proceso = proceso
+        e.entidad = entidad
     return 201, _resumenes(usuario, evaluaciones)
 
 
@@ -379,15 +437,21 @@ def mis_evaluaciones(request: HttpRequest) -> list[EvaluacionResumenOut]:
 
 
 @router.get("/equipo", response=list[MiembroCargaOut])
-def carga_del_equipo(request: HttpRequest) -> list[MiembroCargaOut]:
+def carga_del_equipo(request: HttpRequest, entidad_id: UUID | None = None) -> list[MiembroCargaOut]:
     """Personas a las que el usuario puede asignar, con su carga actual."""
     usuario: Usuario = request.auth
     if not (usuario.es_superadmin or usuario.rol in (Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA)):
         raise HttpError(403, "No tiene permiso para ver la carga del equipo.")
     if usuario.es_superadmin:
-        raise HttpError(400, "Consulte el equipo desde un usuario de la entidad.")
+        if entidad_id is None:
+            raise HttpError(400, "Indique la entidad.")
+        objetivo = get_object_or_404(Entidad, pk=entidad_id).id
+    elif entidad_id is not None and entidad_id != usuario.entidad_id:
+        raise HttpError(404, "No encontrado.")
+    else:
+        objetivo = usuario.entidad_id
     miembros = (
-        Usuario.objects.filter(entidad_id=usuario.entidad_id, is_active=True)
+        Usuario.objects.filter(entidad_id=objetivo, is_active=True)
         .exclude(rol=Rol.CONSULTA)
         .prefetch_related("areas")
     )
@@ -395,7 +459,7 @@ def carga_del_equipo(request: HttpRequest) -> list[MiembroCargaOut]:
         miembros = miembros.filter(areas__in=usuario.areas.all()).distinct()
     miembros = list(miembros)
     activas = list(
-        Evaluacion.objects.filter(entidad_id=usuario.entidad_id, responsable__in=miembros).exclude(
+        Evaluacion.objects.filter(entidad_id=objetivo, responsable__in=miembros).exclude(
             estado=EstadoEvaluacion.APROBADA
         )
     )
@@ -485,16 +549,7 @@ def asignar(request: HttpRequest, evaluacion_id: UUID, datos: AsignarIn) -> Eval
     anterior = evaluacion.responsable
     nuevo = None
     if datos.responsable_id is not None:
-        nuevo = (
-            Usuario.objects.filter(pk=datos.responsable_id, entidad_id=evaluacion.entidad_id, is_active=True)
-            .exclude(rol=Rol.CONSULTA)
-            .prefetch_related("areas")
-            .first()
-        )
-        if nuevo is None:
-            raise HttpError(400, "Esa persona no existe en la entidad o no puede evaluar.")
-        if not tiene_area(nuevo, evaluacion.tipo):
-            raise HttpError(400, f"{nuevo.nombre_completo} no pertenece al área {evaluacion.get_tipo_display().lower()}.")
+        nuevo = _responsable_valido(evaluacion.entidad_id, evaluacion.tipo, datos.responsable_id, usuario)
     if (anterior and anterior.id) == (nuevo and nuevo.id):
         return _resumenes(usuario, [evaluacion])[0]
     with transaction.atomic():

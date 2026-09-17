@@ -14,7 +14,7 @@ import PaginaProcesos from './paginas/PaginaProcesos'
 import PaginaInvitacion from './paginas/PaginaInvitacion'
 import PaginaRestablecer from './paginas/PaginaRestablecer'
 import { encajar, navegar, useRuta } from './rutas'
-import { ContextoSesion, puedeGestionarEquipo } from './sesion'
+import { ContextoSesion, puedeCrearProcesos, puedeGestionarEquipo } from './sesion'
 
 export default function Raiz() {
   const ruta = useRuta()
@@ -111,7 +111,7 @@ export default function Raiz() {
   if (evaluacion) {
     pagina = <PaginaEvaluacion key={evaluacion.id} id={evaluacion.id} />
     conTopbar = false
-  } else if (ruta === '/procesos/nuevo' && usuario.rol !== 'consulta' && usuario.rol !== 'superadmin') {
+  } else if (ruta === '/procesos/nuevo' && puedeCrearProcesos(usuario)) {
     pagina = <PaginaNuevoProceso />
     conTopbar = false
   } else if (ruta === '/procesos') pagina = <PaginaProcesos />
