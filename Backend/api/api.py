@@ -64,7 +64,7 @@ def demasiadas_peticiones(request: HttpRequest, exc: Throttled):
     return api.create_response(request, {"detail": "Demasiadas solicitudes seguidas. Espere un momento e inténtelo de nuevo."}, status=429)
 
 
-@api.get("/health")
+@api.get("/health", throttle=[])
 def health(request: HttpRequest) -> dict[str, str]:
     return {"status": "ok"}
 

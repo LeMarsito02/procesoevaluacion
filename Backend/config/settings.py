@@ -124,15 +124,25 @@ PLANTILLA_MAX_BYTES = 20 * 1024 * 1024
 # --- Límites de peticiones (por usuario o por IP) ---
 # Caché en archivos: la comparten todos los procesos del servidor y funciona en
 # vistas asíncronas (la de base de datos no). Con varios servidores: Redis.
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
-        "LOCATION": os.environ.get("CACHE_LIMITES_DIR", str(BASE_DIR / "cache" / "limites")),
-    }
-}
 _EN_PRUEBAS = len(sys.argv) > 1 and sys.argv[1] == "test"
+CACHES = {
+    "default": (
+        # Las pruebas no deben compartir contadores con el servidor en marcha.
+        {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}
+        if _EN_PRUEBAS
+        else {
+            "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+            "LOCATION": os.environ.get("CACHE_LIMITES_DIR", str(BASE_DIR / "cache" / "limites")),
+        }
+    )
+}
+# Proxies de confianza delante de la app (LeMarCloud + nginx = 2). Con eso la IP
+# del usuario se toma de X-Forwarded-For sin que un cliente pueda falsificarla.
+# En desarrollo (sin proxy): 0.
+NINJA_NUM_PROXIES = int(os.environ.get("PROXIES_CONFIABLES", "0"))
 LIMITES_API = {
-    "anonimo": "100000/m" if _EN_PRUEBAS else os.environ.get("LIMITE_ANONIMO", "60/m"),
+    # Alto: todos los funcionarios de una entidad pueden salir por la misma IP.
+    "anonimo": "100000/m" if _EN_PRUEBAS else os.environ.get("LIMITE_ANONIMO", "300/m"),
     "usuario": "100000/m" if _EN_PRUEBAS else os.environ.get("LIMITE_USUARIO", "600/m"),
     # Operaciones pesadas (leen documentos o usan la IA).
     "pesado": "100000/h" if _EN_PRUEBAS else os.environ.get("LIMITE_PESADO", "60/h"),

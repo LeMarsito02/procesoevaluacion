@@ -88,10 +88,15 @@ def de_mi_entidad(qs: QuerySet, usuario: Usuario, campo: str = "entidad") -> Que
 
 
 def ip_de(request: HttpRequest) -> str | None:
-    # Detrás del proxy de producción, la IP real llega en X-Forwarded-For.
-    reenviada = request.META.get("HTTP_X_FORWARDED_FOR") if not settings.DEBUG else None
-    if reenviada:
-        return reenviada.split(",")[0].strip() or None
+    """IP del usuario. Detrás de N proxies de confianza se toma la dirección que
+    agregó el primero de ellos en X-Forwarded-For (las anteriores las pudo
+    escribir el propio cliente)."""
+    proxies = settings.NINJA_NUM_PROXIES
+    reenviada = request.META.get("HTTP_X_FORWARDED_FOR")
+    if proxies and reenviada:
+        direcciones = [d.strip() for d in reenviada.split(",") if d.strip()]
+        if direcciones:
+            return direcciones[-min(proxies, len(direcciones))]
     return request.META.get("REMOTE_ADDR") or None
 
 

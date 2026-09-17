@@ -26,6 +26,7 @@
 ## Lista de verificación antes de abrir a una entidad
 
 - [ ] `DJANGO_DEBUG=0` (desactiva el panel de Django y los endpoints de medición).
+- [ ] `PROXIES_CONFIABLES` igual al número de proxies delante de la app (si no, los límites y el bloqueo por intentos se aplican a la IP del proxy y afectan a todos).
 - [ ] `DB_USUARIO` no es superusuario: `select rolsuper, rolbypassrls from pg_roles where rolname = current_user` → `f, f`.
 - [ ] Correo de prueba recibido (invitación a una cuenta propia).
 - [ ] Superadmin con 2FA activo.
