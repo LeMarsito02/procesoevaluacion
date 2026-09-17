@@ -163,108 +163,60 @@ function resultadoVacio(requisito: number, proponente: Proponente, error: string
   }
 }
 
-async function evaluarUnProponente(
-  requisito: number,
-  proceso: ProcesoDocumentoBase,
-  proponente: Proponente,
-): Promise<ResultadoRequisito> {
-  const res = await fetch(`${API_URL}/api/procesos/evaluar-requisito-${requisito}/proponente`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ documento_base: proceso, proponente }),
-  })
-
-  if (!res.ok) {
-    const detail = await extractErrorDetail(res)
-    return resultadoVacio(requisito, proponente, detail)
-  }
-
-  return res.json()
-}
-
 // Limitado para no saturar la RAM: cada evaluación puede tener en memoria un
 // zip de proponente de hasta ~200 MB, así que muchas en paralelo pueden
 // colgar una máquina de escritorio normal.
 const CONCURRENCIA_EVALUACION = 4
 
-/** Evalúa los proponentes uno por uno (con varios en paralelo) para poder
- * reportar avance en tiempo real en vez de esperar en silencio una sola
- * petición larga. Sirve para cualquier número de requisito: agregar uno
- * nuevo del lado del backend no requiere tocar esta función. */
-export async function evaluarRequisito(
-  requisito: number,
-  proceso: ProcesoDocumentoBase,
-  proponentes: Proponente[],
-  onProgreso?: (completados: number, total: number, ultimoResultado: ResultadoRequisito) => void,
-): Promise<ResultadoRequisito[]> {
-  const resultados: ResultadoRequisito[] = new Array(proponentes.length)
-  let siguiente = 0
-  let completados = 0
-
-  async function trabajador() {
-    while (siguiente < proponentes.length) {
-      const indice = siguiente++
-      const resultado = await evaluarUnProponente(requisito, proceso, proponentes[indice])
-      resultados[indice] = resultado
-      completados++
-      onProgreso?.(completados, proponentes.length, resultado)
-    }
-  }
-
-  const trabajadores = Array.from({ length: Math.min(CONCURRENCIA_EVALUACION, proponentes.length) }, trabajador)
-  await Promise.all(trabajadores)
-  return resultados
-}
-
 const TOTAL_REQUISITOS = 18
 
-async function evaluarTodosUnProponente(proceso: ProcesoDocumentoBase, proponente: Proponente): Promise<ResultadoRequisito[]> {
+async function evaluarTodosUnProponente(
+  proceso: ProcesoDocumentoBase,
+  proponente: Proponente,
+  signal?: AbortSignal,
+): Promise<ResultadoRequisito[]> {
   try {
     const res = await fetch(`${API_URL}/api/procesos/evaluar-todos/proponente`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ documento_base: proceso, proponente }),
+      signal,
     })
     if (res.ok) return res.json()
     const detail = await extractErrorDetail(res)
     return Array.from({ length: TOTAL_REQUISITOS }, (_, i) => resultadoVacio(i + 1, proponente, detail))
   } catch (err) {
+    if (signal?.aborted) throw err
     const detail = err instanceof Error ? err.message : 'Error de conexión con el servidor.'
     return Array.from({ length: TOTAL_REQUISITOS }, (_, i) => resultadoVacio(i + 1, proponente, detail))
   }
 }
 
-/** Evalúa los 18 requisitos de todos los proponentes: una petición por
+/** Evalúa los 18 requisitos de los proponentes indicados: una petición por
  * proponente (el backend hace los 18 en una sola pasada), con varios en
- * paralelo y avance en tiempo real. Devuelve los resultados agrupados por
- * número de requisito. */
+ * paralelo. `onProponente` entrega los resultados de cada uno apenas
+ * termina, para mostrarlos en vivo. Se puede detener con `signal`. */
 export async function evaluarTodosLosRequisitos(
   proceso: ProcesoDocumentoBase,
   proponentes: Proponente[],
-  onProgreso?: (completados: number, total: number) => void,
-): Promise<Record<number, ResultadoRequisito[]>> {
-  const porProponente: ResultadoRequisito[][] = new Array(proponentes.length)
+  onProponente: (hoja: string, resultados: ResultadoRequisito[]) => void,
+  signal?: AbortSignal,
+): Promise<void> {
   let siguiente = 0
-  let completados = 0
 
   async function trabajador() {
-    while (siguiente < proponentes.length) {
-      const indice = siguiente++
-      porProponente[indice] = await evaluarTodosUnProponente(proceso, proponentes[indice])
-      completados++
-      onProgreso?.(completados, proponentes.length)
+    while (siguiente < proponentes.length && !signal?.aborted) {
+      const proponente = proponentes[siguiente++]
+      try {
+        const resultados = await evaluarTodosUnProponente(proceso, proponente, signal)
+        onProponente(proponente.hoja, resultados)
+      } catch {
+        return
+      }
     }
   }
 
   await Promise.all(Array.from({ length: Math.min(CONCURRENCIA_EVALUACION, proponentes.length) }, trabajador))
-
-  const porRequisito: Record<number, ResultadoRequisito[]> = {}
-  for (const lista of porProponente) {
-    for (const r of lista) {
-      ;(porRequisito[r.requisito] ??= []).push(r)
-    }
-  }
-  return porRequisito
 }
 
 async function extractErrorDetail(res: Response): Promise<string> {

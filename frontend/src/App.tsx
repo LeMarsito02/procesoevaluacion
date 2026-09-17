@@ -1,168 +1,96 @@
-import { useEffect, useMemo, useState } from 'react'
-import './App.css'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   analizarDocumentoBase,
   evaluarTodosLosRequisitos,
   generarExcel,
+  verDocumento,
   type AnalisisResponse,
   type Lote,
   type ProcesoDocumentoBase,
   type Proponente,
   type ResultadoRequisito,
 } from './api'
-import { addMonthsClamped, formatDuracion, formatFechaCorta, formatPesos } from './format'
-import RequisitoSection from './RequisitoSection'
+import PanelProponente from './components/PanelProponente'
+import PasoDatos, { type BaseCalculo } from './components/PasoDatos'
+import PasoEvaluacion, { type ProgresoEvaluacion } from './components/PasoEvaluacion'
+import PasoInforme from './components/PasoInforme'
+import PasoNuevo from './components/PasoNuevo'
+import Topbar, { type Paso } from './components/Topbar'
+import VisorDocumento from './components/VisorDocumento'
+import {
+  aplicarRevision,
+  borrarSesion,
+  claveRevision,
+  esPendiente,
+  estadoDe,
+  guardarSesion,
+  leerSesion,
+  resumenProponente,
+  type Revisiones,
+  type SesionGuardada,
+} from './estado'
+import { addMonthsClamped } from './format'
+import { REQUISITOS } from './requisitos'
 
-type BaseCalculo = 'lote_mayor_valor' | 'presupuesto_total'
+const PROGRESO_INICIAL: ProgresoEvaluacion = { evaluando: false, inicio: null, completadosEnEstaCorrida: 0, totalEnEstaCorrida: 0 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
+export default function App() {
+  const [paso, setPaso] = useState<Paso>('nuevo')
+  const [sesionGuardada, setSesionGuardada] = useState<SesionGuardada | null>(() => leerSesion())
 
-function App() {
-  const [step, setStep] = useState<'form' | 'review'>('form')
-
-  // --- Paso 1: formulario de entrada ---
+  // --- Paso 1 ---
   const [codigoProceso, setCodigoProceso] = useState('')
-  const [fechaCierre, setFechaCierre] = useState(todayIso())
-  const [archivo, setArchivo] = useState<File | null>(null)
+  const [fechaCierre, setFechaCierre] = useState('')
   const [carpetaDrive, setCarpetaDrive] = useState('')
+  const [archivo, setArchivo] = useState<File | null>(null)
   const [analizando, setAnalizando] = useState(false)
   const [errorAnalisis, setErrorAnalisis] = useState<string | null>(null)
 
-  // --- Proponentes leídos de Drive ---
-  const [proponentes, setProponentes] = useState<Proponente[]>([])
-  const [noReconocidos, setNoReconocidos] = useState<string[]>([])
-  const [driveError, setDriveError] = useState<string | null>(null)
-
-  // --- Resultados de cada requisito (los llenan los RequisitoSection) ---
-  // Un mapa numero de requisito -> sus resultados, para no tener que agregar
-  // un useState nuevo cada vez que se conecta un requisito más.
-  const [resultadosPorRequisito, setResultadosPorRequisito] = useState<Record<number, ResultadoRequisito[]>>({})
-
-  function actualizarResultados(numero: number, resultados: ResultadoRequisito[]) {
-    setResultadosPorRequisito((prev) => ({ ...prev, [numero]: resultados }))
-  }
-
-  // --- Evaluación de los 18 requisitos de una vez ---
-  const [resultadosGlobales, setResultadosGlobales] = useState<Record<number, ResultadoRequisito[]>>({})
-  const [evaluandoTodo, setEvaluandoTodo] = useState(false)
-  const [progresoTodo, setProgresoTodo] = useState<{ completados: number; total: number } | null>(null)
-  const [inicioTodo, setInicioTodo] = useState<number | null>(null)
-  const [duracionTodo, setDuracionTodo] = useState<number | null>(null)
-  const [ahoraTodo, setAhoraTodo] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!evaluandoTodo) return
-    const id = window.setInterval(() => setAhoraTodo(Date.now()), 1000)
-    return () => window.clearInterval(id)
-  }, [evaluandoTodo])
-
-  async function handleEvaluarTodo() {
-    setEvaluandoTodo(true)
-    setDuracionTodo(null)
-    const inicio = Date.now()
-    setInicioTodo(inicio)
-    setAhoraTodo(inicio)
-    setProgresoTodo({ completados: 0, total: proponentes.length })
-    try {
-      const porRequisito = await evaluarTodosLosRequisitos(construirPayload(), proponentes, (completados, total) =>
-        setProgresoTodo({ completados, total }),
-      )
-      setResultadosGlobales(porRequisito)
-      setDuracionTodo(Date.now() - inicio)
-    } finally {
-      setEvaluandoTodo(false)
-      setProgresoTodo(null)
-      setInicioTodo(null)
-    }
-  }
-
-  const todosLosResultados = useMemo(() => Object.values(resultadosPorRequisito).flat(), [resultadosPorRequisito])
-
-  // --- Visor de documentos (compartido entre requisitos) ---
-  const [visor, setVisor] = useState<{ nombre: string; url: string } | null>(null)
-
-  function abrirVisor(nombre: string, url: string) {
-    setVisor({ nombre, url })
-  }
-
-  function cerrarVisor() {
-    if (visor) URL.revokeObjectURL(visor.url)
-    setVisor(null)
-  }
-
-  // --- Paso 2: datos editables tras el análisis ---
+  // --- Paso 2 ---
   const [objetoGeneral, setObjetoGeneral] = useState('')
   const [lotes, setLotes] = useState<Lote[]>([])
   const [vigenciaMeses, setVigenciaMeses] = useState(3)
   const [porcentajePct, setPorcentajePct] = useState(10)
   const [baseCalculo, setBaseCalculo] = useState<BaseCalculo>('lote_mayor_valor')
   const [advertencias, setAdvertencias] = useState<string[]>([])
+  const [proponentes, setProponentes] = useState<Proponente[]>([])
+  const [noReconocidos, setNoReconocidos] = useState<string[]>([])
+  const [driveError, setDriveError] = useState<string | null>(null)
 
+  // --- Paso 3 ---
+  const [resultados, setResultados] = useState<Record<string, ResultadoRequisito[]>>({})
+  const [revisiones, setRevisiones] = useState<Revisiones>({})
+  const [progreso, setProgreso] = useState<ProgresoEvaluacion>(PROGRESO_INICIAL)
+  const [ahora, setAhora] = useState(() => Date.now())
+  const cancelador = useRef<AbortController | null>(null)
+  const [panel, setPanel] = useState<{ hoja: string; requisito: number | null } | null>(null)
+  const [visor, setVisor] = useState<{ url: string; archivo: string; resultado: ResultadoRequisito } | null>(null)
+  const [abriendoDocumento, setAbriendoDocumento] = useState<string | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
+
+  // --- Paso 4 ---
   const [generando, setGenerando] = useState(false)
   const [errorGeneracion, setErrorGeneracion] = useState<string | null>(null)
 
   const derivados = useMemo(() => {
-    const presupuestoTotal = lotes.reduce((sum, l) => sum + (Number(l.valor_presupuesto) || 0), 0)
-    const loteMayor = lotes.reduce<Lote | null>((max, l) => {
-      const valor = Number(l.valor_presupuesto) || 0
-      if (!max || valor > (Number(max.valor_presupuesto) || 0)) return l
-      return max
-    }, null)
-
-    const valorBase = baseCalculo === 'lote_mayor_valor' && loteMayor ? Number(loteMayor.valor_presupuesto) || 0 : presupuestoTotal
-    const valorAsegurado = Math.round(valorBase * (porcentajePct / 100) * 100) / 100
-    const fechaVencimiento = fechaCierre ? addMonthsClamped(fechaCierre, vigenciaMeses) : ''
-
+    const presupuestoTotal = lotes.reduce((s, l) => s + (Number(l.valor_presupuesto) || 0), 0)
+    const loteMayor = lotes.reduce<Lote | null>(
+      (max, l) => (!max || (Number(l.valor_presupuesto) || 0) > (Number(max.valor_presupuesto) || 0) ? l : max),
+      null,
+    )
+    const valorBase =
+      baseCalculo === 'lote_mayor_valor' && loteMayor ? Number(loteMayor.valor_presupuesto) || 0 : presupuestoTotal
     return {
       presupuestoTotal,
       loteMayorNumero: loteMayor?.numero ?? '',
       valorBase,
-      valorAsegurado,
-      fechaVencimiento,
+      valorAsegurado: Math.round(valorBase * (porcentajePct / 100) * 100) / 100,
+      fechaVencimiento: fechaCierre ? addMonthsClamped(fechaCierre, vigenciaMeses) : '',
     }
   }, [lotes, baseCalculo, porcentajePct, fechaCierre, vigenciaMeses])
 
-  async function handleAnalizar(e: React.FormEvent) {
-    e.preventDefault()
-    if (!archivo) {
-      setErrorAnalisis('Selecciona el PDF del Documento Base.')
-      return
-    }
-    setAnalizando(true)
-    setErrorAnalisis(null)
-    try {
-      const resultado = await analizarDocumentoBase(codigoProceso.trim(), fechaCierre, archivo, carpetaDrive)
-      cargarProceso(resultado)
-      setStep('review')
-    } catch (err) {
-      setErrorAnalisis(err instanceof Error ? err.message : 'Error desconocido al analizar el documento.')
-    } finally {
-      setAnalizando(false)
-    }
-  }
-
-  function cargarProceso(resultado: AnalisisResponse) {
-    const proceso = resultado.documento_base
-    setObjetoGeneral(proceso.objeto_general)
-    setLotes(proceso.lotes)
-    setVigenciaMeses(proceso.garantia_seriedad.vigencia_meses)
-    setPorcentajePct(Math.round(proceso.garantia_seriedad.porcentaje * 1000) / 10)
-    setBaseCalculo(proceso.garantia_seriedad.base_calculo)
-    setAdvertencias(proceso.advertencias)
-    setProponentes(resultado.proponentes)
-    setNoReconocidos(resultado.proponentes_no_reconocidos)
-    setDriveError(resultado.drive_error)
-    setResultadosPorRequisito({})
-  }
-
-  function updateLote(index: number, patch: Partial<Lote>) {
-    setLotes((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)))
-  }
-
-  function construirPayload(): ProcesoDocumentoBase {
-    return {
+  const construirPayload = useCallback(
+    (): ProcesoDocumentoBase => ({
       codigo_proceso: codigoProceso.trim(),
       fecha_cierre: fechaCierre,
       objeto_general: objetoGeneral,
@@ -180,15 +108,213 @@ function App() {
         fecha_vencimiento: derivados.fechaVencimiento,
       },
       advertencias,
+    }),
+    [codigoProceso, fechaCierre, objetoGeneral, lotes, derivados, vigenciaMeses, porcentajePct, baseCalculo, advertencias],
+  )
+
+  // Reloj para el tiempo transcurrido/restante mientras se evalúa.
+  useEffect(() => {
+    if (!progreso.evaluando) return
+    const id = window.setInterval(() => setAhora(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [progreso.evaluando])
+
+  // Guardado automático en el navegador.
+  useEffect(() => {
+    if (!proponentes.length || !codigoProceso) return
+    const id = window.setTimeout(() => {
+      guardarSesion({
+        version: 1,
+        guardadoEn: Date.now(),
+        codigoProceso,
+        fechaCierre,
+        carpetaDrive,
+        proceso: construirPayload(),
+        proponentes,
+        noReconocidos,
+        driveError,
+        resultados,
+        revisiones,
+      })
+    }, 600)
+    return () => window.clearTimeout(id)
+  }, [resultados, revisiones, proponentes, codigoProceso, fechaCierre, carpetaDrive, noReconocidos, driveError, construirPayload])
+
+  useEffect(() => {
+    if (!aviso) return
+    const id = window.setTimeout(() => setAviso(null), 2600)
+    return () => window.clearTimeout(id)
+  }, [aviso])
+
+  // Avisar antes de cerrar la pestaña con una evaluación en curso.
+  useEffect(() => {
+    if (!progreso.evaluando) return
+    const alSalir = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', alSalir)
+    return () => window.removeEventListener('beforeunload', alSalir)
+  }, [progreso.evaluando])
+
+  function cargarProceso(proceso: ProcesoDocumentoBase) {
+    setObjetoGeneral(proceso.objeto_general)
+    setLotes(proceso.lotes)
+    setVigenciaMeses(proceso.garantia_seriedad.vigencia_meses)
+    setPorcentajePct(Math.round(proceso.garantia_seriedad.porcentaje * 1000) / 10)
+    setBaseCalculo(proceso.garantia_seriedad.base_calculo)
+    setAdvertencias(proceso.advertencias)
+  }
+
+  async function analizar() {
+    if (!archivo) return
+    setAnalizando(true)
+    setErrorAnalisis(null)
+    try {
+      const r: AnalisisResponse = await analizarDocumentoBase(codigoProceso.trim(), fechaCierre, archivo, carpetaDrive)
+      cargarProceso(r.documento_base)
+      setProponentes(r.proponentes)
+      setNoReconocidos(r.proponentes_no_reconocidos)
+      setDriveError(r.drive_error)
+      setResultados({})
+      setRevisiones({})
+      setPaso('datos')
+    } catch (err) {
+      setErrorAnalisis(err instanceof Error ? err.message : 'No se pudo analizar el documento.')
+    } finally {
+      setAnalizando(false)
     }
   }
 
-  async function handleGenerarExcel() {
+  function retomarSesion() {
+    const s = sesionGuardada
+    if (!s) return
+    setCodigoProceso(s.codigoProceso)
+    setFechaCierre(s.fechaCierre)
+    setCarpetaDrive(s.carpetaDrive)
+    cargarProceso(s.proceso)
+    setProponentes(s.proponentes)
+    setNoReconocidos(s.noReconocidos)
+    setDriveError(s.driveError)
+    setResultados(s.resultados)
+    setRevisiones(s.revisiones)
+    setSesionGuardada(null)
+    setPaso(Object.keys(s.resultados).length ? 'evaluacion' : 'datos')
+  }
+
+  function nuevaEvaluacion() {
+    cancelador.current?.abort()
+    borrarSesion()
+    setSesionGuardada(null)
+    setCodigoProceso('')
+    setFechaCierre('')
+    setCarpetaDrive('')
+    setArchivo(null)
+    setProponentes([])
+    setResultados({})
+    setRevisiones({})
+    setPanel(null)
+    setProgreso(PROGRESO_INICIAL)
+    setPaso('nuevo')
+  }
+
+  async function evaluar() {
+    setPaso('evaluacion')
+    const pendientes = proponentes.filter((pr) => !resultados[pr.hoja] || resultados[pr.hoja].some((r) => r.error))
+    if (!pendientes.length || progreso.evaluando) return
+    const controlador = new AbortController()
+    cancelador.current = controlador
+    const inicio = Date.now()
+    setAhora(inicio)
+    setProgreso({ evaluando: true, inicio, completadosEnEstaCorrida: 0, totalEnEstaCorrida: pendientes.length })
+    await evaluarTodosLosRequisitos(
+      construirPayload(),
+      pendientes,
+      (hoja, lista) => {
+        setResultados((prev) => ({ ...prev, [hoja]: lista }))
+        setProgreso((prev) => ({ ...prev, completadosEnEstaCorrida: prev.completadosEnEstaCorrida + 1 }))
+      },
+      controlador.signal,
+    )
+    setProgreso((prev) => ({ ...prev, evaluando: false }))
+    if (!controlador.signal.aborted) setAviso('Evaluación terminada')
+  }
+
+  function detener() {
+    cancelador.current?.abort()
+    setProgreso((prev) => ({ ...prev, evaluando: false }))
+    setAviso('Evaluación en pausa. Lo evaluado quedó guardado.')
+  }
+
+  function revisar(hoja: string, requisito: number, cumple: boolean | undefined) {
+    setRevisiones((prev) => {
+      const nuevo = { ...prev }
+      const clave = claveRevision(hoja, requisito)
+      if (cumple === undefined) delete nuevo[clave]
+      else nuevo[clave] = cumple
+      return nuevo
+    })
+    if (cumple !== undefined) setAviso(cumple ? 'Marcado como cumple' : 'Marcado como no cumple')
+  }
+
+  const evaluadosEnOrden = proponentes.filter((pr) => resultados[pr.hoja])
+
+  function primerPendiente(lista: ResultadoRequisito[], revs: Revisiones): number | null {
+    for (const info of REQUISITOS) {
+      const r = lista.find((x) => x.requisito === info.numero)
+      if (r && esPendiente(estadoDe(r, revs))) return info.numero
+    }
+    return null
+  }
+
+  function siguientePendiente(desdeHoja: string | null): { hoja: string; requisito: number } | null {
+    const inicio = desdeHoja ? evaluadosEnOrden.findIndex((pr) => pr.hoja === desdeHoja) : -1
+    const orden = [...evaluadosEnOrden.slice(inicio + 1), ...evaluadosEnOrden.slice(0, inicio + 1)]
+    for (const pr of orden) {
+      const lista = resultados[pr.hoja]
+      if (desdeHoja === pr.hoja && resumenProponente(lista, revisiones).pendientes === 0) continue
+      const req = primerPendiente(lista, revisiones)
+      if (req !== null) return { hoja: pr.hoja, requisito: req }
+    }
+    return null
+  }
+
+  function irSiguientePendiente(desdeHoja: string | null) {
+    const siguiente = siguientePendiente(desdeHoja)
+    if (siguiente) {
+      setPaso('evaluacion')
+      setPanel(siguiente)
+    } else {
+      setPanel(null)
+      setAviso('No quedan pendientes por revisar')
+    }
+  }
+
+  async function abrirDocumento(resultado: ResultadoRequisito, rutaArchivo: string) {
+    const proponente = proponentes.find((pr) => pr.hoja === resultado.hoja)
+    if (!proponente) return
+    setAbriendoDocumento(`${resultado.hoja}|${rutaArchivo}`)
+    try {
+      const blob = await verDocumento(proponente.drive_file_id, rutaArchivo)
+      setVisor({ url: URL.createObjectURL(blob), archivo: rutaArchivo, resultado })
+    } catch (err) {
+      setAviso(err instanceof Error ? `No se pudo abrir: ${err.message}` : 'No se pudo abrir el documento')
+    } finally {
+      setAbriendoDocumento(null)
+    }
+  }
+
+  function cerrarVisor() {
+    if (visor) URL.revokeObjectURL(visor.url)
+    setVisor(null)
+  }
+
+  async function descargarExcel() {
     setGenerando(true)
     setErrorGeneracion(null)
     try {
       const payload = construirPayload()
-      const blob = await generarExcel(payload, proponentes, todosLosResultados)
+      const todos = Object.values(resultados)
+        .flat()
+        .map((r) => aplicarRevision(r, revisiones))
+      const blob = await generarExcel(payload, proponentes, todos)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -197,572 +323,152 @@ function App() {
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
+      setAviso('Informe descargado')
     } catch (err) {
-      setErrorGeneracion(err instanceof Error ? err.message : 'Error desconocido al generar el Excel.')
+      setErrorGeneracion(err instanceof Error ? err.message : 'No se pudo generar el Excel.')
     } finally {
       setGenerando(false)
     }
   }
 
+  const pasosDisponibles = new Set<Paso>(['nuevo'])
+  if (proponentes.length || lotes.length) pasosDisponibles.add('datos')
+  if (evaluadosEnOrden.length || progreso.evaluando) {
+    pasosDisponibles.add('evaluacion')
+    pasosDisponibles.add('informe')
+  }
+
+  const panelProponente = panel ? proponentes.find((pr) => pr.hoja === panel.hoja) : null
+  const indicePanel = panel ? evaluadosEnOrden.findIndex((pr) => pr.hoja === panel.hoja) : -1
+
   return (
     <>
-      <header className="app-header">
-        <h1>Evaluación de procesos de contratación</h1>
-        <p>Analiza el Documento Base y genera el Excel de evaluación jurídica.</p>
-      </header>
+      <Topbar
+        paso={paso}
+        codigoProceso={paso === 'nuevo' ? null : codigoProceso}
+        pasosDisponibles={pasosDisponibles}
+        onIr={setPaso}
+      />
 
-      <div className="step-indicator">
-        <span className={step === 'form' ? 'active' : ''}>
-          {step === 'form' ? <strong>1. Documento Base</strong> : '1. Documento Base'}
-        </span>
-        <span>→</span>
-        <span>{step === 'review' ? <strong>2. Revisión y Excel</strong> : '2. Revisión y Excel'}</span>
-      </div>
-
-      {step === 'form' && (
-        <section className="panel">
-          <h2>1. Datos del proceso y Documento Base</h2>
-          <form onSubmit={handleAnalizar}>
-            <div className="form-grid">
-              <div className="field">
-                <label htmlFor="codigo">Código del proceso</label>
-                <input
-                  id="codigo"
-                  type="text"
-                  placeholder="CM-037-2026"
-                  value={codigoProceso}
-                  onChange={(e) => setCodigoProceso(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="fecha">Fecha de cierre</label>
-                <input
-                  id="fecha"
-                  type="date"
-                  value={fechaCierre}
-                  onChange={(e) => setFechaCierre(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="archivo">Documento Base (PDF)</label>
-                <input
-                  id="archivo"
-                  type="file"
-                  accept="application/pdf"
-                  onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="drive">Carpeta de Drive con proponentes (opcional)</label>
-                <input
-                  id="drive"
-                  type="text"
-                  placeholder="https://drive.google.com/drive/folders/..."
-                  value={carpetaDrive}
-                  onChange={(e) => setCarpetaDrive(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {errorAnalisis && <div className="alert danger">{errorAnalisis}</div>}
-
-            <div className="actions">
-              <button className="btn" type="submit" disabled={analizando}>
-                {analizando ? 'Analizando…' : 'Analizar documento base'}
-              </button>
-            </div>
-          </form>
-        </section>
+      {paso === 'nuevo' && (
+        <PasoNuevo
+          codigoProceso={codigoProceso}
+          fechaCierre={fechaCierre}
+          carpetaDrive={carpetaDrive}
+          archivo={archivo}
+          analizando={analizando}
+          error={errorAnalisis}
+          sesionGuardada={sesionGuardada}
+          onCambiar={(c) => {
+            if (c.codigoProceso !== undefined) setCodigoProceso(c.codigoProceso)
+            if (c.fechaCierre !== undefined) setFechaCierre(c.fechaCierre)
+            if (c.carpetaDrive !== undefined) setCarpetaDrive(c.carpetaDrive)
+            if (c.archivo !== undefined) setArchivo(c.archivo)
+          }}
+          onAnalizar={analizar}
+          onRetomar={retomarSesion}
+          onDescartarSesion={() => {
+            borrarSesion()
+            setSesionGuardada(null)
+          }}
+        />
       )}
 
-      {step === 'review' && (
-        <>
-          <section className="panel">
-            <h2>2. Objeto y lotes</h2>
-            <p className="help-text">Revisa y corrige los datos extraídos antes de generar el Excel.</p>
+      {paso === 'datos' && (
+        <PasoDatos
+          codigoProceso={codigoProceso}
+          fechaCierre={fechaCierre}
+          objetoGeneral={objetoGeneral}
+          lotes={lotes}
+          vigenciaMeses={vigenciaMeses}
+          porcentajePct={porcentajePct}
+          baseCalculo={baseCalculo}
+          advertencias={advertencias}
+          derivados={derivados}
+          proponentes={proponentes}
+          noReconocidos={noReconocidos}
+          driveError={driveError}
+          hayResultados={evaluadosEnOrden.length > 0}
+          onCambiarObjeto={setObjetoGeneral}
+          onCambiarLote={(i, cambios) => setLotes((prev) => prev.map((l, j) => (j === i ? { ...l, ...cambios } : l)))}
+          onCambiarGarantia={(c) => {
+            if (c.vigenciaMeses !== undefined) setVigenciaMeses(c.vigenciaMeses)
+            if (c.porcentajePct !== undefined) setPorcentajePct(c.porcentajePct)
+            if (c.baseCalculo !== undefined) setBaseCalculo(c.baseCalculo)
+          }}
+          onVolver={() => setPaso('nuevo')}
+          onEvaluar={evaluar}
+        />
+      )}
 
-            <div className="field" style={{ marginBottom: 16 }}>
-              <label htmlFor="objeto-general">Objeto general del proceso</label>
-              <textarea
-                id="objeto-general"
-                rows={2}
-                value={objetoGeneral}
-                onChange={(e) => setObjetoGeneral(e.target.value)}
-              />
-            </div>
+      {paso === 'evaluacion' && (
+        <PasoEvaluacion
+          proponentes={proponentes}
+          resultados={resultados}
+          revisiones={revisiones}
+          progreso={progreso}
+          ahora={ahora}
+          hojaActiva={panel?.hoja ?? null}
+          onDetener={detener}
+          onContinuar={evaluar}
+          onAbrir={(hoja, requisito) => resultados[hoja] && setPanel({ hoja, requisito: requisito ?? null })}
+          onSiguientePendiente={() => irSiguientePendiente(null)}
+          onIrInforme={() => setPaso('informe')}
+        />
+      )}
 
-            <table className="lotes-table">
-              <thead>
-                <tr>
-                  <th>Lote</th>
-                  <th>Objeto</th>
-                  <th>Plazo (meses)</th>
-                  <th>Valor Presupuesto Oficial</th>
-                  <th>Lugar de ejecución</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lotes.map((lote, i) => (
-                  <tr key={i}>
-                    <td className="numero">{lote.numero}</td>
-                    <td>
-                      <textarea
-                        rows={3}
-                        value={lote.objeto}
-                        onChange={(e) => updateLote(i, { objeto: e.target.value })}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min={0}
-                        value={lote.plazo_meses}
-                        onChange={(e) => updateLote(i, { plazo_meses: Number(e.target.value) })}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min={0}
-                        value={lote.valor_presupuesto}
-                        onChange={(e) => updateLote(i, { valor_presupuesto: Number(e.target.value) })}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="text"
-                        value={lote.lugar_ejecucion ?? ''}
-                        onChange={(e) => updateLote(i, { lugar_ejecucion: e.target.value })}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {paso === 'informe' && (
+        <PasoInforme
+          codigoProceso={codigoProceso}
+          proponentes={proponentes}
+          resultados={resultados}
+          revisiones={revisiones}
+          generando={generando}
+          error={errorGeneracion}
+          onGenerar={descargarExcel}
+          onVolver={() => setPaso('evaluacion')}
+          onRevisarPendientes={() => irSiguientePendiente(null)}
+          onNuevaEvaluacion={nuevaEvaluacion}
+        />
+      )}
 
-            <div className="summary-grid">
-              <div className="summary-card">
-                <div className="label">Lote de mayor valor</div>
-                <div className="value">{derivados.loteMayorNumero || '—'}</div>
-              </div>
-              <div className="summary-card">
-                <div className="label">Presupuesto Oficial total</div>
-                <div className="value">{formatPesos(derivados.presupuestoTotal)}</div>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>3. Garantía de seriedad de la oferta</h2>
-            <div className="form-grid">
-              <div className="field">
-                <label htmlFor="vigencia">Vigencia (meses desde el cierre)</label>
-                <input
-                  id="vigencia"
-                  type="number"
-                  min={1}
-                  value={vigenciaMeses}
-                  onChange={(e) => setVigenciaMeses(Number(e.target.value))}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="porcentaje">Porcentaje asegurado (%)</label>
-                <input
-                  id="porcentaje"
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={porcentajePct}
-                  onChange={(e) => setPorcentajePct(Number(e.target.value))}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="base">Base de cálculo</label>
-                <select id="base" value={baseCalculo} onChange={(e) => setBaseCalculo(e.target.value as BaseCalculo)}>
-                  <option value="lote_mayor_valor">Lote de mayor valor</option>
-                  <option value="presupuesto_total">Presupuesto Oficial total</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="summary-grid">
-              <div className="summary-card">
-                <div className="label">Valor base</div>
-                <div className="value">{formatPesos(derivados.valorBase)}</div>
-              </div>
-              <div className="summary-card">
-                <div className="label">Valor asegurado requerido</div>
-                <div className="value">{formatPesos(derivados.valorAsegurado)}</div>
-              </div>
-              <div className="summary-card">
-                <div className="label">Fecha de cierre</div>
-                <div className="value">{formatFechaCorta(fechaCierre)}</div>
-              </div>
-              <div className="summary-card">
-                <div className="label">Vencimiento mínimo de la garantía</div>
-                <div className="value">{formatFechaCorta(derivados.fechaVencimiento)}</div>
-              </div>
-            </div>
-
-            {advertencias.length > 0 && (
-              <div className="alert warn" style={{ marginTop: 16 }}>
-                <strong>Revisa estos puntos:</strong>
-                <ul>
-                  {advertencias.map((a, i) => (
-                    <li key={i}>{a}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </section>
-
-          <section className="panel">
-            <h2>4. Proponentes (Google Drive)</h2>
-
-            {driveError && <div className="alert danger">{driveError}</div>}
-
-            {!driveError && proponentes.length === 0 && (
-              <p className="help-text">
-                No se cargó ninguna carpeta de Drive o no se encontraron proponentes. Puedes generar el Excel de
-                todas formas y completar los proponentes más adelante.
-              </p>
-            )}
-
-            {proponentes.length > 0 && (
-              <table className="lotes-table">
-                <thead>
-                  <tr>
-                    <th>No.</th>
-                    <th>Hoja</th>
-                    <th>Proponente</th>
-                    <th>Archivo en Drive</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {proponentes.map((p) => (
-                    <tr key={p.drive_file_id}>
-                      <td>{p.numero_orden}</td>
-                      <td className="numero">{p.hoja}</td>
-                      <td>{p.nombre_proponente}</td>
-                      <td>{p.nombre_archivo}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            {noReconocidos.length > 0 && (
-              <div className="alert warn" style={{ marginTop: 16 }}>
-                <strong>Archivos que no se pudieron interpretar (no siguen el patrón "pN nombre"):</strong>
-                <ul>
-                  {noReconocidos.map((n, i) => (
-                    <li key={i}>{n}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </section>
-
-          <section className="card">
-            <h2>Evaluar todos los requisitos</h2>
-            <p>
-              Evalúa los 18 requisitos jurídicos de los {proponentes.length} proponentes de una sola vez: cada proponente se
-              procesa en una sola pasada. Los resultados aparecen en cada requisito de abajo, donde puedes revisarlos.
-            </p>
-            <button type="button" onClick={handleEvaluarTodo} disabled={evaluandoTodo || proponentes.length === 0}>
-              {evaluandoTodo ? 'Evaluando…' : 'Evaluar los 18 requisitos de todos los proponentes'}
-            </button>
-            {evaluandoTodo && progresoTodo && inicioTodo && (
-              <p>
-                {progresoTodo.completados} de {progresoTodo.total} proponentes · transcurrido{' '}
-                {formatDuracion(ahoraTodo - inicioTodo)}
-                {progresoTodo.completados > 0 &&
-                  ` · restante aprox. ${formatDuracion(
-                    ((ahoraTodo - inicioTodo) / progresoTodo.completados) * (progresoTodo.total - progresoTodo.completados),
-                  )}`}
-              </p>
-            )}
-            {duracionTodo !== null && <p>Evaluación completa en {formatDuracion(duracionTodo)}.</p>}
-          </section>
-
-          <RequisitoSection
-            numero={5}
-            requisito={1}
-            resultadosExternos={resultadosGlobales[1]}
-            titulo="Requisito 1: Carta de presentación de la oferta"
-            descripcion={`Descarga el zip de cada proponente desde Drive, busca el Formato 1 por su título interno (sin importar el nombre del archivo) y verifica que mencione algún lote del Documento Base, el número del proceso, el objeto, y que tenga una firma del representante legal. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Formato 1 de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(1, r)}
-          />
-
-          <RequisitoSection
-            numero={6}
-            requisito={2}
-            resultadosExternos={resultadosGlobales[2]}
-            titulo="Requisito 2: Propuesta suscrita o avalada por un Ingeniero y/o Arquitecto"
-            descripcion={`Busca el certificado COPNIA (Consejo Profesional Nacional de Ingeniería) por su título interno dentro de los documentos de cada proponente, y verifica que el nombre certificado coincida con quien firma la propuesta, que la matrícula esté vigente, y que el certificado no tenga más de 3 meses de expedido. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar COPNIA de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(2, r)}
-            renderExtraCumple={(r) => (
-              <>
-                {r.profesion_certificada ?? '—'} · Mat. {r.matricula_profesional ?? '—'} ·{' '}
-                {r.copnia_fecha_expedicion ?? '—'}
-              </>
-            )}
-          />
-
-          <RequisitoSection
-            numero={7}
-            requisito={3}
-            resultadosExternos={resultadosGlobales[3]}
-            titulo="Requisito 3: Antecedentes disciplinarios del Ingeniero/Arquitecto (COPNIA)"
-            descripcion={`Usa el mismo certificado COPNIA del Requisito 2 y verifica que certifique que el profesional está libre de antecedentes disciplinarios, y que no tenga más de 3 meses de expedido. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar antecedentes COPNIA de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(3, r)}
-            renderExtraCumple={(r) => (
-              <>
-                {r.profesion_certificada ?? '—'} · Mat. {r.matricula_profesional ?? '—'} ·{' '}
-                {r.copnia_fecha_expedicion ?? '—'}
-              </>
-            )}
-          />
-
-          <RequisitoSection
-            numero={8}
-            requisito={4}
-            resultadosExternos={resultadosGlobales[4]}
-            titulo="Requisito 4: Conformación de Proponente Plural (Formato 2)"
-            descripcion={`N.A. automático si el proponente es persona natural o jurídica individual. Si es Consorcio o Unión Temporal, busca el Formato 2 por su título interno y verifica que los integrantes sumen 100% de participación y que se pueda identificar al representante legal designado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Conformación de Proponente Plural de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(4, r)}
-            renderExtraCumple={(r) => r.tipo_proponente ?? '—'}
-          />
-
-          <RequisitoSection
-            numero={9}
-            requisito={5}
-            resultadosExternos={resultadosGlobales[5]}
-            titulo="Requisito 5: REDAM (Registro de Deudores Alimentarios Morosos)"
-            descripcion={`Busca el certificado REDAM del representante legal (y del suplente, si es Consorcio/UT) por su título interno, y verifica que confirme que no está inscrito como deudor alimentario moroso. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar REDAM de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(5, r)}
-          />
-
-          <RequisitoSection
-            numero={10}
-            requisito={14}
-            resultadosExternos={resultadosGlobales[14]}
-            titulo="Requisito 14: Boletín de Responsables Fiscales - Contraloría"
-            descripcion={`Busca el certificado de la Contraloría (Boletín de Responsables Fiscales - SIBOR) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no está reportado como responsable fiscal. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Contraloría de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(14, r)}
-          />
-
-          <RequisitoSection
-            numero={11}
-            requisito={15}
-            resultadosExternos={resultadosGlobales[15]}
-            titulo="Requisito 15: Antecedentes Disciplinarios - Procuraduría"
-            descripcion={`Busca el certificado de la Procuraduría (Registro de Sanciones e Inhabilidades - SIRI) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no registra sanciones ni inhabilidades vigentes. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Procuraduría de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(15, r)}
-          />
-
-          <RequisitoSection
-            numero={12}
-            requisito={16}
-            resultadosExternos={resultadosGlobales[16]}
-            titulo="Requisito 16: Antecedentes Judiciales - Policía Nacional"
-            descripcion={`Busca el certificado de la Policía Nacional (antecedentes penales y requerimientos judiciales) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no tiene asuntos pendientes con las autoridades judiciales. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Policía Nacional de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(16, r)}
-          />
-
-          <RequisitoSection
-            numero={13}
-            requisito={17}
-            resultadosExternos={resultadosGlobales[17]}
-            titulo="Requisito 17: Multas - RNMC (Código Nacional de Policía)"
-            descripcion={`Busca el certificado del Registro Nacional de Medidas Correctivas (RNMC) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no tiene medidas correctivas pendientes por cumplir. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar RNMC de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(17, r)}
-          />
-
-          <RequisitoSection
-            numero={14}
-            requisito={6}
-            resultadosExternos={resultadosGlobales[6]}
-            titulo="Requisito 6: Certificado de Existencia y Representación Legal"
-            descripcion={`N.A. si es persona natural. Busca el Certificado de Existencia y Representación Legal (Cámara de Comercio) por título interno y verifica que su fecha de expedición no sea mayor a 1 mes antes del cierre. Si es Consorcio/UT, evalúa uno por cada integrante persona jurídica encontrado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Certificado de Existencia de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(6, r)}
-          />
-
-          <RequisitoSection
-            numero={15}
-            requisito={7}
-            resultadosExternos={resultadosGlobales[7]}
-            titulo="Requisito 7: Objeto Social acorde con el objeto de la Licitación"
-            descripcion={`N.A. si es persona natural. Usa el mismo Certificado de Existencia del Requisito 6 y compara el objeto social de la empresa con el objeto del proceso. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Objeto Social de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(7, r)}
-          />
-
-          <RequisitoSection
-            numero={16}
-            requisito={8}
-            resultadosExternos={resultadosGlobales[8]}
-            titulo="Requisito 8: Facultades del Representante Legal"
-            descripcion={`N.A. si es persona natural. Usa el mismo Certificado de Existencia y verifica si indica expresamente que el representante legal no tiene restricción de cuantía para contratar. Cuando no se puede confirmar (o hay un límite mencionado), queda para revisión humana — este requisito casi siempre necesita una mirada del abogado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Facultades de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(8, r)}
-          />
-
-          <RequisitoSection
-            numero={17}
-            requisito={9}
-            resultadosExternos={resultadosGlobales[9]}
-            titulo="Requisito 9: Registro Único de Proponentes - RUP"
-            descripcion={`Busca el RUP (Cámara de Comercio) por título interno y verifica que su fecha de expedición no sea mayor a 1 mes antes del cierre. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar RUP de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(9, r)}
-          />
-
-          <RequisitoSection
-            numero={18}
-            requisito={10}
-            resultadosExternos={resultadosGlobales[10]}
-            titulo="Requisito 10: Sanciones (dentro del RUP)"
-            descripcion="El RUP no trae una sección de sanciones/multas identificable automáticamente por texto, así que este requisito siempre queda para revisión humana — solo confirma que el RUP se haya encontrado."
-            textoBoton="Evaluar Sanciones (RUP) de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(10, r)}
-          />
-
-          <RequisitoSection
-            numero={19}
-            requisito={11}
-            resultadosExternos={resultadosGlobales[11]}
-            titulo="Requisito 11: Garantía de Seriedad de la Propuesta"
-            descripcion={`Busca la póliza de garantía de seriedad por título interno y verifica que el beneficiario sea la entidad (ICCU), que la vigencia cubra al menos hasta la fecha mínima requerida, y que el valor asegurado sea al menos el 10% del lote de mayor valor. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Garantía de Seriedad de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(11, r)}
-          />
-
-          <RequisitoSection
-            numero={20}
-            requisito={12}
-            resultadosExternos={resultadosGlobales[12]}
-            titulo="Requisito 12: Pago de Seguridad Social y Aportes Legales"
-            descripcion={`Busca el Formato 5 por título interno y verifica que mencione al representante legal identificado en el Formato 1. Si es Consorcio/UT, cada integrante debe firmar el suyo propio — ese caso siempre queda para revisión humana. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Pago de Seguridad Social de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(12, r)}
-          />
-
-          <RequisitoSection
-            numero={21}
-            requisito={18}
-            resultadosExternos={resultadosGlobales[18]}
-            titulo="Requisito 18: Certificado de Revisor Fiscal"
-            descripcion={`N.A. si el proponente no es una Sociedad Anónima (S.A.) — incluye personas naturales, S.A.S., Ltda. y otros tipos societarios. Si es S.A., verifica que el Certificado de Existencia indique si es abierta o cerrada. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
-            textoBoton="Evaluar Revisor Fiscal de todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(18, r)}
-          />
-
-          <RequisitoSection
-            numero={22}
-            requisito={13}
-            resultadosExternos={resultadosGlobales[13]}
-            titulo="Requisito 13: Registro Único Tributario - RUT"
-            descripcion="El abogado confirmó que este requisito no se exige actualmente en este proceso — se marca N.A. para todos los proponentes automáticamente, sin necesidad de revisar documentos."
-            textoBoton="Marcar RUT como N.A. para todos los proponentes"
-            proponentes={proponentes}
-            construirPayload={construirPayload}
-            onAbrirVisor={abrirVisor}
-            onResultadosChange={(r) => actualizarResultados(13, r)}
-          />
-
-          {errorGeneracion && <div className="alert danger">{errorGeneracion}</div>}
-
-          <div className="actions">
-            <button className="btn secondary" type="button" onClick={() => setStep('form')}>
-              ← Volver
-            </button>
-            <button className="btn" type="button" onClick={handleGenerarExcel} disabled={generando}>
-              {generando ? 'Generando…' : 'Generar y descargar Excel'}
-            </button>
-          </div>
-        </>
+      {panel && panelProponente && resultados[panel.hoja] && (
+        <PanelProponente
+          key={`${panel.hoja}-${panel.requisito ?? ''}`}
+          proponente={panelProponente}
+          resultados={resultados[panel.hoja]}
+          revisiones={revisiones}
+          requisitoDestacado={panel.requisito}
+          abriendoDocumento={abriendoDocumento}
+          onCerrar={() => setPanel(null)}
+          onRevisar={revisar}
+          onVerDocumento={abrirDocumento}
+          onAnterior={indicePanel > 0 ? () => setPanel({ hoja: evaluadosEnOrden[indicePanel - 1].hoja, requisito: null }) : null}
+          onSiguiente={
+            indicePanel >= 0 && indicePanel < evaluadosEnOrden.length - 1
+              ? () => setPanel({ hoja: evaluadosEnOrden[indicePanel + 1].hoja, requisito: null })
+              : null
+          }
+          onSiguientePendiente={siguientePendiente(panel.hoja) ? () => irSiguientePendiente(panel.hoja) : null}
+        />
       )}
 
       {visor && (
-        <div className="modal-overlay" onClick={cerrarVisor}>
-          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span>{visor.nombre}</span>
-              <button className="btn secondary" type="button" onClick={cerrarVisor}>
-                Cerrar
-              </button>
-            </div>
-            <iframe title={visor.nombre} src={visor.url} className="modal-iframe" />
-          </div>
+        <VisorDocumento
+          url={visor.url}
+          archivo={visor.archivo}
+          resultado={visor.resultado}
+          revisiones={revisiones}
+          onRevisar={revisar}
+          onCerrar={cerrarVisor}
+        />
+      )}
+
+      {aviso && (
+        <div className="toast" role="status">
+          {aviso}
         </div>
       )}
     </>
   )
 }
-
-export default App
