@@ -6,6 +6,7 @@ from datetime import date
 from app.procesamiento.memoria_proponente import memo_por_pdfs
 from app.evaluacion.formato1 import _clave_cache, _guardar_cache, _leer_cache, _norm
 from app.integrations.drive import download_file_bytes, get_file_metadata
+from app.llm.cliente import aparece_en_texto, consultar_json
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from app.procesamiento.pdf_utils import extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
@@ -116,6 +117,44 @@ def encontrar_poliza(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
     return None
 
 
+VALOR_MAXIMO_RAZONABLE_IA = 3
+
+_INSTRUCCION_POLIZA = (
+    "Esta es una póliza de garantía de seriedad de la oferta. Extrae: el beneficiario/asegurado; la fecha final de "
+    "vigencia (VIGENCIA HASTA) del amparo de seriedad de la oferta; y el VALOR ASEGURADO (suma asegurada) de ese "
+    "amparo. Ojo: el valor asegurado NO es la prima, ni el IVA, ni el total a pagar, ni el presupuesto del proceso. "
+    'Responde JSON: {"beneficiario": str|null, "vigencia_hasta": "dd/mm/aaaa"|null, "valor_asegurado": str|null}'
+)
+
+
+def _extraer_poliza_con_ia(texto: str) -> dict[str, str]:
+    """Datos de la póliza extraídos por el modelo local que pasaron la
+    verificación contra el texto. Claves posibles: beneficiario,
+    vigencia_hasta (dd/mm/aaaa), valor."""
+    respuesta = consultar_json(_INSTRUCCION_POLIZA, texto)
+    if not respuesta:
+        return {}
+    verificados: dict[str, str] = {}
+
+    beneficiario = respuesta.get("beneficiario")
+    if isinstance(beneficiario, str) and aparece_en_texto(beneficiario, texto):
+        beneficiario_norm = _norm(beneficiario)
+        if "ICCU" in beneficiario_norm or "INSTITUTO DE CAMINOS" in beneficiario_norm:
+            verificados["beneficiario"] = beneficiario
+
+    vigencia = respuesta.get("vigencia_hasta")
+    if isinstance(vigencia, str) and re.fullmatch(r"\d{2}/\d{2}/\d{4}", vigencia.strip()):
+        # Los dígitos de la fecha deben estar en el texto: descarta fechas
+        # "corregidas" por el modelo sobre un OCR ilegible.
+        if aparece_en_texto(vigencia, texto, numerico=True):
+            verificados["vigencia_hasta"] = vigencia.strip()
+
+    valor = respuesta.get("valor_asegurado")
+    if isinstance(valor, str) and aparece_en_texto(valor, texto, numerico=True):
+        verificados["valor"] = re.sub(r"[^\d.,]", "", valor)
+    return verificados
+
+
 def _leer_vigencia_y_valor(texto_norm: str) -> tuple[str | None, str | None]:
     """Devuelve (vigencia_hasta 'dd/mm/aaaa', valor asegurado) leídos de la
     fila del amparo de seriedad o, si no está, de la carátula de la póliza."""
@@ -157,10 +196,23 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
 
     motivos = []
 
-    if not BENEFICIARIO_RE.search(texto_norm):
+    beneficiario_ok = bool(BENEFICIARIO_RE.search(texto_norm))
+    fecha_hasta_texto, valor_texto = _leer_vigencia_y_valor(texto_norm)
+    datos_con_ia = False
+    if not beneficiario_ok or fecha_hasta_texto is None or valor_texto is None:
+        # Formato no reconocido por las reglas (otra aseguradora, póliza
+        # escaneada): el modelo local extrae los datos que falten, y cada uno
+        # se acepta solo si aparece en el documento.
+        extraidos = _extraer_poliza_con_ia(texto)
+        if not beneficiario_ok and extraidos.get("beneficiario"):
+            beneficiario_ok = datos_con_ia = True
+        if (fecha_hasta_texto is None or valor_texto is None) and extraidos.get("vigencia_hasta") and extraidos.get("valor"):
+            fecha_hasta_texto, valor_texto = extraidos["vigencia_hasta"], extraidos["valor"]
+            datos_con_ia = True
+
+    if not beneficiario_ok:
         motivos.append("no se pudo confirmar que el beneficiario de la póliza sea la entidad (ICCU)")
 
-    fecha_hasta_texto, valor_texto = _leer_vigencia_y_valor(texto_norm)
     if fecha_hasta_texto is None or valor_texto is None:
         motivos.append(
             "no se pudieron leer la vigencia y el valor asegurado del amparo de seriedad de la oferta — confirma manualmente"
@@ -183,14 +235,30 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
             )
 
         valor_asegurado_poliza = _parsear_valor_pesos(valor_texto)
+        # Con datos de IA el tope es más estricto: el modelo podría tomar otro
+        # valor del documento (ej. el presupuesto del lote, 10 veces mayor).
+        tope = VALOR_MAXIMO_RAZONABLE_IA if datos_con_ia else 20
         if valor_asegurado_poliza is None:
             motivos.append("no se pudo leer el valor asegurado de la póliza")
-        elif valor_asegurado_poliza > garantia.valor_asegurado * 20:
+        elif valor_asegurado_poliza > garantia.valor_asegurado * tope or (
+            # Un valor absurdamente bajo casi siempre es otro campo (la prima,
+            # el IVA) leído como valor asegurado: se vio con una póliza real.
+            datos_con_ia and valor_asegurado_poliza < garantia.valor_asegurado / 100
+        ):
             motivos.append("el valor asegurado leído de la póliza no es razonable — confirma manualmente")
         elif valor_asegurado_poliza < garantia.valor_asegurado:
             motivos.append(
                 f"la póliza asegura ${valor_asegurado_poliza:,.2f}, menos del valor mínimo requerido "
                 f"(${garantia.valor_asegurado:,.2f})"
+            )
+
+    if datos_con_ia:
+        motivos = [f"{m} (datos leídos con IA local — verifica en el documento)" for m in motivos]
+        if not motivos:
+            return ResultadoEvaluacionGarantia(
+                cumple=True,
+                motivo="datos de la póliza leídos con IA local y verificados contra el texto del documento",
+                archivo=archivo,
             )
 
     cumple = not motivos
