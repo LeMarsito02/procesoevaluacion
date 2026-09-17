@@ -28,8 +28,34 @@ PISTAS_POLIZA = ("poliza", "garantia", "seriedad")
 # CUMPLIMIENTO EN FAVOR DE ENTIDADES ESTATALES" (Confianza). Como la frase
 # "póliza de cumplimiento" puede citarse en otros documentos, se exige además
 # el campo de vigencia propio de la carátula de una póliza.
-TITULO_POLIZA_RE = re.compile(r"POLIZA DE (?:SEGURO DE |GARANTIA UNICA DE )?CUMPLIMIENTO")
-CAMPO_VIGENCIA_RE = re.compile(r"VIGENCIA\s+HASTA")
+# Otras variantes reales: SURA ("NUMERO POLIZA: 4547219 SEGURO DE
+# CUMPLIMIENTO"), Liberty con el texto sin espacios ("POLIZADECUMPLIMIENTO
+# AFAVORDEENTIDADESESTATALES") y escaneadas donde el OCR pierde la tilde
+# ("P LIZA DE SEGURO DE CUMPLIMIENTO"). Zurich no trae "VIGENCIA HASTA" sino
+# otros nombres de campo, así que la guarda acepta vigencia + valor asegurado.
+TITULO_POLIZA_RE = re.compile(
+    r"P\s?O?\s?LIZA\s*DE\s*(?:SEGURO\s*DE\s*|GARANTIA\s*UNICA\s*DE\s*)?CUMPLIMIENTO"
+    r"|NUMERO\s+(?:DE\s+)?POLIZA:?\s*\S+\s+SEGURO\s+DE\s+CUMPLIMIENTO"
+)
+CAMPO_VIGENCIA_RE = re.compile(
+    r"VIGENC\S{0,3}\s*\S{0,3}\s*HASTA"
+    r"|VIGENCIA.{0,400}?(?:VALOR|SUMA)\s*ASEGURAD"
+    r"|(?:VALOR|SUMA)\s*ASEGURAD.{0,800}?VIGENCIA",
+    re.DOTALL,
+)
+
+_MESES_ABREVIADOS = {"ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6, "JUL": 7, "AGO": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12}
+
+
+def _fecha_en_texto(fecha_ddmmaaaa: str, texto: str) -> bool:
+    """La fecha extraída (dd/mm/aaaa) está escrita en el documento, con
+    números ("29/11/2026", "29 11 2026") o con el mes abreviado como la
+    escribe SURA ("29-ENE-2027")."""
+    if aparece_en_texto(fecha_ddmmaaaa, texto, numerico=True):
+        return True
+    dia, mes, anio = fecha_ddmmaaaa.split("/")
+    abreviado = next((k for k, v in _MESES_ABREVIADOS.items() if v == int(mes)), None)
+    return abreviado is not None and re.search(rf"\b{int(dia):02d}[-/ ]{abreviado}[A-Z]*[-/ ]{anio}\b", _norm(texto)) is not None
 
 # "BENEFICIARIO INSTITUTO DE CAMINOS Y CONSTRUCCIONES DE CUNDINAMARCA - ICCU
 # NO. DOC. IDENTIDAD ..." — se exige la sigla de la entidad cerca de la
@@ -146,7 +172,7 @@ def _extraer_poliza_con_ia(texto: str) -> dict[str, str]:
     if isinstance(vigencia, str) and re.fullmatch(r"\d{2}/\d{2}/\d{4}", vigencia.strip()):
         # Los dígitos de la fecha deben estar en el texto: descarta fechas
         # "corregidas" por el modelo sobre un OCR ilegible.
-        if aparece_en_texto(vigencia, texto, numerico=True):
+        if _fecha_en_texto(vigencia.strip(), texto):
             verificados["vigencia_hasta"] = vigencia.strip()
 
     valor = respuesta.get("valor_asegurado")
@@ -198,6 +224,14 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
 
     beneficiario_ok = bool(BENEFICIARIO_RE.search(texto_norm))
     fecha_hasta_texto, valor_texto = _leer_vigencia_y_valor(texto_norm)
+    if valor_texto is not None:
+        valor_leido = _parsear_valor_pesos(valor_texto)
+        if valor_leido is None or not (
+            garantia.valor_asegurado / 100 <= valor_leido <= garantia.valor_asegurado * 20
+        ):
+            # Un valor absurdo (ej. "$522" en una póliza leída con OCR) es otro
+            # campo o un error de lectura: se trata como no leído.
+            fecha_hasta_texto, valor_texto = None, None
     datos_con_ia = False
     if not beneficiario_ok or fecha_hasta_texto is None or valor_texto is None:
         # Formato no reconocido por las reglas (otra aseguradora, póliza

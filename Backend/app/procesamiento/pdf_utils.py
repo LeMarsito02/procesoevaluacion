@@ -102,12 +102,30 @@ def texto_pagina(page) -> str:
     return texto
 
 
+# Algunas aseguradoras generan la póliza con el texto de los datos
+# convertido en trazos vectoriales: solo queda como texto la plantilla
+# (~300 caracteres de etiquetas) y el resto son miles de curvas. Se
+# confirmó en 7 pólizas reales de Seguros del Estado. Esas páginas también
+# se leen con OCR.
+OCR_MAXIMO_CARACTERES_TEXTO_DIBUJADO = 1000
+OCR_MINIMO_CURVAS_TEXTO_DIBUJADO = 1000
+
+
+def _necesita_ocr(page, texto: str) -> bool:
+    util = len(_ESTAMPA_FIRMA_RE.sub("", texto).strip())
+    if util < OCR_MINIMO_CARACTERES:
+        return bool(page.images)
+    if util < OCR_MAXIMO_CARACTERES_TEXTO_DIBUJADO:
+        return len(page.curves) >= OCR_MINIMO_CURVAS_TEXTO_DIBUJADO
+    return False
+
+
 def _texto_pagina_sin_memoria(page) -> str:
     texto = page.extract_text() or ""
-    if not OCR_HABILITADO or len(_ESTAMPA_FIRMA_RE.sub("", texto).strip()) >= OCR_MINIMO_CARACTERES:
+    if not OCR_HABILITADO:
         return texto
     try:
-        if not page.images:
+        if not _necesita_ocr(page, texto):
             return texto
         huella = getattr(page.pdf, "_huella_contenido", None)
         archivo_cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}.txt" if huella else None

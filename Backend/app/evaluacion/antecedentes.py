@@ -27,6 +27,10 @@ from app.procesamiento.zip_utils import extraer_pdfs
 # representante, con el de Policía en la página 5). Los PDF sin ningún
 # certificado en sus primeras páginas (RUP, experiencia...) se dejan de leer
 # ahí, para no recorrer documentos de cientos de páginas.
+# Marca del formulario de preguntas del SECOP II (archivos CO1_OTLCNTNR_*),
+# que se detectaba como certificado RNMC por mencionar el registro.
+FORMULARIO_SECOP_RE = re.compile(r"THIS QUESTION REQUIRES|ESTA PREGUNTA REQUIERE ANEXAR|SOBRE UNICO")
+
 PAGINAS_MINIMAS = 4
 PAGINAS_MAXIMAS_FUSIONADOS = 20
 
@@ -84,6 +88,10 @@ def leer_certificados(pdfs: dict[str, bytes]) -> list[Certificado]:
                     page.flush_cache()
                     texto_norm = _norm(texto)
                     requisitos = frozenset(c.requisito for c in _configs() if c.titulo_re.search(texto_norm))
+                    if requisitos and FORMULARIO_SECOP_RE.search(texto_norm):
+                        # El formulario de preguntas del SECOP cita los
+                        # nombres de todos los certificados; no es uno.
+                        requisitos = frozenset()
                     if requisitos:
                         if actual is not None:
                             certificados.append(Certificado(nombre, "\n".join(actual[1]), actual[0]))
@@ -326,9 +334,10 @@ CONFIG_PROCURADURIA = AntecedenteConfig(
 # Policía Nacional — antecedentes judiciales (Requisito 16): "...el ciudadano
 # identificado con: Cédula de Ciudadanía Nº 52371321 Apellidos y Nombres:
 # ROJAS PRIETO ADRIANA MARCELA NO TIENE ASUNTOS PENDIENTES CON LAS
-# AUTORIDADES JUDICIALES".
+# AUTORIDADES JUDICIALES". En escaneados el OCR cambia "Nº" por "N*" u otro
+# signo, así que se acepta cualquier signo corto después de la N.
 _POLICIA_JUDICIAL_RE = re.compile(
-    r"CEDULA DE CIUDADAN[IÍ]A N[º°O.]*\s*(\d[\d.]*)\s*APELLIDOS Y NOMBRES:?\s*([A-ZÑ][A-ZÑ .]+?)\s+NO TIENE"
+    r"CEDULA DE CIUDADAN[IÍ]A N[^\d\s]{0,3}\s*(\d[\d.]*)\s*APELLIDOS Y NOMBRES:?\s*([A-ZÑ][A-ZÑ .]+?)\s+NO TIENE"
 )
 
 
@@ -351,11 +360,13 @@ CONFIG_POLICIA = AntecedenteConfig(
 
 # RNMC — multas / medidas correctivas (Requisito 17): "...el ciudadano con
 # Cédula de Ciudadanía Nº. 52371321 y Nombre: ADRIANA MARCELA ROJAS PRIETO.
-# NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR" — el de la empresa
+# NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR" (otra versión omite
+# "y Nombre:": "...Nº. 30303454 RUTH ELENA TABARES ZULETA. NO TIENE...") — el de la empresa
 # dice "...para - NIT, sin digito de verificación: N. ...", que este patrón
 # ignora a propósito al exigir "CEDULA DE CIUDADANIA".
 _RNMC_PERSONA_RE = re.compile(
-    r"CIUDADANO CON C[EÉ]DULA DE CIUDADAN[IÍ]A N[º°O.]*\s*(\d[\d.]*)\s*Y NOMBRE:?\s*([A-ZÑ][A-ZÑ .]+?)\."
+    r"CIUDADANO CON C[EÉ]DULA DE CIUDADAN[IÍ]A N[^\d\s]{0,3}\s*(\d[\d.]*)\s*"
+    r"(?:Y NOMBRE:?\s*([A-ZÑ][A-ZÑ .]+?)\.|([A-ZÑ][A-ZÑ .]+?)\.\s*NO TIENE)"
 )
 
 
@@ -363,7 +374,7 @@ def _identidad_rnmc(texto_norm: str) -> tuple[str | None, str | None]:
     match = _RNMC_PERSONA_RE.search(texto_norm)
     if not match:
         return None, None
-    nombre = re.sub(r"\s+", " ", match.group(2)).strip(" .")
+    nombre = re.sub(r"\s+", " ", match.group(2) or match.group(3)).strip(" .")
     return nombre or None, match.group(1)
 
 
