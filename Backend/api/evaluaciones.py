@@ -13,6 +13,7 @@ from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
+from api.configuracion import plantilla_para_informe
 from cuentas.correo import enviar_asignacion
 from cuentas.models import Entidad, Rol, TipoArea, Usuario
 from cuentas.seguridad import auditar, requiere_rol, sesion_activa
@@ -725,9 +726,10 @@ def reabrir(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
 def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
-    plantilla = TIPOS[evaluacion.tipo].plantilla
-    if plantilla is None or not plantilla.exists():
-        raise HttpError(400, "Este tipo de evaluación aún no tiene plantilla de informe.")
+    elegida = plantilla_para_informe(evaluacion.entidad_id, evaluacion.tipo)
+    if elegida is None:
+        raise HttpError(400, "Este tipo de evaluación aún no tiene plantilla de informe. El administrador puede subirla en Configuración.")
+    plantilla, mapeo = elegida
     proceso = evaluacion.proceso
     proponentes = list(proceso.proponentes.all())
     revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion)}
@@ -740,6 +742,8 @@ def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
         ProcesoDocumentoBase.model_validate(proceso.documento_base),
         [servicios.proponente_motor(p) for p in proponentes],
         resultados,
+        mapeo=mapeo,
+        tipo=evaluacion.get_tipo_display(),
     )
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
     # Mismo nombre que usa la plantilla oficial ("INFORME EVALUACION JURIDICA …"), sin tildes.

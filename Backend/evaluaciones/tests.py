@@ -472,3 +472,115 @@ class FilaTests(BaseEvaluaciones):
         otra.entrar("admin@otra.gov.co")
         self.assertEqual(otra.get("/api/evaluaciones/fila/estado").json()["evaluaciones"], [])
         self.assertEqual(self.jefe.get("/api/evaluaciones/fila/estado").status_code, 403)
+
+
+PLANTILLA_ICCU = "motor/plantillas/plantilla_evaluacion_juridica.xlsx"
+
+
+def subir(c: "Cliente", tipo="juridica", ruta=PLANTILLA_ICCU, nombre="plantilla.xlsx", entidad_id=None):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    with open(ruta, "rb") as f:
+        archivo = SimpleUploadedFile(nombre, f.read())
+    url = "/api/configuracion/plantillas" + (f"?entidad_id={entidad_id}" if entidad_id else "")
+    return c.http.post(url, {"tipo": tipo, "archivo": archivo}, headers={"X-CSRFToken": c.csrf})
+
+
+class PlantillasTests(BaseEvaluaciones):
+    def setUp(self):
+        import tempfile
+
+        from django.test import override_settings
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self._override = override_settings(MEDIA_ROOT=self._tmp.name)
+        self._override.enable()
+        self.admin = Cliente()
+        self.admin.entrar("admin@iccu.gov.co")
+
+    def tearDown(self):
+        self._override.disable()
+        self._tmp.cleanup()
+
+    def test_subir_ajustar_mapeo_y_usar_en_el_informe(self):
+        r = subir(self.admin, nombre="Plantilla ICCU 2026.xlsx")
+        self.assertEqual(r.status_code, 201, r.content)
+        plantilla = r.json()
+        self.assertTrue(plantilla["inspeccion"]["valida"])
+        self.assertGreater(plantilla["inspeccion"]["hojas_proponente"], 0)
+        self.assertIn("1", plantilla["inspeccion"]["filas"])
+
+        mapeo = {**plantilla["mapeo"], "prefijo_codigo": "IDU"}
+        r = self.admin.http.put(
+            f"/api/configuracion/plantillas/{plantilla['id']}/mapeo",
+            {"mapeo": mapeo},
+            content_type="application/json",
+            headers={"X-CSRFToken": self.admin.csrf},
+        )
+        self.assertEqual(r.status_code, 200, r.content)
+
+        listado = {t["tipo"]: t for t in self.admin.get("/api/configuracion/plantillas").json()}
+        self.assertEqual(listado["juridica"]["activa"]["id"], plantilla["id"])
+        self.assertFalse(listado["juridica"]["usa_plantilla_del_sistema"])
+        self.assertTrue(listado["tecnica"]["activa"] is None and not listado["tecnica"]["motor_disponible"])
+
+        # El informe usa la plantilla y el mapeo de la entidad.
+        import io
+
+        import openpyxl
+
+        jefe, ev = self.crear()
+        self.evaluar_todo(jefe, ev["id"])
+        r = jefe.get(f"/api/evaluaciones/{ev['id']}/informe")
+        self.assertEqual(r.status_code, 200)
+        wb = openpyxl.load_workbook(io.BytesIO(r.content))
+        self.assertIn("IDU-ICCU-CM-037", wb["P-01"]["F3"].value)
+
+    def test_nueva_plantilla_reemplaza_la_activa_y_se_puede_volver(self):
+        primera = subir(self.admin).json()
+        segunda = subir(self.admin).json()
+        self.assertEqual(len(self.admin.get("/api/configuracion/plantillas").json()[0]["historial"]), 2)
+        r = self.admin.post(f"/api/configuracion/plantillas/{primera['id']}/activar")
+        self.assertTrue(r.json()["activa"])
+        activas = [p for p in self.admin.get("/api/configuracion/plantillas").json()[0]["historial"] if p["activa"]]
+        self.assertEqual([p["id"] for p in activas], [primera["id"]])
+        self.assertNotEqual(primera["id"], segunda["id"])
+
+    def test_tecnica_y_financiera_aceptan_plantilla(self):
+        self.assertEqual(subir(self.admin, tipo="tecnica").status_code, 201)
+        self.assertEqual(subir(self.admin, tipo="financiera").status_code, 201)
+
+    def test_rechaza_lo_que_no_es_xlsx(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx") as f:
+            f.write(b"esto no es un excel")
+            f.flush()
+            self.assertEqual(subir(self.admin, ruta=f.name).status_code, 400)
+        self.assertEqual(subir(self.admin, nombre="macros.xlsm").status_code, 400)
+
+    def test_permisos_y_aislamiento(self):
+        plantilla = subir(self.admin).json()
+        otra = Cliente()
+        otra.entrar("admin@otra.gov.co")
+        self.assertEqual(otra.get(f"/api/configuracion/plantillas/{plantilla['id']}/archivo").status_code, 404)
+        self.assertEqual(otra.delete(f"/api/configuracion/plantillas/{plantilla['id']}").status_code, 404)
+        self.assertEqual(otra.get("/api/configuracion/plantillas").json()[0]["activa"], None)
+        jefe = Cliente()
+        jefe.entrar("jefe@iccu.gov.co")
+        self.assertEqual(jefe.get("/api/configuracion/plantillas").status_code, 403)
+        self.assertEqual(subir(jefe).status_code, 403)
+        self.assertEqual(self.admin.get(f"/api/configuracion/plantillas/{plantilla['id']}/archivo").status_code, 200)
+
+    def test_superadmin_sube_para_una_entidad(self):
+        import pyotp
+
+        c = Cliente()
+        c.entrar("santiagopebe01@lemartek.com")
+        secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
+        c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
+        self.assertEqual(subir(c).status_code, 400)  # debe indicar la entidad
+        self.assertEqual(subir(c, entidad_id=self.otra.id).status_code, 201)
+        otra = Cliente()
+        otra.entrar("admin@otra.gov.co")
+        self.assertIsNotNone(otra.get("/api/configuracion/plantillas").json()[0]["activa"])

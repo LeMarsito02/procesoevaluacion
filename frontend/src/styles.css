@@ -465,3 +465,20 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 .tag-preparacion { background: var(--warn-soft); color: var(--warn); margin-left: 6px; }
 .en-preparacion { text-align: center; padding: 56px 24px; }
 .en-preparacion h2 { font-family: var(--serif); font-size: 22px; margin: 12px 0 6px; }
+
+/* ---------- Configuración ---------- */
+.plantillas { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; margin-bottom: 28px; }
+.plantilla-tipo + .plantilla-tipo { margin-top: 0; }
+.plantilla-archivo { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+.plantilla-problemas { margin: 0 0 10px; padding-left: 18px; color: var(--warn); }
+.plantilla-historial { margin-top: 12px; }
+.plantilla-historial summary { cursor: pointer; color: var(--ink-2); margin-bottom: 8px; }
+.plantilla-historial .plantilla-archivo { margin-bottom: 6px; }
+.dialogo-ancho { width: min(860px, calc(100vw - 32px)); }
+.plantillas-nueva { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.plantilla-slot { display: flex; gap: 8px; align-items: center; border: 1px dashed var(--line-strong); border-radius: 10px; padding: 10px; cursor: pointer; min-width: 0; color: var(--brand); }
+.plantilla-slot span { display: flex; flex-direction: column; min-width: 0; color: var(--ink); }
+.plantilla-slot .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plantilla-slot:hover { border-color: var(--brand); background: var(--brand-soft); }
+.plantilla-slot[data-lleno='true'] { border-style: solid; border-color: #a9dfd3; background: var(--ok-soft); color: var(--ok); }
+@media (max-width: 560px) { .plantillas-nueva { grid-template-columns: 1fr; } }

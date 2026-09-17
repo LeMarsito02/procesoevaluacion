@@ -162,6 +162,11 @@ function MenuUsuario() {
               <Icono nombre="reloj" tam={16} /> Fila de evaluación
             </button>
           )}
+          {(u.rol === 'superadmin' || u.rol === 'admin_entidad') && (
+            <button type="button" role="menuitem" onClick={() => ir('/configuracion')}>
+              <Icono nombre="documento" tam={16} /> Configuración de la entidad
+            </button>
+          )}
           {puedeGestionarEquipo(u) && (
             <button type="button" role="menuitem" onClick={() => ir('/equipo')}>
               <Icono nombre="usuarios" tam={16} /> Equipo

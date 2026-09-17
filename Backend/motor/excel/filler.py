@@ -7,14 +7,14 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
+from pydantic import BaseModel, Field
+
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 
-ENTIDAD_PREFIJO = "ICCU"
-P_SHEET_RE = re.compile(r"^P-\d+$")
 DATOS_SHEET_NAME = "DATOS PROCESO"
 
 # Fila (en cada hoja P-XX) donde va la columna L (SI/NO/REVISAR) y N (archivo/
-# motivo) de cada requisito, según la plantilla real de este proceso.
+# motivo) de cada requisito, según la plantilla jurídica del ICCU.
 FILA_POR_REQUISITO: dict[int, int] = {
     1: 29,
     2: 33,
@@ -37,6 +37,32 @@ FILA_POR_REQUISITO: dict[int, int] = {
 }
 
 
+class MapeoPlantilla(BaseModel):
+    """Dónde escribe el informe dentro de una plantilla de Excel. Cada entidad
+    sube su propia plantilla y ajusta este mapeo; los valores por defecto son
+    los de la plantilla jurídica del ICCU."""
+
+    prefijo_codigo: str = Field("ICCU", description="Sigla de la entidad antepuesta al código del proceso")
+    titulo: str = Field("EVALUACIÓN {tipo} - PROCESO {codigo}{de_anio}", description="Título de cada hoja de proponente")
+    hoja_proponente_patron: str = Field(r"^P-\d+$", description="Expresión regular del nombre de las hojas por proponente")
+    hoja_modelo: str | None = "MODELO"
+    celda_titulo: str | None = "F3"
+    celda_objeto: str | None = "C6"
+    celda_nombre_proponente: str | None = "E10"
+    columna_resultado: str = "L"
+    columna_detalle: str = "N"
+    filas_por_requisito: dict[int, int] = Field(default_factory=lambda: dict(FILA_POR_REQUISITO))
+    hoja_resumen: str | None = "RESUMEN"
+    celda_resumen: str | None = "B4"
+    texto_cumple: str = "SI"
+    texto_no_cumple: str = "NO"
+    texto_revisar: str = "REVISAR"
+    agregar_hoja_datos: bool = True
+
+
+MAPEO_POR_DEFECTO = MapeoPlantilla()
+
+
 def _codigo_y_anio(codigo_proceso: str) -> tuple[str, str]:
     match = re.match(r"^(.*)-(\d{4})$", codigo_proceso.strip())
     if match:
@@ -44,15 +70,19 @@ def _codigo_y_anio(codigo_proceso: str) -> tuple[str, str]:
     return codigo_proceso.strip(), ""
 
 
-def _codigo_completo(codigo_proceso: str) -> str:
+def _codigo_completo(codigo_proceso: str, prefijo: str = "ICCU") -> str:
     codigo_sin_anio, _ = _codigo_y_anio(codigo_proceso)
-    return f"{ENTIDAD_PREFIJO}-{codigo_sin_anio}"
+    return f"{prefijo}-{codigo_sin_anio}" if prefijo else codigo_sin_anio
 
 
-def _titulo_proceso(codigo_proceso: str) -> str:
-    codigo_completo = _codigo_completo(codigo_proceso)
+def _titulo_proceso(codigo_proceso: str, mapeo: MapeoPlantilla, tipo: str) -> str:
     _, anio = _codigo_y_anio(codigo_proceso)
-    return f"EVALUACIÓN JURÍDICA - PROCESO {codigo_completo} DE {anio}" if anio else f"EVALUACIÓN JURÍDICA - PROCESO {codigo_completo}"
+    return mapeo.titulo.format(
+        tipo=tipo.upper(),
+        codigo=_codigo_completo(codigo_proceso, mapeo.prefijo_codigo),
+        anio=anio,
+        de_anio=f" DE {anio}" if anio else "",
+    )
 
 
 def _objeto_con_lotes(proceso: ProcesoDocumentoBase) -> str:
@@ -70,7 +100,7 @@ def _formato_pesos(valor: float) -> str:
 
 
 def _write_datos_proceso_sheet(
-    wb: openpyxl.Workbook, proceso: ProcesoDocumentoBase, proponentes: list[Proponente]
+    wb: openpyxl.Workbook, proceso: ProcesoDocumentoBase, proponentes: list[Proponente], prefijo: str = "ICCU"
 ) -> None:
     if DATOS_SHEET_NAME in wb.sheetnames:
         del wb[DATOS_SHEET_NAME]
@@ -84,7 +114,7 @@ def _write_datos_proceso_sheet(
     ws["A1"].font = title_font
 
     ws["A3"] = "Código del proceso"
-    ws["B3"] = _codigo_completo(proceso.codigo_proceso)
+    ws["B3"] = _codigo_completo(proceso.codigo_proceso, prefijo)
     ws["A4"] = "Fecha de cierre"
     ws["B4"] = proceso.fecha_cierre.strftime("%d/%m/%Y")
     ws["A5"] = "Objeto general"
@@ -174,52 +204,103 @@ def fill_template(
     proceso: ProcesoDocumentoBase,
     proponentes: list[Proponente] | None = None,
     resultados: list[ResultadoRequisito] | None = None,
+    mapeo: MapeoPlantilla | None = None,
+    tipo: str = "Jurídica",
 ) -> bytes:
+    mapeo = mapeo or MAPEO_POR_DEFECTO
     wb = openpyxl.load_workbook(template_path)
+    hoja_re = re.compile(mapeo.hoja_proponente_patron)
 
-    titulo = _titulo_proceso(proceso.codigo_proceso)
+    titulo = _titulo_proceso(proceso.codigo_proceso, mapeo, tipo)
     objeto_texto = _objeto_con_lotes(proceso)
 
-    hojas_a_actualizar = [name for name in wb.sheetnames if name == "MODELO" or P_SHEET_RE.match(name)]
+    hojas_a_actualizar = [name for name in wb.sheetnames if name == mapeo.hoja_modelo or hoja_re.match(name)]
     for name in hojas_a_actualizar:
         ws = wb[name]
-        ws["F3"] = titulo
-        ws["C6"] = objeto_texto
+        if mapeo.celda_titulo:
+            ws[mapeo.celda_titulo] = titulo
+        if mapeo.celda_objeto:
+            ws[mapeo.celda_objeto] = objeto_texto
 
-    if "RESUMEN" in wb.sheetnames:
-        resumen = wb["RESUMEN"]
-        codigo_completo = _codigo_completo(proceso.codigo_proceso)
+    if mapeo.hoja_resumen and mapeo.celda_resumen and mapeo.hoja_resumen in wb.sheetnames:
+        resumen = wb[mapeo.hoja_resumen]
+        codigo_completo = _codigo_completo(proceso.codigo_proceso, mapeo.prefijo_codigo)
         _, anio = _codigo_y_anio(proceso.codigo_proceso)
-        actual = str(resumen["B4"].value or "")
+        actual = str(resumen[mapeo.celda_resumen].value or "")
         match = re.search(r" - (.*)$", actual)
-        sufijo = match.group(1) if match else "PRIMER INFORME DE EVALUACIÓN JURIDICA"
-        resumen["B4"] = f"PROCESO DE SELECCIÓN No. {codigo_completo} DE {anio} - {sufijo}"
+        sufijo = match.group(1) if match else f"PRIMER INFORME DE EVALUACIÓN {tipo.upper()}"
+        resumen[mapeo.celda_resumen] = f"PROCESO DE SELECCIÓN No. {codigo_completo} DE {anio} - {sufijo}"
 
-    for proponente in proponentes or []:
-        if proponente.hoja in wb.sheetnames:
-            wb[proponente.hoja]["E10"] = proponente.nombre_proponente
+    if mapeo.celda_nombre_proponente:
+        for proponente in proponentes or []:
+            if proponente.hoja in wb.sheetnames:
+                wb[proponente.hoja][mapeo.celda_nombre_proponente] = proponente.nombre_proponente
 
     for resultado in resultados or []:
         if resultado.hoja not in wb.sheetnames:
             continue
-        fila = FILA_POR_REQUISITO.get(resultado.requisito)
+        fila = mapeo.filas_por_requisito.get(resultado.requisito)
         if fila is None:
             continue
         ws = wb[resultado.hoja]
-        col_l, col_n = f"L{fila}", f"N{fila}"
+        col_l, col_n = f"{mapeo.columna_resultado}{fila}", f"{mapeo.columna_detalle}{fila}"
         if resultado.error:
-            ws[col_l] = "REVISAR"
+            ws[col_l] = mapeo.texto_revisar
             ws[col_n] = f"No se pudo evaluar automáticamente: {resultado.error}"
         elif resultado.cumple:
-            ws[col_l] = "SI"
+            ws[col_l] = mapeo.texto_cumple
             ws[col_n] = resultado.archivo_evaluado or resultado.motivo or ""
         else:
-            ws[col_l] = "NO"
+            ws[col_l] = mapeo.texto_no_cumple
             archivo = resultado.archivo_evaluado or "no se encontró el documento"
             ws[col_n] = f"{archivo} — NO CUMPLE: {resultado.motivo}"
 
-    _write_datos_proceso_sheet(wb, proceso, proponentes or [])
+    if mapeo.agregar_hoja_datos:
+        _write_datos_proceso_sheet(wb, proceso, proponentes or [], mapeo.prefijo_codigo)
 
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+def inspeccionar_plantilla(contenido: bytes, mapeo: MapeoPlantilla | None = None) -> dict:
+    """Revisa una plantilla subida: que abra, cuántas hojas de proponente tiene
+    y qué texto hay en la fila de cada requisito (para confirmar el mapeo)."""
+    mapeo = mapeo or MAPEO_POR_DEFECTO
+    problemas: list[str] = []
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(contenido), read_only=True)
+    except Exception as exc:  # noqa: BLE001
+        return {"valida": False, "problemas": [f"No se pudo abrir como Excel (.xlsx): {exc}"], "hojas": [], "hojas_proponente": 0, "filas": {}}
+    try:
+        hoja_re = re.compile(mapeo.hoja_proponente_patron)
+    except re.error as exc:
+        return {"valida": False, "problemas": [f"El patrón de hojas no es válido: {exc}"], "hojas": wb.sheetnames, "hojas_proponente": 0, "filas": {}}
+    hojas_proponente = [n for n in wb.sheetnames if hoja_re.match(n)]
+    if not hojas_proponente:
+        problemas.append(
+            f"No hay hojas de proponente que coincidan con «{mapeo.hoja_proponente_patron}». Hojas encontradas: "
+            + ", ".join(wb.sheetnames[:12])
+        )
+    filas: dict[int, str] = {}
+    if hojas_proponente:
+        ws = wb[hojas_proponente[0]]
+        maxima = max(mapeo.filas_por_requisito.values(), default=0)
+        textos: dict[int, list[str]] = {}
+        for fila in ws.iter_rows(min_row=1, max_row=maxima):
+            for celda in fila:
+                if getattr(celda, "row", None) in set(mapeo.filas_por_requisito.values()) and celda.value not in (None, ""):
+                    textos.setdefault(celda.row, []).append(str(celda.value).strip())
+        for requisito, fila in sorted(mapeo.filas_por_requisito.items()):
+            etiqueta = " · ".join(t for t in textos.get(fila, []) if t)[:160]
+            filas[requisito] = etiqueta
+            if not etiqueta:
+                problemas.append(f"La fila {fila} (requisito {requisito}) está vacía en la hoja {hojas_proponente[0]}.")
+    wb.close()
+    return {
+        "valida": bool(hojas_proponente),
+        "problemas": problemas,
+        "hojas": wb.sheetnames,
+        "hojas_proponente": len(hojas_proponente),
+        "filas": filas,
+    }

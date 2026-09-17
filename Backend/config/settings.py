@@ -119,6 +119,7 @@ if not DEBUG:
 
 # Los Documentos Base y las ofertas pueden pesar decenas de MB.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
+PLANTILLA_MAX_BYTES = 20 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 
 LANGUAGE_CODE = "es-co"
@@ -127,6 +128,10 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# Archivos subidos (plantillas de informe, etc.), separados por entidad. No se
+# sirven públicamente: solo se entregan por la API con permisos.
+MEDIA_ROOT = Path(os.environ.get("ALMACENAMIENTO_DIR", str(BASE_DIR / "almacenamiento")))
+MEDIA_URL = "/no-publico/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

@@ -175,3 +175,33 @@ class Trabajador(models.Model):
     capacidad = models.PositiveSmallIntegerField()
     iniciado_en = models.DateTimeField(auto_now_add=True)
     latido = models.DateTimeField()
+
+
+def _ruta_plantilla(instancia: "PlantillaInforme", nombre: str) -> str:
+    # Archivos separados por entidad; el nombre original no se usa en disco.
+    return f"entidades/{instancia.entidad_id}/plantillas/{instancia.tipo}/{uuid.uuid4().hex}.xlsx"
+
+
+class PlantillaInforme(models.Model):
+    """Plantilla de Excel del informe de una entidad para un tipo de evaluación."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.CASCADE, related_name="plantillas")
+    tipo = models.CharField(max_length=20, choices=TipoArea.choices)
+    nombre_original = models.CharField(max_length=255)
+    archivo = models.FileField(upload_to=_ruta_plantilla, max_length=300)
+    # MapeoPlantilla del motor (dónde escribir cada dato).
+    mapeo = models.JSONField()
+    # Resultado de revisar la plantilla con su mapeo (hojas, texto de cada fila, problemas).
+    inspeccion = models.JSONField(default=dict)
+    activa = models.BooleanField(default=True)
+    subida_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    subida_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-subida_en"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["entidad", "tipo"], condition=models.Q(activa=True), name="plantilla_activa_unica"
+            )
+        ]

@@ -21,6 +21,7 @@ from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
 from api.auth import router as auth_router
+from api.configuracion import router as configuracion_router
 from api.equipo import equipo, plataforma
 from api.evaluaciones import router as evaluaciones_router
 from cuentas.seguridad import sesion_activa
@@ -181,3 +182,4 @@ api.add_router("/auth", auth_router)
 api.add_router("/equipo", equipo)
 api.add_router("/plataforma", plataforma)
 api.add_router("/evaluaciones", evaluaciones_router)
+api.add_router("/configuracion", configuracion_router)

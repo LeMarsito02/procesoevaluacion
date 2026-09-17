@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Topbar from './components/Topbar'
 import { cerrarSesion, obtenerYo, type Usuario } from './cuentas'
 import { ErrorApi, MENSAJE_SISTEMA } from './http'
+import PaginaConfiguracion from './paginas/PaginaConfiguracion'
 import PaginaCuenta from './paginas/PaginaCuenta'
 import PaginaEntidades from './paginas/PaginaEntidades'
 import PaginaEntrar from './paginas/PaginaEntrar'
@@ -105,6 +106,7 @@ export default function Raiz() {
     pagina = <PaginaNuevoProceso />
     conTopbar = false
   } else if (ruta === '/procesos') pagina = <PaginaProcesos />
+  else if (ruta === '/configuracion' && (usuario.rol === 'superadmin' || usuario.rol === 'admin_entidad')) pagina = <PaginaConfiguracion />
   else if (ruta === '/fila' && (usuario.rol === 'superadmin' || usuario.rol === 'admin_entidad')) pagina = <PaginaFila />
   else if (ruta === '/equipo' && puedeGestionarEquipo(usuario)) pagina = <PaginaEquipo />
   else if (ruta === '/entidades' && usuario.rol === 'superadmin') pagina = <PaginaEntidades />

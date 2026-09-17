@@ -24,3 +24,6 @@ frontend/dist/
 
 # Material para registro de derechos de autor (se genera aparte)
 Registro_DNDA/
+
+# Archivos subidos por las entidades (plantillas, documentos)
+Backend/almacenamiento/
