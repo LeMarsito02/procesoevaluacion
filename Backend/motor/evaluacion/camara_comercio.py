@@ -6,6 +6,7 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 
 from motor import criterios
+from motor.evaluacion.sanciones_rup import HAY_SANCIONES_RE, evaluar_sanciones, extraer_sanciones
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.evaluacion.formato1 import (
     _clave_cache,
@@ -481,11 +482,14 @@ def _texto_paginas_finales(contenido: bytes) -> str:
         return "\n".join(partes)
 
 
-def evaluar_requisito10(pdfs: dict[str, bytes]) -> ResultadoEvaluacionCamara:
-    """Requisito 10: el RUP no debe reportar multas ni sanciones en firme.
-    Se revisan todos los RUP encontrados (uno por integrante si es plural).
-    Si se reporta alguna sanción NO se da por cumplido y se muestra el
-    detalle: si esa sanción inhabilita o no es un juicio del abogado."""
+def evaluar_requisito10(pdfs: dict[str, bytes], fecha_cierre: date) -> ResultadoEvaluacionCamara:
+    """Requisito 10: multas, sanciones y declaratorias de incumplimiento del RUP.
+
+    No basta con que existan: se leen con detalle y se aplican las reglas del
+    art. 58 de la Ley 2195 de 2022 (multas del último año) y del art. 90 de la
+    Ley 1474 de 2011 (inhabilidad por incumplimiento reiterado). Ver
+    motor/evaluacion/sanciones_rup.py. Se revisan todos los RUP encontrados
+    (uno por integrante si el proponente es plural)."""
     encontrados = encontrar_documentos(pdfs, TITULO_RUP_RE, PISTAS_RUP)
     if not encontrados:
         return ResultadoEvaluacionCamara(
@@ -493,25 +497,30 @@ def evaluar_requisito10(pdfs: dict[str, bytes]) -> ResultadoEvaluacionCamara:
         )
 
     motivos = []
+    informativos = []
     for nombre in encontrados:
         try:
             texto_norm = _norm(_texto_paginas_finales(pdfs[nombre]))
         except Exception:  # noqa: BLE001
             motivos.append(f"no se pudieron leer las últimas páginas de '{nombre}' — confirma manualmente")
             continue
-        if SANCION_REPORTADA_RE.search(texto_norm):
-            detalle = DETALLE_SANCION_RE.search(texto_norm)
-            resumen = re.sub(r"\s+", " ", detalle.group(1)).strip() if detalle else ""
-            motivos.append(
-                f"'{nombre}' reporta multas/sanciones en firme ({resumen}...) — revisa si inhabilitan al proponente"
-            )
-        elif len(texto_norm) < MINIMO_TEXTO_PAGINAS_FINALES:
-            motivos.append(f"las últimas páginas de '{nombre}' no tienen texto legible — confirma manualmente")
+        if not HAY_SANCIONES_RE.search(texto_norm):
+            if len(texto_norm) < MINIMO_TEXTO_PAGINAS_FINALES:
+                motivos.append(f"las últimas páginas de '{nombre}' no tienen texto legible — confirma manualmente")
+            continue
+        sanciones = extraer_sanciones(texto_norm)
+        if not sanciones:
+            motivos.append(f"'{nombre}' menciona multas o sanciones pero no se pudieron leer sus datos — revísalo manualmente")
+            continue
+        cumple, motivo = evaluar_sanciones(sanciones, fecha_cierre)
+        if not cumple:
+            motivos.append(f"'{nombre}': {motivo}")
+        elif motivo:
+            informativos.append(f"'{nombre}': {motivo}")
 
-    cumple = not motivos
-    return ResultadoEvaluacionCamara(
-        cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0]
-    )
+    if motivos:
+        return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(motivos), archivo=encontrados[0])
+    return ResultadoEvaluacionCamara(cumple=True, motivo="; ".join(informativos) or None, archivo=encontrados[0])
 
 
 def _evaluar_proponente_camara(
@@ -597,7 +606,9 @@ def evaluar_proponente_requisito9(proponente: Proponente, proceso: ProcesoDocume
 
 
 def evaluar_proponente_requisito10(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
-    return _evaluar_proponente_camara(10, lambda pdfs, proceso, tipo: evaluar_requisito10(pdfs), proponente, proceso)
+    return _evaluar_proponente_camara(
+        10, lambda pdfs, proceso, tipo: evaluar_requisito10(pdfs, proceso.fecha_cierre), proponente, proceso
+    )
 
 
 # "ORGANIZACION JURIDICA: SOCIEDAD POR ACCIONES SIMPLIFICADA CATEGORIA :

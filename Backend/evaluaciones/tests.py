@@ -8,6 +8,7 @@ from asgiref.sync import async_to_sync
 
 from django.core import mail
 from django.db import ProgrammingError, transaction
+from django.test import TestCase
 from django.utils import timezone
 
 from cuentas.aislamiento import NINGUNA, SISTEMA, fijar_entidad
@@ -965,3 +966,76 @@ class HistoricoTests(BaseEvaluaciones):
         otra.entrar("admin@otra.gov.co")
         self.assertEqual(otra.get(f"/api/evaluaciones/{self.ev['id']}/expedientes/{exp['id']}/archivo").status_code, 404)
         self.assertEqual(self.jefe.post(f"/api/evaluaciones/{self.ev['id']}/expedientes").json()["version"], 2)
+
+
+class SancionesRupTests(TestCase):
+    """Reglas del abogado sobre multas y sanciones del RUP (art. 58 Ley 2195/2022
+    y art. 90 Ley 1474/2011)."""
+
+    cierre = __import__("datetime").date(2026, 8, 20)
+
+    def sancion(self, tipo, anio, contrato="C1", penal=False, incumpl=False, descripcion=""):
+        from datetime import date as _date
+
+        from motor.evaluacion.sanciones_rup import Sancion
+
+        return Sancion(
+            tipo=tipo, entidad="ENTIDAD", contrato=contrato, descripcion=descripcion, fecha=_date(anio, 3, 1),
+            valor="", es_incumplimiento=incumpl, clausula_penal=penal,
+        )
+
+    def evaluar(self, sanciones):
+        from motor.evaluacion.sanciones_rup import evaluar_sanciones
+
+        return evaluar_sanciones(sanciones, self.cierre)
+
+    def test_multa_del_ultimo_ano_rechaza_y_las_viejas_no(self):
+        self.assertFalse(self.evaluar([self.sancion("multa", 2026)])[0])
+        self.assertFalse(self.evaluar([self.sancion("sancion", 2026, penal=True)])[0])
+        cumple, motivo = self.evaluar([self.sancion("multa", 2023)])
+        self.assertTrue(cumple)
+        self.assertIn("anteriores al periodo evaluado", motivo)
+
+    def test_inhabilidad_por_incumplimiento_reiterado(self):
+        cinco = [self.sancion("multa", 2023, f"C{i}") for i in range(5)]
+        self.assertFalse(self.evaluar(cinco)[0])
+        self.assertTrue(self.evaluar(cinco[:4])[0])
+        dos_contratos = [self.sancion("declaratoria", 2023, "C1"), self.sancion("declaratoria", 2023, "C2")]
+        self.assertFalse(self.evaluar(dos_contratos)[0])
+        # Mismo contrato en años distintos: no es reiterado en una vigencia fiscal.
+        self.assertTrue(self.evaluar([self.sancion("declaratoria", 2023, "C1"), self.sancion("declaratoria", 2022, "C1")])[0])
+        mixto = [self.sancion("multa", 2023, "C1"), self.sancion("multa", 2023, "C2"), self.sancion("declaratoria", 2023, "C3")]
+        self.assertFalse(self.evaluar(mixto)[0])
+
+    def test_un_mismo_hecho_reportado_dos_veces_no_cuenta_doble(self):
+        # El RUP repite el hecho en «SANCIONES» y en «DECLARATORIAS DE INCUMPLIMIENTO».
+        repetido = [
+            self.sancion("sancion", 2022, "1242-2018", penal=True, incumpl=True),
+            self.sancion("declaratoria", 2022, "1242-2018", penal=True),
+        ]
+        self.assertTrue(self.evaluar(repetido)[0])
+
+    def test_datos_dudosos_van_a_revision(self):
+        contradictoria = self.sancion("sancion", 2023, descripcion="INCUMPLIMIENTO DEFINITIVO")
+        cumple, motivo = self.evaluar([contradictoria])
+        self.assertFalse(cumple)
+        self.assertIn("se contradice", motivo)
+        sin_fecha = self.sancion("multa", 2023)
+        sin_fecha.fecha = None
+        self.assertFalse(self.evaluar([sin_fecha])[0])
+
+    def test_lectura_del_rup_real(self):
+        """Formatos reales de tres cámaras de comercio distintas."""
+        import glob
+
+        from motor.evaluacion.camara_comercio import _norm, _texto_paginas_finales
+        from motor.evaluacion.sanciones_rup import extraer_sanciones
+
+        archivos = sorted(glob.glob(".scratch/sanciones_rup/*.pdf"))
+        if not archivos:
+            self.skipTest("Sin RUP de ejemplo en .scratch (solo se ejecuta en el equipo de desarrollo).")
+        for ruta in archivos:
+            with open(ruta, "rb") as f:
+                sanciones = extraer_sanciones(_norm(_texto_paginas_finales(f.read())))
+            self.assertTrue(sanciones, ruta)
+            self.assertTrue(all(s.fecha and s.entidad for s in sanciones), ruta)

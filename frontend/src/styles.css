@@ -510,3 +510,6 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 .formulario-inline { margin-top: 10px; padding: 12px; border: 1px solid var(--brand); border-radius: 12px; background: var(--brand-soft); display: flex; flex-direction: column; gap: 10px; }
 .grid-persona { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: end; }
 .lista-expedientes { display: flex; flex-direction: column; gap: 8px; }
+.falta-certificado { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.falta-certificado .enlace { font-size: 11.5px; }
+.datos-consulta { gap: 10px; }

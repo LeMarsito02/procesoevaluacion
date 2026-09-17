@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   agregarPersona,
+  fuenteDe,
   aportarDocumento,
   archivoAportado,
   obtenerAntecedentes,
@@ -20,6 +21,15 @@ const AYUDA_TIPO: Record<string, string> = {
   union_temporal: 'Unión temporal: registre cada integrante (persona natural o jurídica) con sus representantes, y el representante de la unión temporal.',
 }
 
+async function copiar(texto: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(texto)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const fecha = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString('es-CO', { dateStyle: 'medium' })
 
 interface Props {
@@ -35,6 +45,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   const [error, setError] = useState<string | null>(null)
   const [agregando, setAgregando] = useState<{ de: PersonaVerificada | null } | null>(null)
   const [subiendo, setSubiendo] = useState<{ persona: PersonaVerificada | null; requisito: number } | null>(null)
+  const [copiado, setCopiado] = useState<string | null>(null)
 
   const recargar = useCallback(() => {
     obtenerAntecedentes(evaluacionId, proponenteId)
@@ -102,7 +113,23 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                       {per.fecha_expedicion_documento && ` · exp. ${fecha(per.fecha_expedicion_documento)}`}
                     </div>
                     {!soloLectura && (
-                      <div className="acciones" style={{ marginTop: 4 }}>
+                      <div className="acciones datos-consulta" style={{ marginTop: 4 }}>
+                        <button
+                          type="button"
+                          className="enlace"
+                          title="Copiar nombre, documento y fecha de expedición para consultarlos en las páginas oficiales"
+                          onClick={async () =>
+                            setCopiado(
+                              (await copiar(
+                                `${per.nombre} · ${per.tipo === 'juridica' ? 'NIT' : 'C.C.'} ${per.documento}${per.fecha_expedicion_documento ? ` · expedida el ${fecha(per.fecha_expedicion_documento)}` : ''}`,
+                              ))
+                                ? per.id
+                                : null,
+                            )
+                          }
+                        >
+                          {copiado === per.id ? '¡copiado!' : 'copiar datos'}
+                        </button>
                         {per.tipo === 'juridica' && (
                           <button type="button" className="enlace" onClick={() => setAgregando({ de: per })}>
                             + representante
@@ -143,9 +170,22 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                           (soloLectura ? (
                             <span className="small muted">—</span>
                           ) : (
-                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSubiendo({ persona: per, requisito: r.numero })}>
-                              <Icono nombre="subir" tam={13} /> Subir
-                            </button>
+                            <div className="falta-certificado">
+                              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSubiendo({ persona: per, requisito: r.numero })}>
+                                <Icono nombre="subir" tam={13} /> Subir
+                              </button>
+                              {fuenteDe(r.pistas) && (
+                                <a
+                                  className="enlace"
+                                  href={fuenteDe(r.pistas)!.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={`${fuenteDe(r.pistas)!.nombre} · pide ${fuenteDe(r.pistas)!.pide}`}
+                                >
+                                  consultar
+                                </a>
+                              )}
+                            </div>
                           ))}
                       </td>
                     )
