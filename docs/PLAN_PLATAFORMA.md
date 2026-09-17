@@ -1,128 +1,160 @@
-# Plan: MiEvaluador como plataforma multi-entidad
+# Plan: MiEvaluador como plataforma multi-entidad y multi-evaluación
 
-Estado: **propuesta para revisión** (no implementado).
+Estado: **propuesta v2 para revisión** (no implementado). Incorpora las decisiones del 17/09/2026.
 
 ## 1. Objetivo
 
-Pasar de una herramienta de un solo usuario (estado en el navegador) a una plataforma donde:
+Pasar de una herramienta de un solo usuario a una plataforma donde:
 
-- Varias **entidades** (ICCU y otras) usan el sistema **totalmente aisladas** entre sí.
-- Cada entidad tiene **usuarios con roles** (administrador, coordinador, abogado…).
-- Un abogado maneja **varios procesos** a la vez.
-- Las evaluaciones van a una **fila central de trabajos** con posición, tiempo estimado, avance y **aviso por correo** al terminar.
-- Todo queda **guardado en el servidor** (no en el navegador) con **auditoría** de quién hizo qué.
+- Varias **entidades** usan el sistema **totalmente aisladas** entre sí.
+- Cada proceso de contratación tiene **varias evaluaciones**: **jurídica**, **técnica** y **financiera** (y otras que se agreguen), cada una con sus propios requisitos, equipo y responsables.
+- Un **jefe de área** asigna evaluaciones a los integrantes de su equipo, que hacen las revisiones manuales.
+- Las evaluaciones van a una **fila central de trabajos** con posición, tiempo estimado, barra de avance y **aviso por correo** (desde @lemartek.com).
+- Las entidades **ajustan los criterios** y pueden **crear requisitos nuevos** desde un panel.
+- Todo queda en el servidor, con **auditoría**, y los documentos de los proponentes se eliminan **30 días** después de finalizado el proceso.
 
-## 2. Arquitectura propuesta
+## 2. Decisiones tomadas
 
-```
-Navegador (React)  ──HTTPS──▶  API (FastAPI)  ──▶  PostgreSQL (datos + fila de trabajos)
-                                   │                       ▲
-                                   │                       │ toma trabajos
-                                   ▼                       │
-                          Almacenamiento de archivos   Worker(s) de evaluación ──▶ OCR / IA local
-                          (por entidad)                    │
-                                                           └──▶ Correo (SMTP)
-```
-
-Decisiones clave:
-
-| Tema | Propuesta | Por qué |
+| # | Tema | Decisión |
 |---|---|---|
-| Base de datos | **PostgreSQL** + SQLAlchemy 2 + migraciones Alembic | Estándar, robusto, seguridad a nivel de fila (RLS). |
-| Fila de trabajos | **La misma PostgreSQL** (`SELECT … FOR UPDATE SKIP LOCKED`) | Un componente menos que Redis: menos RAM en tu PC y menos cosas que operar; aguanta de sobra el volumen esperado. Si algún día no alcanza, se cambia a Redis sin tocar la lógica. |
-| Workers | Proceso separado del API (`python -m app.worker`), reutiliza la evaluación en una sola pasada actual | El API responde rápido aunque haya evaluaciones pesadas; se escalan workers por separado (en LeMarCloud, otra máquina virtual). |
-| Sesión | Cookie **httpOnly + Secure + SameSite** con sesión guardada en BD | Más segura que tokens en el navegador y se puede revocar (cerrar sesión en todos lados, desactivar usuario). |
-| Contraseñas | **Argon2id**, política mínima, bloqueo temporal por intentos fallidos | Buenas prácticas actuales. |
-| Correo | SMTP configurable (dominio de LeMarTek) | Invitaciones, recuperar contraseña, aviso de evaluación terminada. |
-| Archivos | Carpeta por entidad (`/datos/<entidad>/…`), luego almacenamiento S3 compatible en LeMarCloud | Aislamiento físico además del lógico. |
+| 1 | Inicio de sesión | Correo y contraseña propios. En la pantalla de login se muestran también **Microsoft**, **Google** y **Empleados LeMarTek** como "próximamente"; se implementan en el backend más adelante. |
+| 2 | Acceso a datos de una entidad | Nadie de LeMarTek ve datos de una entidad salvo con **permiso temporal** del administrador de esa entidad (auditado). **Excepción: el superadministrador `santiagopebe01@lemartek.com`**, con acceso total. |
+| 3 | Roles | Se usan los propuestos, ajustados por área (ver §3). |
+| 4 | Visibilidad | Cada usuario trabaja solo en **sus** evaluaciones asignadas; además hay una página para **consultar todos los procesos de la entidad** (solo lectura). |
+| 5 | Fuente de ofertas | **Solo Google Drive** por ahora. |
+| 6 | Criterios | Cada entidad ajusta los criterios y puede **agregar requisitos nuevos** desde el panel (ver §5). |
+| 7 | Correo | Envío desde un dominio **@lemartek.com**. |
+| 8 | Retención | Documentos de proponentes: se eliminan **30 días** después de finalizado el proceso. |
 
-## 3. Entidades, usuarios y roles
+## 3. Usuarios, áreas y roles
 
-### 3.1 Roles
+Cada usuario pertenece a una entidad y a una o más **áreas** (Jurídica, Técnica, Financiera…).
 
 | Rol | Alcance | Puede |
 |---|---|---|
-| **Superadministrador** (LeMarTek) | Toda la plataforma | Crear/suspender entidades, crear su primer administrador, ver métricas de uso. **No ve documentos ni resultados** de las entidades (ver pregunta 2). |
-| **Administrador de entidad** | Su entidad | Invitar/desactivar usuarios y asignar roles, configurar la entidad (plantilla Excel, criterios, correo), ver todos los procesos de la entidad. |
-| **Coordinador jurídico** | Su entidad | Crear procesos, asignarlos a abogados, ver y revisar todos los procesos, cerrar/aprobar informes. |
-| **Abogado evaluador** | Procesos asignados | Crear procesos, evaluar, revisar casos, generar informe. |
-| **Consulta** | Procesos asignados | Solo lectura (ej. control interno). |
+| **Superadministrador** | Toda la plataforma | Todo: crear/suspender entidades, ver uso, estado de la fila y workers, acceso a datos (con 2FA obligatorio y auditoría). |
+| **Administrador de entidad** | Su entidad | Usuarios, áreas y roles; configuración (criterios, requisitos, plantillas, Drive, correo); ver todos los procesos. |
+| **Jefe de área** (ej. abogado en jefe) | Su área en su entidad | Crear procesos; **asignar evaluaciones** de su área a su equipo; ver el avance de todo su equipo; revisar y **aprobar** el informe de su área. |
+| **Evaluador** (abogado, ingeniero, contador) | Evaluaciones asignadas | Revisar los casos pendientes, decidir, generar el informe de su evaluación. |
+| **Consulta** | Su entidad, solo lectura | Ver procesos, resultados e informes sin modificar nada. Útil para control interno, supervisión, dirección o veeduría. |
 
-Permisos definidos en un solo lugar del backend (matriz rol × acción), probados automáticamente.
+Todos los usuarios pueden ver la página **"Procesos de la entidad"** (solo lectura del listado y el estado).
 
-### 3.2 Aislamiento entre entidades (lo más importante)
+## 4. Motor de evaluación común + tipos de evaluación
 
-Tres capas, para que un error en una no exponga datos:
-
-1. **Aplicación**: toda consulta pasa por un repositorio que exige `entidad_id` de la sesión; no existe una forma de consultar "sin entidad". Si alguien pide un proceso de otra entidad, la respuesta es **404** (ni siquiera confirma que existe).
-2. **Base de datos**: **Row-Level Security** de PostgreSQL en todas las tablas con `entidad_id`; la conexión fija la entidad de la sesión. Aunque el código tuviera un error, la BD no devuelve filas ajenas.
-3. **Archivos y cachés**: carpeta por entidad; las cachés de resultados se separan por entidad (las de OCR/IA se indexan por el contenido del archivo, así que no revelan nada que el usuario no tenga ya).
-
-Más:
-- **Pruebas automáticas de aislamiento**: por cada endpoint, un usuario de la entidad A intenta leer/modificar recursos de la entidad B y debe fallar.
-- **Auditoría**: registro inmutable de accesos y acciones (quién, qué, cuándo, desde dónde).
-- Credenciales de Google Drive **por entidad** (cada entidad comparte sus carpetas con su propia cuenta de servicio, o sube los zip directamente).
-
-## 4. Procesos y fila de trabajos
-
-### 4.1 Ciclo de vida de un proceso
+Las tres evaluaciones comparten el 80 % del trabajo (descargar de Drive, descomprimir, leer PDF, OCR, detectar documentos, IA local verificada, fila, revisión humana, informe). Lo que cambia es **qué requisitos** se verifican y **cómo**.
 
 ```
-Borrador ─▶ En fila ─▶ Evaluando ─▶ En revisión ─▶ Finalizado
-   ▲            │           │              │
-   └── editar   └ cancelar  └ pausar       └ reabrir (coordinador)
+                        ┌──────────── Motor común ────────────┐
+Ofertas (Drive) ──▶     │ descarga · zip/rar · lectura PDF    │
+                        │ OCR · detección de documentos       │
+                        │ IA local verificada · caché         │
+                        └───────────────┬─────────────────────┘
+                                        │ "catálogo de documentos" del proponente
+             ┌──────────────────────────┼──────────────────────────┐
+             ▼                          ▼                          ▼
+   Tipo JURÍDICA               Tipo TÉCNICA               Tipo FINANCIERA
+   17 requisitos (hecho)       experiencia, personal      indicadores: liquidez,
+                               clave, Formato 3, RUP…     endeudamiento, cobertura,
+                                                          capital de trabajo…
+             │                          │                          │
+             └──── resultados + revisión humana + informe (plantilla por tipo) ───┘
 ```
 
-- **Borrador**: datos del Documento Base cargados y revisados (pasos 1–2 actuales).
-- **En fila**: posición y tiempo estimado visibles.
-- **Evaluando**: avance por proponente en vivo.
-- **En revisión**: resultados listos; el abogado decide los pendientes (paso 3 actual), guardado en el servidor.
-- **Finalizado**: informe generado; queda la versión del informe y quién lo aprobó.
+- Un **tipo de evaluación** declara: su catálogo de requisitos, los documentos que necesita, sus evaluadores, su plantilla de informe y sus criterios configurables.
+- Un proceso puede tener **una, dos o las tres** evaluaciones; cada una con su responsable, avance, pendientes e informe.
+- Las evaluaciones de un mismo proceso **comparten la lectura de documentos**: el proponente se descarga y lee una sola vez.
+- La jurídica actual pasa a ser el primer tipo, sin cambiar su lógica ni su acierto.
 
-### 4.2 Fila central
+**Para construir la técnica y la financiera se necesitan ejemplos reales** (como se hizo con la jurídica): el informe de evaluación técnica y financiera de un proceso, la plantilla Excel de cada una y las reglas que aplican el ingeniero y el contador. Con eso se miden contra la realidad, igual que la jurídica (85,5 %).
 
-- Cada **proponente** es un trabajo. Estados: pendiente → en curso → terminado / error.
-- **Reparto justo**: el worker toma el siguiente trabajo alternando entre entidades y, dentro de la entidad, entre procesos (una evaluación de 150 proponentes no bloquea a otra de 10).
-- **Tiempo estimado** = trabajos por delante × tiempo medio real por proponente ÷ workers activos (se recalcula con datos reales).
-- **Robustez**: si un worker muere, sus trabajos vuelven a la fila (latido cada X segundos); reintento aislado de proponentes pesados (ya existe); cancelar/pausar un proceso quita sus trabajos pendientes.
-- **Avance en vivo** en la interfaz (Server-Sent Events o consulta periódica).
-- **Correo** al abogado cuando termina (con enlace directo al proceso) y si falla algo.
+## 5. Criterios configurables y requisitos nuevos desde el panel
 
-## 5. Interfaz (solo modo claro, marca MiEvaluador)
+Tres niveles, de lo más simple a lo más flexible:
 
-Pantallas nuevas:
-1. **Inicio de sesión**, recuperar contraseña, aceptar invitación (definir contraseña).
-2. **Mis procesos** (tablero): tarjetas/tabla con estado, avance, posición en fila, pendientes por revisar, abogado asignado, fecha de cierre; filtros y búsqueda.
-3. **Nuevo proceso**: el asistente actual (pasos 1–2), ahora guardado como borrador en el servidor; opción de **subir los zip** además de Drive.
-4. **Proceso**: la evaluación y revisión actuales (paso 3) e informe (paso 4), con historial de decisiones.
-5. **Administración de la entidad**: usuarios y roles, invitaciones, plantilla Excel, criterios configurables (ej. vigencia COPNIA 3 meses, certificados 1 mes), conexión con Drive, correo.
-6. **Superadministración** (LeMarTek): entidades, uso, estado de la fila y workers.
-7. **Mi perfil**: nombre, contraseña, notificaciones.
+1. **Ajustar parámetros** de requisitos existentes: vigencias (COPNIA 3 meses, certificados 1 mes), porcentaje de la garantía, umbrales de indicadores financieros, requisito activo/inactivo, obligatorio/no aplica. Formularios simples.
+2. **Crear requisitos a partir de plantillas de regla** (sin programar). El administrador arma el requisito combinando bloques ya probados:
+   - *Qué documento*: título o frases que lo identifican (ej. "CERTIFICADO DE…").
+   - *Qué dato extraer*: fecha de expedición, valor, nombre, cédula/NIT, frase.
+   - *Qué verificar*: vigencia máxima N meses a la fecha de cierre · valor ≥ fórmula · frase de "sin novedad" presente · nombre/cédula coincide con el representante o integrantes · aplica solo a persona jurídica / plural.
+   - Ejemplo: "Certificado de la Junta Central de Contadores del contador, vigencia máxima 3 meses, debe decir *NO REGISTRA ANTECEDENTES*".
+3. **Requisito asistido por IA**: el administrador lo describe en lenguaje natural; la IA local **propone** la regla usando los mismos bloques del nivel 2; el administrador la **prueba contra ofertas reales** de un proceso anterior (ve en qué proponentes cumple o no y por qué) y solo entonces la **activa**. La IA nunca decide sola: arma la regla, y la regla se verifica como todas.
 
-## 6. Modelo de datos (resumen)
+Cada cambio de criterios queda **versionado**: una evaluación siempre registra con qué versión de reglas se hizo (importante ante reclamaciones).
 
-`entidades`, `usuarios` (entidad, rol, estado), `sesiones`, `invitaciones`, `procesos` (entidad, creador, asignados, estado, datos del Documento Base), `proceso_lotes`, `proponentes`, `trabajos` (fila), `resultados` (por proponente y requisito), `revisiones` (decisión del abogado, usuario, fecha, nota), `informes` (archivo generado, versión, usuario), `configuracion_entidad` (criterios, plantilla), `auditoria`.
+## 6. Procesos, asignaciones y fila de trabajos
 
-## 7. Fases
+### 6.1 Ciclo de vida
+
+Proceso (datos del Documento Base) → una o más **evaluaciones** (jurídica/técnica/financiera), cada una:
+
+```
+Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión ─▶ Aprobada
+                                           │              │
+                                        pausar      reabrir (jefe)
+```
+
+- El **jefe de área** crea el proceso (o lo recibe) y **asigna** la evaluación de su área a un evaluador (o a varios, repartiendo proponentes).
+- El evaluador recibe un **correo** con la asignación.
+- Al terminar la evaluación automática, el evaluador revisa los pendientes; el jefe **aprueba** y se emite el informe.
+
+### 6.2 Fila central
+
+- Cada **proponente** es un trabajo; la lectura de documentos se hace una vez y alimenta los tipos de evaluación del proceso.
+- **Reparto justo** entre entidades y procesos (una evaluación grande no bloquea a otra pequeña).
+- **Tiempo estimado** = trabajos por delante × tiempo medio real ÷ workers activos.
+- Recuperación ante caídas (trabajos huérfanos vuelven a la fila), reintento aislado, pausar/cancelar.
+- **Correo** al terminar y si algo falla.
+
+## 7. Páginas
+
+| Página | Para quién | Contenido |
+|---|---|---|
+| **Login** | Todos | Correo y contraseña; botones Microsoft / Google / Empleados LeMarTek (próximamente); recuperar contraseña; aceptar invitación. |
+| **Mis evaluaciones** | Evaluador, jefe | Lista de mis evaluaciones con **barra de progreso animada**, estado, posición en fila, **tiempo estimado**, pendientes por revisar, fecha de cierre; filtros y búsqueda. |
+| **Procesos de la entidad** | Todos (lectura) | Todos los procesos con sus evaluaciones, avance, responsables y estado. |
+| **Equipo y asignaciones** | Jefe de área | Evaluaciones sin asignar, carga de trabajo de cada integrante (evaluaciones y pendientes), asignar/reasignar, avance del equipo. |
+| **Nuevo proceso** | Jefe / evaluador | Asistente actual (Documento Base, Drive, datos), eligiendo qué evaluaciones incluye. |
+| **Evaluación** | Asignados | Matriz, revisión e informe (lo actual), por tipo de evaluación. |
+| **Fila de trabajos** | Administrador, superadmin | Qué se está evaluando, cola, workers, tiempos. |
+| **Administración de la entidad** | Administrador | Usuarios, áreas, roles, invitaciones; criterios y requisitos (§5); plantillas de informe; Drive; permisos temporales de soporte. |
+| **Superadministración** | Superadmin | Entidades, uso, salud del sistema, auditoría global. |
+| **Mi perfil** | Todos | Datos, contraseña, notificaciones. |
+
+## 8. Aislamiento y seguridad
+
+1. **Aplicación**: toda consulta exige la entidad de la sesión; recursos de otra entidad responden 404.
+2. **Base de datos**: Row-Level Security de PostgreSQL por `entidad_id`.
+3. **Archivos y cachés** separados por entidad.
+4. **Pruebas automáticas de aislamiento** en cada endpoint.
+5. **Auditoría** inmutable (accesos, asignaciones, decisiones, cambios de criterios, permisos de soporte).
+6. **2FA obligatorio** para el superadministrador y recomendado para administradores.
+7. **Retención**: tarea diaria que elimina los documentos de proponentes 30 días después de aprobada la última evaluación del proceso (se conservan resultados, decisiones e informes).
+8. Contraseñas Argon2id, sesiones en cookie httpOnly/Secure, bloqueo por intentos, límites de peticiones.
+
+## 9. Arquitectura técnica
+
+- **PostgreSQL** (datos, fila de trabajos con `SKIP LOCKED`, RLS) + SQLAlchemy 2 + Alembic.
+- **API FastAPI** separada de los **workers** de evaluación.
+- **Motor común** + **registro de tipos de evaluación** (jurídica como primer tipo).
+- **Correo SMTP** @lemartek.com. Almacenamiento de archivos por entidad (S3 compatible en LeMarCloud).
+- Frontend React con enrutamiento por páginas, misma marca y solo modo claro.
+
+## 10. Fases
 
 | Fase | Contenido | Resultado verificable |
 |---|---|---|
-| **F0. Base** | PostgreSQL, migraciones, configuración por entorno, estructura de módulos | La app actual funciona igual sobre la nueva base. |
-| **F1. Identidad y aislamiento** | Entidades, usuarios, roles, sesión, invitaciones, recuperación de contraseña, RLS, auditoría, **pruebas de aislamiento** | Usuarios de dos entidades de prueba no se ven entre sí (pruebas automáticas en verde). |
-| **F2. Procesos en el servidor** | Guardar procesos, resultados y revisiones en BD; tablero "Mis procesos"; asignación a abogados | Cerrar el navegador o cambiar de equipo no pierde nada; historial de decisiones. |
-| **F3. Fila de trabajos** | Worker separado, reparto justo, posición y ETA, pausar/cancelar, recuperación ante caídas, correo al terminar | Varias evaluaciones simultáneas de distintos usuarios avanzan en orden y avisan por correo. |
-| **F4. Administración** | Panel de entidad (usuarios, plantilla, criterios, Drive, subida de zip), panel de superadmin | Una entidad nueva se configura sin tocar código. |
-| **F5. Endurecimiento** | 2FA opcional, límites de peticiones, políticas de retención, copias de seguridad, despliegue en LeMarCloud (contenedores) | Lista de verificación de seguridad completa. |
+| **F0. Base** | PostgreSQL, migraciones, configuración, estructura del motor común y registro de tipos (jurídica migrada sin cambiar su acierto) | La medición jurídica da el mismo 85,5 %. |
+| **F1. Identidad y aislamiento** | Entidades, áreas, usuarios, roles, login (+ botones de próximamente), invitaciones, recuperación, RLS, auditoría, superadmin con 2FA, pruebas de aislamiento | Dos entidades de prueba no se ven entre sí. |
+| **F2. Procesos, evaluaciones y asignaciones** | Procesos con varias evaluaciones; asignación por jefe; "Mis evaluaciones", "Procesos de la entidad", "Equipo y asignaciones"; revisiones guardadas en el servidor | Un jefe asigna, el evaluador revisa desde otro equipo sin perder nada. |
+| **F3. Fila de trabajos** | Worker separado, reparto justo, barras de progreso y ETA en vivo, pausar/cancelar, recuperación, correos | Varias evaluaciones de distintos usuarios avanzan en orden y avisan por correo. |
+| **F4. Criterios configurables** | Nivel 1 (parámetros) y nivel 2 (plantillas de regla) con prueba contra ofertas reales y versionado | Una entidad crea un requisito nuevo sin programar y lo prueba. |
+| **F5. Tipos técnica y financiera** | Con los ejemplos reales: catálogos, evaluadores, plantillas, medición contra informes reales | Acierto medido de cada tipo. |
+| **F6. IA para requisitos y endurecimiento** | Nivel 3 (requisito asistido por IA), retención de 30 días, límites, copias de seguridad, despliegue en LeMarCloud | Lista de verificación de seguridad completa. |
 
-Cada fase se entrega funcionando y probada antes de pasar a la siguiente.
+## 11. Pendiente por definir
 
-## 8. Preguntas para decidir antes de empezar
-
-1. **Inicio de sesión**: ¿correo y contraseña propios del sistema para empezar, y luego inicio con Microsoft/Google institucional? (recomendado)
-2. **Superadministrador y datos**: ¿LeMarTek debe poder ver documentos/resultados de una entidad para dar soporte? Recomendación: **no por defecto**; solo si el administrador de la entidad lo autoriza temporalmente y queda auditado.
-3. **Roles**: ¿sirven los cinco propuestos (superadmin, administrador, coordinador, abogado, consulta)?
-4. **Visibilidad entre abogados de una misma entidad**: ¿un abogado ve todos los procesos de su entidad o solo los que tiene asignados? Recomendación: solo los asignados; coordinador y administrador ven todos.
-5. **Fuente de ofertas**: ¿solo Google Drive, o también subir los zip directamente? (recomendado ambas)
-6. **Criterios por entidad**: ¿cada entidad puede ajustar reglas como la vigencia del COPNIA (3 meses) o de certificados (1 mes)? (recomendado sí, con valores por defecto)
-7. **Correo**: ¿con qué dominio/servidor se envían los correos (ej. no-responder@lemartek.com)?
-8. **Retención**: ¿cuánto tiempo se guardan los documentos de los proponentes después de finalizado el proceso?
+1. **Ejemplos para técnica y financiera**: informes reales, plantillas Excel y criterios del ingeniero y del contador (para F5).
+2. **Retención**: al eliminar documentos a los 30 días, ¿se conservan resultados, decisiones e informes? (propuesta: sí).
+3. **Asignación**: ¿un jefe asigna la evaluación completa a una persona, o también puede repartir proponentes de un mismo proceso entre varios evaluadores? (propuesta: ambas).
+4. **Aprobación**: ¿el informe debe aprobarlo el jefe antes de descargarlo como definitivo? (propuesta: sí, con borrador descargable antes).
