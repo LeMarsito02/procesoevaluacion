@@ -57,7 +57,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 30
+VERSION_LOGICA = 33
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -378,6 +378,13 @@ def obtener_tipo_proponente(pdfs: dict[str, bytes]) -> str | None:
     return tipo_declaracion or tipo_casilla
 
 
+def _veces_nombre_completo(nombre: str, texto_norm: str) -> int:
+    palabras = [p for p in re.findall(r"[A-ZÑ]+", _norm(nombre)) if len(p) > 1]
+    if len(palabras) < 2:
+        return 0
+    return len(re.findall(r"\b" + r"\s+".join(map(re.escape, palabras)) + r"\b", texto_norm))
+
+
 def _tokens_nombre(nombre: str) -> set[str]:
     return {t for t in _norm(nombre).split() if len(t) > 1}
 
@@ -497,6 +504,12 @@ def evaluar_formato1(pdf_bytes: bytes, proceso: ProcesoDocumentoBase) -> Resulta
     firma_confirmada: bool | None
     if nombre_apertura and nombre_cierre:
         firma_confirmada = _nombres_coinciden(nombre_apertura, nombre_cierre)
+    elif representante_legal and _veces_nombre_completo(representante_legal, texto_norm) >= 2:
+        # Muchas cartas ponen el nombre bajo la firma sin la etiqueta que busca
+        # NOMBRE_REPRESENTANTE_RE (o abren sin "ESTIMADOS SEÑORES"): si el
+        # nombre completo aparece escrito al menos dos veces, está en la
+        # apertura y en el cierre.
+        firma_confirmada = True
     else:
         firma_confirmada = None
 
