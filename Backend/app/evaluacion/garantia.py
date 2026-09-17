@@ -4,7 +4,7 @@ import re
 from datetime import date
 
 from app.procesamiento.memoria_proponente import memo_por_pdfs
-from app.evaluacion.formato1 import _clave_cache, _guardar_cache, _leer_cache, _norm
+from app.evaluacion.formato1 import _clave_cache, _guardar_cache, _leer_cache, _norm, encontrar_formato1
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.llm.cliente import aparece_en_texto, consultar_json
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
@@ -202,6 +202,49 @@ class ResultadoEvaluacionGarantia:
         self.archivo = archivo
 
 
+# "LOTE 2", "LOTE NO. 1", "LOTES 1 Y 2", "LOTES: 1, 2".
+_LOTE_NUMERO_RE = re.compile(r"\bLOTE\s*(?:NO\.?\s*)?(\d+)\b")
+_LOTES_LISTA_RE = re.compile(r"\bLOTES\s*:?\s*((?:\d+\s*(?:,|Y)\s*)+\d+)")
+
+
+def _numeros_de_lote(texto_norm: str) -> set[str]:
+    numeros = set(_LOTE_NUMERO_RE.findall(texto_norm))
+    for lista in _LOTES_LISTA_RE.findall(texto_norm):
+        numeros.update(re.findall(r"\d+", lista))
+    return numeros
+
+
+def lotes_presentados(pdfs: dict[str, bytes], texto_poliza_norm: str, proceso: ProcesoDocumentoBase) -> set[str]:
+    """Números de los lotes a los que se presenta el proponente. Cada lote
+    tiene su propia garantía y, si se presenta a varios, se exige la del más
+    caro (indicación del abogado). Se leen del objeto que copia la carta de
+    presentación (entre "OBJETO" y "SEÑORES"); si la póliza nombra otros
+    lotes se usa la unión, para no bajar la exigencia por un error de lectura.
+    Si no se identifica ninguno, se devuelven todos los del proceso."""
+    del_proceso = {n for lote in proceso.lotes for n in re.findall(r"\d+", lote.numero)}
+    carta: set[str] = set()
+    encontrado = encontrar_formato1(pdfs)
+    if encontrado is not None:
+        texto = _norm(extraer_texto(encontrado[1], max_paginas=2))
+        inicio = texto.find("OBJETO")
+        if inicio >= 0:
+            fin = texto.find("SENORES", inicio)
+            carta = _numeros_de_lote(texto[inicio : fin if fin > inicio else inicio + 2500]) & del_proceso
+    poliza = _numeros_de_lote(texto_poliza_norm) & del_proceso
+    lotes = carta | poliza if carta else poliza
+    return lotes or del_proceso
+
+
+def valor_asegurado_exigido(proceso: ProcesoDocumentoBase, lotes: set[str]) -> tuple[float, str]:
+    """(valor mínimo, descripción) para los lotes a los que se presenta."""
+    garantia = proceso.garantia_seriedad
+    if garantia.base_calculo != "lote_mayor_valor" or not proceso.lotes:
+        return garantia.valor_asegurado, "el presupuesto total"
+    candidatos = [lote for lote in proceso.lotes if set(re.findall(r"\d+", lote.numero)) & lotes] or proceso.lotes
+    mayor = max(candidatos, key=lambda lote: lote.valor_presupuesto)
+    return round(mayor.valor_presupuesto * garantia.porcentaje, 2), mayor.numero
+
+
 def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -> ResultadoEvaluacionGarantia:
     """Requisito 11: la garantía de seriedad de la oferta debe tener como
     beneficiario a la entidad (ICCU), cubrir al menos hasta la fecha de
@@ -219,6 +262,9 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
     archivo, texto = encontrado
     texto_norm = _norm(texto)
     garantia = proceso.garantia_seriedad
+    lotes = lotes_presentados(pdfs, texto_norm, proceso)
+    valor_exigido, lote_referencia = valor_asegurado_exigido(proceso, lotes)
+    lotes_texto = ", ".join(f"Lote {n}" for n in sorted(lotes, key=int))
 
     motivos = []
 
@@ -227,7 +273,7 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
     if valor_texto is not None:
         valor_leido = _parsear_valor_pesos(valor_texto)
         if valor_leido is None or not (
-            garantia.valor_asegurado / 100 <= valor_leido <= garantia.valor_asegurado * 20
+            valor_exigido / 100 <= valor_leido <= valor_exigido * 20
         ):
             # Un valor absurdo (ej. "$522" en una póliza leída con OCR) es otro
             # campo o un error de lectura: se trata como no leído.
@@ -274,16 +320,16 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
         tope = VALOR_MAXIMO_RAZONABLE_IA if datos_con_ia else 20
         if valor_asegurado_poliza is None:
             motivos.append("no se pudo leer el valor asegurado de la póliza")
-        elif valor_asegurado_poliza > garantia.valor_asegurado * tope or (
+        elif valor_asegurado_poliza > valor_exigido * tope or (
             # Un valor absurdamente bajo casi siempre es otro campo (la prima,
             # el IVA) leído como valor asegurado: se vio con una póliza real.
-            datos_con_ia and valor_asegurado_poliza < garantia.valor_asegurado / 100
+            datos_con_ia and valor_asegurado_poliza < valor_exigido / 100
         ):
             motivos.append("el valor asegurado leído de la póliza no es razonable — confirma manualmente")
-        elif valor_asegurado_poliza < garantia.valor_asegurado:
+        elif valor_asegurado_poliza < valor_exigido:
             motivos.append(
                 f"la póliza asegura ${valor_asegurado_poliza:,.2f}, menos del valor mínimo requerido "
-                f"(${garantia.valor_asegurado:,.2f})"
+                f"(${valor_exigido:,.2f}, {garantia.porcentaje:.0%} de {lote_referencia}; se presenta a: {lotes_texto})"
             )
 
     if datos_con_ia:
