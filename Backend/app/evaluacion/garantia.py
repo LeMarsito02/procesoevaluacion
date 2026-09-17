@@ -28,7 +28,7 @@ PISTAS_POLIZA = ("poliza", "garantia", "seriedad")
 # CUMPLIMIENTO EN FAVOR DE ENTIDADES ESTATALES" (Confianza). Como la frase
 # "póliza de cumplimiento" puede citarse en otros documentos, se exige además
 # el campo de vigencia propio de la carátula de una póliza.
-# Otras variantes reales: SURA ("NUMERO POLIZA: 4547219 SEGURO DE
+# Otras variantes reales: SURA ("NUMERO POLIZA: 1234567 SEGURO DE
 # CUMPLIMIENTO"), Liberty con el texto sin espacios ("POLIZADECUMPLIMIENTO
 # AFAVORDEENTIDADESESTATALES") y escaneadas donde el OCR pierde la tilde
 # ("P LIZA DE SEGURO DE CUMPLIMIENTO"). Zurich no trae "VIGENCIA HASTA" sino

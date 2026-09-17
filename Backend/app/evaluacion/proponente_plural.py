@@ -55,7 +55,7 @@ PISTAS_NOMBRE_FORMATO2 = (
 # por si vienen fusionados con otro documento antes.
 PAGINAS_A_REVISAR = 6
 
-# "5. EL REPRESENTANTE DEL CONSORCIO ES ADRIANA MARCELA ROJAS PRIETO
+# "5. EL REPRESENTANTE DEL CONSORCIO ES MARIA FERNANDA GOMEZ PEREZ
 # IDENTIFICADA CON CEDULA DE CIUDADANIA 52.371.321 DE BOGOTA D.C., QUIEN..."
 # También se vieron variantes reales sin coma antes de "IDENTIFICADO", sin
 # la palabra "IDENTIFICADO" (solo "CON CEDULA DE CIUDADANIA # ..."), y con
@@ -85,7 +85,7 @@ TABLA_INTEGRANTES_RE = re.compile(
 PORCENTAJE_CON_SIGNO_RE = re.compile(r"(\d{1,3}(?:[.,]\d+)?)\s*%")
 
 # El símbolo "%" no siempre sobrevive la extracción de texto (se vio un caso
-# real donde la tabla quedó como "MIGUEL MORALES 90 INGENIERIA SAS ... 10",
+# real donde la tabla quedó como "EMPRESA A 90 INGENIERIA SAS ... 10",
 # sin "%" pegado a ningún número). Este respaldo solo se usa cuando la tabla
 # NO trae ningún "%" en absoluto — si trae al menos uno, se asume que el
 # documento sí marca los porcentajes con "%" y cualquier número suelto es

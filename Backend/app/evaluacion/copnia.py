@@ -125,7 +125,7 @@ def _elegir_copnia_del_profesional(
 
 # Aval del ingeniero dentro del Formato 1 (el Documento Base dice que "hace
 # parte integral" de la carta): "...DEBIDO A QUE EL SUSCRIPTOR DE LA
-# PRESENTE PROPUESTA NO ES INGENIERO MATRICULADO, YO LUIS FELIPE RUIZ MEJIA,
+# PRESENTE PROPUESTA NO ES INGENIERO MATRICULADO, YO CARLOS ANDRES LOPEZ RIOS,
 # INGENIERO CON MATRICULA PROFESIONAL NO. ... AVALO LA PRESENTE PROPUESTA".
 # Confirmado con cartas reales de varios proponentes; algunos además lo
 # aportan como documento aparte ("Aval de la oferta - <nombre>.pdf").

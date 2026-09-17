@@ -153,10 +153,10 @@ def _codigo_variantes(codigo_proceso: str) -> list[re.Pattern[str]]:
     return [_codigo_regex(v) for v in variantes if v]
 
 
-# "Nombre del representante legal JUAN JOSE ARAQUE BLANCO   C. C. No.
-# 77.031.208 DE VALLEDUPAR..." Algunos formatos meten un ":" o "_" (raya
-# para llenar a mano) entre "LEGAL" y el nombre, ej. "LEGAL: LAYTON..." o
-# "LEGAL _ DANIELA...". Otros omiten "LEGAL" y ponen en cambio la entidad,
+# "Nombre del representante legal PEDRO PABLO SUAREZ MORA   C. C. No.
+# 11.223.344 DE VALLEDUPAR..." Algunos formatos meten un ":" o "_" (raya
+# para llenar a mano) entre "LEGAL" y el nombre, ej. "LEGAL: PEDRO..." o
+# "LEGAL _ LAURA...". Otros omiten "LEGAL" y ponen en cambio la entidad,
 # ej. "REPRESENTANTE DEL CONSORCIO: JUAN...". Y el corte antes de "C.C."
 # tolera tanto espacio como dos puntos después ("C. C. No." o "C. C.:").
 # Esto suele aparecer cerca del cierre/firma de la carta. El segundo grupo
@@ -167,7 +167,7 @@ NOMBRE_REPRESENTANTE_RE = re.compile(
     r"C\.?\s?C\.?[\s:]+(?:NO\.?)?\s*([\d.,]+)?"
 )
 
-# "Estimados señores: JUAN AMADO LIZARAZO, en mi calidad de representante
+# "Estimados señores: JOSE LUIS CASTRO VEGA, en mi calidad de representante
 # legal de CONSORCIO..." — la declaración de quién firma, al inicio de la
 # carta. Se ancla hacia adelante desde "Estimados señores" (no hacia atrás
 # desde "en mi calidad de...") porque algunos proponentes meten una cláusula
@@ -177,7 +177,7 @@ NOMBRE_REPRESENTANTE_RE = re.compile(
 # LORICA" en vez del nombre real.
 #
 # Variantes reales encontradas: nombre entre corchetes de plantilla sin
-# limpiar ("[NIDIA ESPERANZA ROJAS OBANDO]"), "REPRESENTANTE DEL..." sin la
+# limpiar ("[LAURA MARCELA RUIZ LEON]"), "REPRESENTANTE DEL..." sin la
 # palabra "LEGAL", y personas naturales que dicen "EN MI CALIDAD DE
 # PROPONENTE" en vez de tener un representante legal.
 NOMBRE_APERTURA_RE = re.compile(
@@ -210,7 +210,7 @@ def _extraer_representante_legal(texto_norm: str) -> str | None:
 
 def extraer_cedula_representante(texto_norm: str) -> str | None:
     """Cédula del representante legal, tomada del mismo bloque de cierre
-    ('Nombre del representante legal ... C.C. No. 77.031.208 ...') que ya
+    ('Nombre del representante legal ... C.C. No. 11.223.344 ...') que ya
     usa `_extraer_representante_legal`. La usan los requisitos de
     antecedentes (REDAM, Contraloría, Procuraduría, Policía, RNMC) que
     identifican a la persona por número de documento."""

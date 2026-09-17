@@ -271,7 +271,7 @@ def _evaluar_proponente_antecedente(
 # proponentes de este proceso (no contra el Segundo Informe).
 # ---------------------------------------------------------------------------
 
-# REDAM (Requisito 5): "...con número de identificación CC 52371321 NO SE
+# REDAM (Requisito 5): "...con número de identificación CC 12345678 NO SE
 # ENCUENTRA INSCRITO EN EL REGISTRO DE DEUDORES ALIMENTARIOS MOROSOS" — solo
 # trae cédula, no nombre.
 _CEDULA_CC_RE = re.compile(r"\bCC\s*(\d[\d.]*)")
@@ -291,7 +291,7 @@ CONFIG_REDAM = AntecedenteConfig(
     extraer_identidad=_identidad_redam,
 )
 
-# Contraloría (Requisito 14): "...No. Identificación 77031208...NO SE
+# Contraloría (Requisito 14): "...No. Identificación 11223344...NO SE
 # ENCUENTRA REPORTADO COMO RESPONSABLE FISCAL" — igual que REDAM, solo cédula.
 _CEDULA_IDENTIFICACION_RE = re.compile(r"NO\.?\s*IDENTIFICACION\s*(\d[\d.]*)")
 
@@ -310,8 +310,8 @@ CONFIG_CONTRALORIA = AntecedenteConfig(
     extraer_identidad=_identidad_contraloria,
 )
 
-# Procuraduría (Requisito 15): "...el(la) señor(a) ADRIANA MARCELA ROJAS
-# PRIETO identificado(a) con Cédula de ciudadanía número 52371321...NO
+# Procuraduría (Requisito 15): "...el(la) señor(a) MARIA FERNANDA GOMEZ
+# PEREZ identificado(a) con Cédula de ciudadanía número 12345678...NO
 # REGISTRA SANCIONES NI INHABILIDADES VIGENTES" — trae nombre y cédula, pero
 # solo cuando el certificado es de una PERSONA (el de la empresa dice
 # "la persona <razón social> identificado(a) con NIT número...", que este
@@ -339,8 +339,8 @@ CONFIG_PROCURADURIA = AntecedenteConfig(
 )
 
 # Policía Nacional — antecedentes judiciales (Requisito 16): "...el ciudadano
-# identificado con: Cédula de Ciudadanía Nº 52371321 Apellidos y Nombres:
-# ROJAS PRIETO ADRIANA MARCELA NO TIENE ASUNTOS PENDIENTES CON LAS
+# identificado con: Cédula de Ciudadanía Nº 12345678 Apellidos y Nombres:
+# GOMEZ PEREZ MARIA FERNANDA NO TIENE ASUNTOS PENDIENTES CON LAS
 # AUTORIDADES JUDICIALES". En escaneados el OCR cambia "Nº" por "N*" u otro
 # signo, así que se acepta cualquier signo corto después de la N.
 _POLICIA_JUDICIAL_RE = re.compile(
@@ -366,9 +366,9 @@ CONFIG_POLICIA = AntecedenteConfig(
 )
 
 # RNMC — multas / medidas correctivas (Requisito 17): "...el ciudadano con
-# Cédula de Ciudadanía Nº. 52371321 y Nombre: ADRIANA MARCELA ROJAS PRIETO.
+# Cédula de Ciudadanía Nº. 12345678 y Nombre: MARIA FERNANDA GOMEZ PEREZ.
 # NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR" (otra versión omite
-# "y Nombre:": "...Nº. 30303454 RUTH ELENA TABARES ZULETA. NO TIENE...") — el de la empresa
+# "y Nombre:": "...Nº. 87654321 ANA LUCIA TORRES DIAZ. NO TIENE...") — el de la empresa
 # dice "...para - NIT, sin digito de verificación: N. ...", que este patrón
 # ignora a propósito al exigir "CEDULA DE CIUDADANIA".
 _RNMC_PERSONA_RE = re.compile(
