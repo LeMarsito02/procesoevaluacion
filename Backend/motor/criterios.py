@@ -122,7 +122,7 @@ PARAMETROS: dict[str, Parametro] = {
             "prefijo_codigo",
             "Sigla de la entidad en el código del proceso",
             "Se acepta el código con o sin esta sigla (ej. ENT-CM-037-2026 o CM-037-2026).",
-            _texto_env("PARAMETRO_PREFIJO_CODIGO"),
+            "",
             "texto",
             requisitos=("juridica.carta",),
         ),
@@ -131,14 +131,27 @@ PARAMETROS: dict[str, Parametro] = {
             "Beneficiario de la póliza",
             "Siglas o nombres de la entidad que deben aparecer como beneficiario de la garantía. "
             "Sin valor, el beneficiario no se puede confirmar y el requisito queda para revisión.",
-            _lista_env("PARAMETRO_BENEFICIARIO_CLAVES"),
+            [],
             "lista_texto",
             requisitos=("juridica.garantia",),
         ),
     )
 }
 
-_ACTUALES: dict[str, Any] = {}
+def _configuracion_entorno() -> dict[str, Any]:
+    """Parámetros fijados por variables de entorno (entorno de pruebas). No son
+    "el valor por defecto": son una configuración como la de cualquier entidad,
+    y por eso cuentan para la huella de la caché."""
+    config: dict[str, Any] = {}
+    if prefijo := _texto_env("PARAMETRO_PREFIJO_CODIGO"):
+        config["prefijo_codigo"] = prefijo
+    if claves := _lista_env("PARAMETRO_BENEFICIARIO_CLAVES"):
+        config["beneficiario_claves"] = claves
+    return config
+
+
+_ENTORNO: dict[str, Any] = _configuracion_entorno()
+_ACTUALES: dict[str, Any] = dict(_ENTORNO)
 
 
 def valor(clave: str) -> Any:
@@ -150,7 +163,8 @@ def valor(clave: str) -> Any:
 def usar(parametros: dict[str, Any] | None) -> Iterator[None]:
     global _ACTUALES
     anteriores = _ACTUALES
-    _ACTUALES = {k: v for k, v in (parametros or {}).items() if k in PARAMETROS}
+    # Lo que define la entidad manda; el entorno solo llena lo que no definió.
+    _ACTUALES = {**_ENTORNO, **{k: v for k, v in (parametros or {}).items() if k in PARAMETROS}}
     try:
         yield
     finally:
@@ -158,8 +172,9 @@ def usar(parametros: dict[str, Any] | None) -> Iterator[None]:
 
 
 def huella_parametros() -> str | None:
-    """Para la clave de caché: None si todo está en su valor por defecto (así
-    los resultados ya calculados con esos criterios siguen sirviendo)."""
+    """Para la clave de caché: distingue una configuración de otra, de modo que
+    un resultado calculado con los criterios de una entidad nunca se sirva a
+    otra. None solo cuando todo está en el valor por defecto del sistema."""
     distintos = {k: v for k, v in _ACTUALES.items() if v != PARAMETROS[k].defecto}
     if not distintos:
         return None

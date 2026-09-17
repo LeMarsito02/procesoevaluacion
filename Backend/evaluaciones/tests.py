@@ -1045,3 +1045,49 @@ class SancionesRupTests(TestCase):
                 sanciones = extraer_sanciones(_norm(_texto_paginas_finales(f.read())))
             self.assertTrue(sanciones, ruta)
             self.assertTrue(all(s.fecha and s.entidad for s in sanciones), ruta)
+
+
+class HuellaCriteriosTests(TestCase):
+    """La caché nunca debe servir un resultado calculado con los criterios de
+    una entidad a otra que evalúa distinto."""
+
+    def test_configuraciones_distintas_dan_huellas_distintas(self):
+        from motor import criterios
+
+        with criterios.usar({"beneficiario_claves": ["ENT"]}):
+            con_entidad = criterios.huella_parametros()
+        with criterios.usar({"beneficiario_claves": ["OTRA"]}):
+            otra_entidad = criterios.huella_parametros()
+        self.assertIsNotNone(con_entidad)
+        self.assertNotEqual(con_entidad, otra_entidad)
+
+    def test_sin_configurar_no_hay_huella(self):
+        from motor import criterios
+
+        vacios = {clave: p.defecto for clave, p in criterios.PARAMETROS.items()}
+        with criterios.usar(vacios):
+            self.assertIsNone(criterios.huella_parametros())
+
+    def test_el_entorno_cuenta_como_configuracion(self):
+        """Un valor puesto por variable de entorno no es "el valor por defecto":
+        si no contara, un resultado calculado sin él se serviría como válido."""
+        from unittest import mock
+
+        from motor import criterios
+
+        with mock.patch.dict(criterios._ENTORNO, {"beneficiario_claves": ["ENT"]}, clear=True):
+            with criterios.usar(None):
+                self.assertEqual(criterios.valor("beneficiario_claves"), ["ENT"])
+                self.assertIsNotNone(criterios.huella_parametros())
+        with mock.patch.dict(criterios._ENTORNO, {}, clear=True):
+            with criterios.usar(None):
+                self.assertIsNone(criterios.huella_parametros())
+
+    def test_la_entidad_manda_sobre_el_entorno(self):
+        from unittest import mock
+
+        from motor import criterios
+
+        with mock.patch.dict(criterios._ENTORNO, {"beneficiario_claves": ["ENT"]}, clear=True):
+            with criterios.usar({"beneficiario_claves": ["SUYA"]}):
+                self.assertEqual(criterios.valor("beneficiario_claves"), ["SUYA"])
