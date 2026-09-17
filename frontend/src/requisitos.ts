@@ -144,5 +144,37 @@ export const REQUISITO_POR_NUMERO: Record<number, InfoRequisito> = Object.fromEn
   REQUISITOS.map((r) => [r.numero, r]),
 )
 
+/** Palabras en el nombre del archivo que sugieren el documento de cada
+ * requisito: se usan para ordenar la lista cuando el sistema no encontró el
+ * documento y el abogado debe buscarlo. */
+const PISTAS_ARCHIVO: Record<number, string[]> = {
+  1: ['carta', 'formato 1', 'presentac'],
+  2: ['copnia', 'matricula', 'tarjeta', 'aval', 'vigencia'],
+  3: ['copnia', 'antecedentes', 'vigencia'],
+  4: ['formato 2', 'consorci', 'union temporal', 'conformac'],
+  5: ['redam', 'deudor', 'alimentari'],
+  6: ['existencia', 'camara', 'rep legal', 'representacion'],
+  7: ['existencia', 'camara', 'representacion'],
+  8: ['existencia', 'camara', 'representacion', 'acta', 'autoriza'],
+  9: ['rup', 'proponente'],
+  10: ['rup', 'proponente'],
+  11: ['poliza', 'póliza', 'garantia', 'garantía', 'seriedad', 'seguro'],
+  12: ['formato 5', 'seguridad social', 'parafiscal', 'aportes'],
+  14: ['contralor', 'fiscal'],
+  15: ['procuradur', 'disciplinari'],
+  16: ['policia', 'policía', 'judicial', 'penal'],
+  17: ['rnmc', 'medidas correctivas', 'correctiva'],
+  18: ['revisor', 'existencia'],
+}
+
+export function ordenarArchivosPorRequisito(requisito: number, archivos: string[]): string[] {
+  const pistas = PISTAS_ARCHIVO[requisito] ?? []
+  const puntaje = (ruta: string) => {
+    const nombre = (ruta.split('/').pop() ?? ruta).toLowerCase()
+    return pistas.some((p) => nombre.includes(p)) ? 0 : 1
+  }
+  return [...archivos].sort((a, b) => puntaje(a) - puntaje(b))
+}
+
 /** Requisitos que la interfaz muestra y cuenta (sin el RUT). */
 export const NUMEROS_VISIBLES = new Set(REQUISITOS.map((r) => r.numero))

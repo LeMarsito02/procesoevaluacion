@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Proponente, ResultadoRequisito } from '../api'
 import { claveRevision, ETIQUETA_ESTADO, esPendiente, estadoDe, resumenProponente, usaIA, type Estado, type Revisiones } from '../estado'
-import { GRUPOS, REQUISITOS, type GrupoRequisito } from '../requisitos'
+import { GRUPOS, ordenarArchivosPorRequisito, REQUISITOS, type GrupoRequisito } from '../requisitos'
 import Icono from './Icono'
 
 const TIPO: Record<string, string> = {
@@ -117,8 +117,10 @@ export default function PanelProponente(p: Props) {
                 const abierto = abiertos.has(info.numero)
                 const decision = p.revisiones[claveRevision(r.hoja, r.requisito)]
                 const texto = r.error ?? r.motivo
-                const archivos = r.archivo_evaluado ? [r.archivo_evaluado] : r.archivos_disponibles
-                const archivo = archivoElegido[info.numero] ?? archivos[0]
+                const archivos = r.archivo_evaluado
+                  ? [r.archivo_evaluado]
+                  : ordenarArchivosPorRequisito(info.numero, r.archivos_disponibles)
+                const archivo = archivoElegido[info.numero] ?? (r.archivo_evaluado ?? '')
                 return (
                   <div key={info.numero} id={`req-${info.numero}`} className="req" data-destacado={p.requisitoDestacado === info.numero}>
                     <button type="button" className="req-top" onClick={() => alternar(info.numero)} aria-expanded={abierto}>
@@ -146,11 +148,14 @@ export default function PanelProponente(p: Props) {
                             {archivos.length > 1 || !r.archivo_evaluado ? (
                               <select
                                 className="select"
-                                style={{ height: 34, maxWidth: 330, fontSize: 13 }}
+                                style={{ height: 38, padding: '0 10px', maxWidth: 340, fontSize: 13 }}
                                 value={archivo}
                                 onChange={(e) => setArchivoElegido((prev) => ({ ...prev, [info.numero]: e.target.value }))}
                                 aria-label="Documento a abrir"
                               >
+                                <option value="" disabled>
+                                  Elegir un documento del proponente…
+                                </option>
                                 {archivos.map((a) => (
                                   <option key={a} value={a}>
                                     {nombreArchivo(a)}
@@ -166,7 +171,7 @@ export default function PanelProponente(p: Props) {
                               className="btn btn-secondary btn-sm"
                               type="button"
                               onClick={() => p.onVerDocumento(r, archivo)}
-                              disabled={p.abriendoDocumento !== null}
+                              disabled={p.abriendoDocumento !== null || !archivo}
                             >
                               {p.abriendoDocumento === `${r.hoja}|${archivo}` ? <span className="spinner oscuro" /> : <Icono nombre="ojo" tam={15} />}
                               Ver documento
