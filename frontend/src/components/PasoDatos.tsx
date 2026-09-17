@@ -197,7 +197,7 @@ export default function PasoDatos(p: Props) {
         <div className="card-head">
           <div>
             <h2>Garantía de seriedad exigida</h2>
-            <p>Cada póliza se compara contra estos valores.</p>
+            <p>Cada póliza se compara contra el valor de los lotes a los que se presenta el proponente.</p>
           </div>
           <button className="btn btn-secondary btn-sm" type="button" onClick={() => setEditandoGarantia((v) => !v)}>
             {editandoGarantia ? (
@@ -212,10 +212,21 @@ export default function PasoDatos(p: Props) {
           </button>
         </div>
         <div className="facts">
-          <div className="fact">
-            <div className="fact-label">Valor asegurado mínimo</div>
-            <div className="fact-value big">{formatPesos(p.derivados.valorAsegurado)}</div>
-          </div>
+          {p.baseCalculo === 'lote_mayor_valor' && p.lotes.length > 1 ? (
+            p.lotes.map((lote) => (
+              <div className="fact" key={lote.numero}>
+                <div className="fact-label">Valor asegurado mínimo · {lote.numero}</div>
+                <div className="fact-value big">
+                  {formatPesos(Math.round(lote.valor_presupuesto * p.porcentajePct) / 100)}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="fact">
+              <div className="fact-label">Valor asegurado mínimo</div>
+              <div className="fact-value big">{formatPesos(p.derivados.valorAsegurado)}</div>
+            </div>
+          )}
           <div className="fact">
             <div className="fact-label">Vigencia mínima hasta</div>
             <div className="fact-value big">{formatFechaCorta(p.derivados.fechaVencimiento)}</div>
@@ -223,7 +234,9 @@ export default function PasoDatos(p: Props) {
           <div className="fact">
             <div className="fact-label">Cálculo</div>
             <div className="fact-value">
-              {p.porcentajePct}% del {p.baseCalculo === 'lote_mayor_valor' ? `lote de mayor valor (${p.derivados.loteMayorNumero})` : 'presupuesto total'}
+              {p.baseCalculo === 'lote_mayor_valor'
+                ? `${p.porcentajePct}% de cada lote; si se presenta a varios, el del más caro`
+                : `${p.porcentajePct}% del presupuesto total`}
             </div>
           </div>
         </div>

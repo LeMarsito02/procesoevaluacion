@@ -51,7 +51,7 @@ export const REQUISITOS: InfoRequisito[] = [
     numero: 11,
     corto: 'Póliza',
     titulo: 'Garantía de seriedad de la oferta',
-    verifica: 'Beneficiario ICCU, vigencia hasta la fecha mínima y valor asegurado suficiente.',
+    verifica: 'Beneficiario ICCU, vigencia hasta la fecha mínima y valor asegurado de al menos el 10% del lote más caro al que se presenta.',
     grupo: 'oferta',
   },
   {
