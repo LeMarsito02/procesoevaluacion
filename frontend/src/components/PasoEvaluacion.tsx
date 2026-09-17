@@ -8,19 +8,22 @@ import Icono from './Icono'
 
 type Filtro = 'todos' | 'pendientes' | 'listos'
 
+/** Estado de la evaluación en la fila central del servidor. */
 export interface ProgresoEvaluacion {
-  evaluando: boolean
-  inicio: number | null
-  completadosEnEstaCorrida: number
-  totalEnEstaCorrida: number
+  enFila: number
+  procesando: number
+  porDelante: number
+  capacidad: number
+  etaSegundos: number | null
 }
 
 interface Props {
   proponentes: Proponente[]
   resultados: Record<string, ResultadoRequisito[]>
   revisiones: Revisiones
-  progreso: ProgresoEvaluacion
-  ahora: number
+  /** null = nada pendiente en la fila. */
+  progreso: ProgresoEvaluacion | null
+  ocupado: boolean
   hojaActiva: string | null
   /** false = sin permiso para lanzar la evaluación (solo lectura). */
   puedeEvaluar: boolean
@@ -109,15 +112,8 @@ export default function PasoEvaluacion(p: Props) {
     })
   }, [p.proponentes, p.resultados, p.revisiones, filtro, busqueda])
 
-  const pct = p.progreso.totalEnEstaCorrida
-    ? (p.progreso.completadosEnEstaCorrida / p.progreso.totalEnEstaCorrida) * 100
-    : (evaluados / Math.max(p.proponentes.length, 1)) * 100
-  const transcurrido = p.progreso.inicio ? p.ahora - p.progreso.inicio : 0
-  const restante =
-    p.progreso.completadosEnEstaCorrida > 0
-      ? (transcurrido / p.progreso.completadosEnEstaCorrida) *
-        (p.progreso.totalEnEstaCorrida - p.progreso.completadosEnEstaCorrida)
-      : null
+  const evaluando = p.progreso !== null
+  const pct = (evaluados / Math.max(p.proponentes.length, 1)) * 100
 
   return (
     <main className="page">
@@ -143,22 +139,33 @@ export default function PasoEvaluacion(p: Props) {
         </div>
       </div>
 
-      {(p.progreso.evaluando || faltan > 0) && (
+      {(evaluando || faltan > 0) && (
         <section className="card progreso-card" style={{ marginBottom: 20 }}>
           <Anillo pct={pct} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            {p.progreso.evaluando ? (
+            {p.progreso ? (
               <>
                 <h2 style={{ fontSize: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span className="pulso" /> Evaluando proponentes…
+                  <span className="pulso" />
+                  {p.progreso.procesando > 0 ? 'Evaluando proponentes…' : 'En la fila, esperando turno…'}
                 </h2>
                 <p className="muted" style={{ marginTop: 4 }}>
-                  {evaluados} de {p.proponentes.length} evaluados · transcurrido {formatDuracion(transcurrido)}
-                  {restante !== null && ` · faltan aprox. ${formatDuracion(restante)}`}
+                  {evaluados} de {p.proponentes.length} evaluados · {p.progreso.procesando} en proceso · {p.progreso.enFila} en fila
+                  {p.progreso.porDelante > 0 && ` · ${p.progreso.porDelante} de otros procesos antes`}
+                </p>
+                <p className="small" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Icono nombre="reloj" tam={14} />
+                  {p.progreso.capacidad === 0 ? (
+                    <span style={{ color: 'var(--warn)' }}>El servicio de evaluación no está activo. Seguirá en cuanto se reanude.</span>
+                  ) : p.progreso.etaSegundos !== null ? (
+                    <strong>Termina en aprox. {formatDuracion(p.progreso.etaSegundos * 1000)}</strong>
+                  ) : (
+                    'Calculando tiempo…'
+                  )}
                 </p>
                 <p className="small muted" style={{ marginTop: 6 }}>
-                  Puede empezar a revisar los que ya terminaron y moverse por otras páginas. Si cierra la pestaña, la
-                  evaluación se pausa y lo evaluado queda guardado en el servidor.
+                  La evaluación corre en el servidor: puede revisar lo que ya terminó, cambiar de página o cerrar la pestaña. Le
+                  avisaremos por correo cuando termine.
                 </p>
               </>
             ) : (
@@ -170,13 +177,15 @@ export default function PasoEvaluacion(p: Props) {
               </>
             )}
           </div>
-          {!p.puedeEvaluar ? null : p.progreso.evaluando ? (
-            <button className="btn btn-secondary" type="button" onClick={p.onDetener}>
-              <Icono nombre="pausa" tam={15} /> Pausar
-            </button>
+          {!p.puedeEvaluar ? null : evaluando ? (
+            p.progreso!.enFila > 0 && (
+              <button className="btn btn-secondary" type="button" onClick={p.onDetener} disabled={p.ocupado}>
+                <Icono nombre="pausa" tam={15} /> Pausar
+              </button>
+            )
           ) : (
-            <button className="btn btn-primary" type="button" onClick={p.onContinuar}>
-              Continuar evaluación <Icono nombre="flecha" tam={16} />
+            <button className="btn btn-primary" type="button" onClick={p.onContinuar} disabled={p.ocupado}>
+              {p.ocupado ? <span className="spinner" /> : null} Evaluar los que faltan <Icono nombre="flecha" tam={16} />
             </button>
           )}
         </section>
@@ -215,7 +224,7 @@ export default function PasoEvaluacion(p: Props) {
         </div>
       </div>
 
-      {conError > 0 && !p.progreso.evaluando && (
+      {conError > 0 && !evaluando && (
         <div className="callout callout-warn" style={{ marginBottom: 16, alignItems: 'center' }}>
           <Icono nombre="alerta" />
           <div style={{ flex: 1 }}>

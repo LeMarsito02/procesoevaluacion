@@ -1,0 +1,292 @@
+"""Lógica de evaluaciones compartida por la API y el trabajador de la fila."""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from datetime import timedelta
+from uuid import UUID
+
+from django.db import transaction
+from django.db.models import Count, F, Max, Q
+from django.utils import timezone
+
+from evaluaciones.models import (
+    REQUISITOS_IGNORADOS,
+    EstadoEvaluacion,
+    EstadoTrabajo,
+    Evaluacion,
+    Proponente,
+    Resultado,
+    Revision,
+    Trabajador,
+    Trabajo,
+)
+from motor.esquemas.proceso import Proponente as ProponenteMotor
+from motor.esquemas.proceso import ResultadoRequisito
+
+PENDIENTES = (EstadoTrabajo.EN_FILA, EstadoTrabajo.PROCESANDO)
+# Sin datos todavía: estimación conservadora por proponente (medición real ~45 s en frío).
+DURACION_POR_DEFECTO = 45.0
+LATIDO_VIGENTE = timedelta(seconds=90)
+
+
+@dataclass
+class Avance:
+    proponentes: int = 0
+    evaluados: int = 0
+    con_error: int = 0
+    pendientes: int = 0
+    revisados: int = 0
+    en_fila: int = 0
+    procesando: int = 0
+
+    def dict(self) -> dict:
+        return asdict(self)
+
+
+def avances(ids: list[UUID]) -> dict[UUID, Avance]:
+    """Avance de varias evaluaciones con pocas consultas."""
+    if not ids:
+        return {}
+    salida = {i: Avance() for i in ids}
+    for e in Evaluacion.objects.filter(id__in=ids).annotate(n=Count("proceso__proponentes", distinct=True)):
+        salida[e.id].proponentes = e.n
+    base = Resultado.objects.filter(evaluacion_id__in=ids).exclude(requisito__in=REQUISITOS_IGNORADOS)
+    for ev, n in base.values("evaluacion_id").annotate(n=Count("proponente_id", distinct=True)).values_list("evaluacion_id", "n"):
+        salida[ev].evaluados = n
+    for ev, n in (
+        base.exclude(datos__error=None)
+        .values("evaluacion_id")
+        .annotate(n=Count("proponente_id", distinct=True))
+        .values_list("evaluacion_id", "n")
+    ):
+        salida[ev].con_error = n
+    revisadas = set(Revision.objects.filter(evaluacion_id__in=ids).values_list("evaluacion_id", "proponente_id", "requisito"))
+    for ev, prop, req in base.filter(requiere_revision=True).values_list("evaluacion_id", "proponente_id", "requisito"):
+        if (ev, prop, req) not in revisadas:
+            salida[ev].pendientes += 1
+    for ev, _, req in revisadas:
+        if req not in REQUISITOS_IGNORADOS:
+            salida[ev].revisados += 1
+    for ev, estado, n in (
+        Trabajo.objects.filter(evaluacion_id__in=ids, estado__in=PENDIENTES)
+        .values("evaluacion_id", "estado")
+        .annotate(n=Count("id"))
+        .values_list("evaluacion_id", "estado", "n")
+    ):
+        if estado == EstadoTrabajo.EN_FILA:
+            salida[ev].en_fila = n
+        else:
+            salida[ev].procesando = n
+    return salida
+
+
+def requiere_revision(r: ResultadoRequisito) -> bool:
+    return bool(r.error) or (r.cumple is not True and not (r.motivo or "").startswith("N.A."))
+
+
+def actualizar_estado(evaluacion: Evaluacion) -> None:
+    if evaluacion.estado == EstadoEvaluacion.APROBADA:
+        return
+    avance = avances([evaluacion.id])[evaluacion.id]
+    if avance.en_fila or avance.procesando:
+        nuevo = EstadoEvaluacion.EVALUANDO
+    elif avance.evaluados == 0:
+        nuevo = EstadoEvaluacion.ASIGNADA if evaluacion.responsable_id else EstadoEvaluacion.SIN_ASIGNAR
+    elif avance.evaluados < avance.proponentes:
+        nuevo = EstadoEvaluacion.EVALUANDO
+    else:
+        nuevo = EstadoEvaluacion.EN_REVISION
+    if nuevo != evaluacion.estado:
+        evaluacion.estado = nuevo
+        evaluacion.save(update_fields=["estado", "actualizada_en"])
+
+
+def aplicar_revision(datos: dict, revision: Revision | None) -> ResultadoRequisito:
+    r = ResultadoRequisito.model_validate(datos)
+    if revision is None:
+        return r
+    if revision.cumple:
+        return r.model_copy(update={"cumple": True, "motivo": None, "error": None})
+    motivo = revision.nota or r.motivo or r.error or "Revisado: no cumple"
+    return r.model_copy(update={"cumple": False, "error": None, "motivo": motivo})
+
+
+def proponente_motor(p: Proponente) -> ProponenteMotor:
+    return ProponenteMotor(
+        numero_orden=p.numero_orden,
+        hoja=p.hoja,
+        nombre_proponente=p.nombre,
+        nombre_archivo=p.nombre_archivo,
+        drive_file_id=p.drive_file_id,
+        advertencia=p.advertencia or None,
+    )
+
+
+def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultados: list[ResultadoRequisito]) -> None:
+    with transaction.atomic():
+        for r in resultados:
+            Resultado.objects.update_or_create(
+                evaluacion=evaluacion,
+                proponente=proponente,
+                requisito=r.requisito,
+                defaults={
+                    "entidad_id": evaluacion.entidad_id,
+                    "datos": r.model_dump(mode="json"),
+                    "requiere_revision": requiere_revision(r),
+                },
+            )
+
+
+# --- Fila ---
+def encolar(evaluacion: Evaluacion, proponente_ids: list[UUID] | None, usuario) -> int:
+    """Pone en la fila los proponentes indicados (o los que faltan o tienen
+    error). Devuelve cuántos trabajos nuevos se crearon."""
+    proponentes = Proponente.objects.filter(proceso_id=evaluacion.proceso_id)
+    if proponente_ids is not None:
+        proponentes = proponentes.filter(id__in=proponente_ids)
+    else:
+        con_resultado_sano = (
+            Resultado.objects.filter(evaluacion=evaluacion)
+            .values("proponente_id")
+            .annotate(errores=Count("id", filter=~Q(datos__error=None)))
+            .filter(errores=0)
+            .values_list("proponente_id", flat=True)
+        )
+        proponentes = proponentes.exclude(id__in=con_resultado_sano)
+    with transaction.atomic():
+        ya_pendientes = set(
+            Trabajo.objects.filter(evaluacion=evaluacion, estado__in=PENDIENTES).values_list("proponente_id", flat=True)
+        )
+        nuevos = [p for p in proponentes.order_by("numero_orden") if p.id not in ya_pendientes]
+        base = Trabajo.objects.filter(evaluacion=evaluacion, estado__in=PENDIENTES).aggregate(m=Max("turno"))["m"]
+        inicio = 0 if base is None else base + 1
+        Trabajo.objects.bulk_create(
+            Trabajo(
+                entidad_id=evaluacion.entidad_id,
+                evaluacion=evaluacion,
+                proponente=p,
+                turno=inicio + i,
+                solicitado_por=usuario,
+            )
+            for i, p in enumerate(nuevos)
+        )
+        actualizar_estado(evaluacion)
+    return len(nuevos)
+
+
+def cancelar(evaluacion: Evaluacion) -> int:
+    """Saca de la fila lo que aún no empezó (lo que se está procesando termina)."""
+    with transaction.atomic():
+        n = Trabajo.objects.filter(evaluacion=evaluacion, estado=EstadoTrabajo.EN_FILA).update(
+            estado=EstadoTrabajo.CANCELADO, terminado_en=timezone.now()
+        )
+        actualizar_estado(evaluacion)
+    return n
+
+
+@dataclass
+class EstadoFila:
+    en_fila: int
+    procesando: int
+    por_delante: int
+    capacidad: int
+    segundos_por_proponente: float
+    eta_segundos: int | None
+
+    def dict(self) -> dict:
+        return asdict(self)
+
+
+def capacidad_activa() -> int:
+    limite = timezone.now() - LATIDO_VIGENTE
+    return sum(Trabajador.objects.filter(latido__gte=limite).values_list("capacidad", flat=True))
+
+
+# Por debajo de esto el resultado salió de la caché (no refleja una evaluación nueva).
+MINIMO_DURACION_REAL = 3.0
+
+
+def segundos_por_proponente() -> float:
+    """Mediana de las últimas evaluaciones reales (sin las respondidas desde caché)."""
+    ultimos = (
+        Trabajo.objects.filter(estado=EstadoTrabajo.TERMINADO, iniciado_en__isnull=False, terminado_en__isnull=False)
+        .order_by("-terminado_en")
+        .values_list("iniciado_en", "terminado_en")[:300]
+    )
+    recientes = [d for ini, fin in ultimos if (d := (fin - ini).total_seconds()) >= MINIMO_DURACION_REAL][:100]
+    duraciones = sorted(recientes)
+    if len(duraciones) < 5:
+        return DURACION_POR_DEFECTO
+    return duraciones[len(duraciones) // 2]
+
+
+def estado_fila(evaluacion_ids: list[UUID]) -> dict[UUID, EstadoFila]:
+    """Posición y tiempo estimado de cada evaluación en la fila compartida."""
+    if not evaluacion_ids:
+        return {}
+    capacidad = capacidad_activa()
+    media = segundos_por_proponente()
+    pendientes = {
+        ev: (en_fila, procesando, turno_max)
+        for ev, en_fila, procesando, turno_max in Trabajo.objects.filter(evaluacion_id__in=evaluacion_ids, estado__in=PENDIENTES)
+        .values("evaluacion_id")
+        .annotate(
+            en_fila=Count("id", filter=Q(estado=EstadoTrabajo.EN_FILA)),
+            procesando=Count("id", filter=Q(estado=EstadoTrabajo.PROCESANDO)),
+            turno_max=Max("turno", filter=Q(estado=EstadoTrabajo.EN_FILA)),
+        )
+        .values_list("evaluacion_id", "en_fila", "procesando", "turno_max")
+    }
+    salida = {}
+    for ev in evaluacion_ids:
+        en_fila, procesando, turno_max = pendientes.get(ev, (0, 0, None))
+        por_delante = 0
+        if en_fila:
+            # Trabajos de otras evaluaciones que se atienden antes de terminar esta.
+            por_delante = Trabajo.objects.filter(estado=EstadoTrabajo.EN_FILA, turno__lte=turno_max).exclude(evaluacion_id=ev).count()
+            por_delante += Trabajo.objects.filter(estado=EstadoTrabajo.PROCESANDO).exclude(evaluacion_id=ev).count()
+        restantes = en_fila + procesando
+        eta = None
+        if restantes and capacidad:
+            eta = int((por_delante + restantes) * media / capacidad)
+        salida[ev] = EstadoFila(en_fila, procesando, por_delante, capacidad, round(media, 1), eta)
+    return salida
+
+
+def reclamar(trabajador_id: str) -> Trabajo | None:
+    """Toma el siguiente trabajo (sin bloquear a los demás trabajadores)."""
+    with transaction.atomic():
+        trabajo = (
+            Trabajo.objects.select_for_update(skip_locked=True)
+            .filter(estado=EstadoTrabajo.EN_FILA, entidad__activa=True)
+            .order_by("turno", "creado_en", "id")
+            .first()
+        )
+        if trabajo is None:
+            return None
+        ahora = timezone.now()
+        Trabajo.objects.filter(pk=trabajo.pk).update(
+            estado=EstadoTrabajo.PROCESANDO,
+            iniciado_en=ahora,
+            latido=ahora,
+            trabajador=trabajador_id,
+            intentos=F("intentos") + 1,
+        )
+    return Trabajo.objects.select_related("evaluacion__proceso", "proponente").get(pk=trabajo.pk)
+
+
+def recuperar_huerfanos(max_intentos: int = 3, sin_latido: timedelta = timedelta(minutes=5)) -> int:
+    """Trabajos cuyo trabajador dejó de latir: vuelven a la fila o quedan en error."""
+    limite = timezone.now() - sin_latido
+    huerfanos = Trabajo.objects.filter(estado=EstadoTrabajo.PROCESANDO, latido__lt=limite)
+    n = 0
+    for t in huerfanos.select_related("evaluacion"):
+        if t.intentos >= max_intentos:
+            t.estado = EstadoTrabajo.ERROR
+            t.error = "El proponente detuvo el trabajador varias veces (posible falta de memoria)."
+            t.terminado_en = timezone.now()
+        else:
+            t.estado = EstadoTrabajo.EN_FILA
+        t.save(update_fields=["estado", "error", "terminado_en"])
+        n += 1
+    return n

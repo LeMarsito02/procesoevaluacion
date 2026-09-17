@@ -30,7 +30,7 @@ export default function PaginaInicio() {
         .catch((e: unknown) => vigente && setError(mensajeDe(e)))
     cargar()
     // Refresco periódico: el avance cambia mientras otros evalúan.
-    const t = window.setInterval(cargar, 15000)
+    const t = window.setInterval(cargar, 8000)
     return () => {
       vigente = false
       window.clearInterval(t)

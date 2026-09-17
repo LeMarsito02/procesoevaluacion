@@ -46,3 +46,20 @@ def enviar_asignacion(evaluacion, responsable: Usuario, asignada_por: Usuario) -
         f"{proceso.codigo} (cierre: {proceso.fecha_cierre:%d/%m/%Y}).\n\n"
         f"Ábrala aquí:\n{enlace}\n\n— MiEvaluador by LeMarTek",
     )
+
+
+def enviar_evaluacion_terminada(evaluacion, destinatario: Usuario, avance) -> None:
+    proceso = evaluacion.proceso
+    enlace = f"{settings.FRONTEND_URL}/evaluaciones/{evaluacion.id}"
+    partes = [f"{avance.evaluados} de {avance.proponentes} proponentes evaluados"]
+    if avance.pendientes:
+        partes.append(f"{avance.pendientes} requisitos por revisar")
+    if avance.con_error:
+        partes.append(f"{avance.con_error} proponentes con error (puede reintentarlos)")
+    _enviar(
+        destinatario.email,
+        f"Evaluación terminada: {proceso.codigo}",
+        f"Hola {destinatario.nombre_completo},\n\n"
+        f"Terminó la evaluación {evaluacion.get_tipo_display().lower()} del proceso {proceso.codigo}: "
+        f"{', '.join(partes)}.\n\nRevísela aquí:\n{enlace}\n\n— MiEvaluador by LeMarTek",
+    )

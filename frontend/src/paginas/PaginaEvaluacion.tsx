@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ResultadoRequisito } from '../api'
 import Icono from '../components/Icono'
 import PanelProponente from '../components/PanelProponente'
@@ -9,10 +9,12 @@ import Topbar from '../components/Topbar'
 import { PASOS_EVALUACION, type Paso } from '../pasos'
 import VisorDocumento from '../components/VisorDocumento'
 import { propsDatos, useDatosProceso } from '../datosProceso'
-import * as ejecutor from '../ejecutor'
 import { claveRevision, esPendiente, estadoDe, resumenProponente, type Revisiones } from '../estado'
 import {
   aprobarEvaluacion,
+  encolarEvaluacion,
+  novedadesEvaluacion,
+  pausarEvaluacion,
   asignarEvaluacion,
   cargaEquipo,
   descargarInforme,
@@ -109,7 +111,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const [generando, setGenerando] = useState(false)
   const [errorInforme, setErrorInforme] = useState<string | null>(null)
   const [guardandoDatos, setGuardandoDatos] = useState(false)
-  const [ahora, setAhora] = useState(() => Date.now())
+  const [ocupadoFila, setOcupadoFila] = useState(false)
 
   const datos = useDatosProceso()
   const [datosCargados, setDatosCargados] = useState(false)
@@ -120,65 +122,40 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
 
   const soloLectura = !resumen.puede_trabajar || resumen.estado === 'aprobada'
 
-  // --- Ejecución en segundo plano ---
-  const ejecucion = useSyncExternalStore(
-    useCallback(
-      (avisar: () => void) =>
-        ejecutor.suscribir(id, avisar, (pid, lista, error) => {
-          const pr = proponentes.find((p) => p.id === pid)
-          if (!pr) return
-          const nuevos =
-            lista ??
-            REQUISITOS.map((q) => ({
-              hoja: pr.hoja,
-              numero_orden: pr.numero_orden,
-              nombre_proponente: pr.nombre_proponente,
-              requisito: q.numero,
-              cumple: null,
-              motivo: null,
-              archivo_evaluado: null,
-              lotes_encontrados: [],
-              numero_proceso_encontrado: false,
-              objeto_relacionado: null,
-              tipo_proponente: null,
-              firma_detectada: false,
-              representante_legal: null,
-              firma_nombre_certificado: null,
-              firma_confirmada: null,
-              matricula_profesional: null,
-              profesion_certificada: null,
-              copnia_vigente: null,
-              copnia_sin_antecedentes: null,
-              copnia_fecha_expedicion: null,
-              error,
-              archivos_disponibles: [],
-            }))
-          setResultados((prev) => ({ ...prev, [pr.hoja]: nuevos }))
-        }),
-      [id, proponentes],
-    ),
-    () => ejecutor.estadoEjecucion(id),
-  )
-
+  // --- Fila del servidor: mientras haya trabajos pendientes se consultan las novedades ---
+  const enFila = resumen.fila !== null
+  const desde = useRef<string | null>(null)
   useEffect(() => {
-    if (!ejecucion.evaluando) return
-    const t = window.setInterval(() => setAhora(Date.now()), 1000)
-    return () => window.clearInterval(t)
-  }, [ejecucion.evaluando])
-
-  // Al terminar una corrida, se refresca el estado guardado en el servidor.
-  const corriendoAntes = useRef(ejecucion.evaluando)
-  useEffect(() => {
-    const termino = corriendoAntes.current && !ejecucion.evaluando
-    corriendoAntes.current = ejecucion.evaluando
-    if (!termino) return
-    obtenerEvaluacion(id)
-      .then((d) => {
-        setResumen(d.evaluacion)
-        setAviso('Evaluación terminada')
-      })
-      .catch(() => undefined)
-  }, [ejecucion.evaluando, id])
+    if (!enFila) return
+    let vigente = true
+    const consultar = async () => {
+      try {
+        const n = await novedadesEvaluacion(id, desde.current)
+        if (!vigente) return
+        desde.current = n.hasta
+        if (n.resultados.length) {
+          setResultados((prev) => {
+            const nuevo = { ...prev }
+            for (const [hoja, lista] of Object.entries(agrupar(n.resultados))) {
+              const porRequisito = new Map((nuevo[hoja] ?? []).map((r) => [r.requisito, r]))
+              for (const r of lista) porRequisito.set(r.requisito, r)
+              nuevo[hoja] = [...porRequisito.values()]
+            }
+            return nuevo
+          })
+        }
+        setResumen(n.evaluacion)
+        if (!n.evaluacion.fila) setAviso('Evaluación terminada')
+      } catch {
+        // Un fallo puntual de red no detiene el seguimiento.
+      }
+    }
+    const t = window.setInterval(consultar, 4000)
+    return () => {
+      vigente = false
+      window.clearInterval(t)
+    }
+  }, [enFila, id])
 
   useEffect(() => {
     if (!aviso) return
@@ -186,10 +163,30 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     return () => window.clearTimeout(t)
   }, [aviso])
 
-  function evaluarPendientes() {
+  async function evaluarPendientes() {
     setPaso('evaluacion')
-    const pendientes = proponentes.filter((pr) => !resultados[pr.hoja] || resultados[pr.hoja].some((r) => r.error)).map((p) => p.id)
-    void ejecutor.iniciar(id, pendientes)
+    setOcupadoFila(true)
+    try {
+      // La primera consulta trae todo y fija la marca de tiempo del servidor (evita desfases de reloj).
+      desde.current = null
+      setResumen(await encolarEvaluacion(id))
+    } catch (err) {
+      setAviso(mensajeDe(err, 'No se pudo poner la evaluación en la fila.'))
+    } finally {
+      setOcupadoFila(false)
+    }
+  }
+
+  async function pausar() {
+    setOcupadoFila(true)
+    try {
+      setResumen(await pausarEvaluacion(id))
+      setAviso('Evaluación en pausa. Lo evaluado quedó guardado.')
+    } catch (err) {
+      setAviso(mensajeDe(err))
+    } finally {
+      setOcupadoFila(false)
+    }
   }
 
   async function confirmarDatos() {
@@ -200,7 +197,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     setGuardandoDatos(true)
     try {
       await guardarDocumentoBase(id, datos.construir(codigo, fechaCierre))
-      evaluarPendientes()
+      await evaluarPendientes()
     } catch (err) {
       setAviso(mensajeDe(err, 'No se pudieron guardar los datos del proceso.'))
     } finally {
@@ -289,7 +286,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   }
 
   const disponibles = new Set<Paso>(['datos'])
-  if (evaluadosEnOrden.length || ejecucion.evaluando) {
+  if (evaluadosEnOrden.length || enFila) {
     disponibles.add('evaluacion')
     disponibles.add('informe')
   }
@@ -335,19 +332,19 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           proponentes={proponentes}
           resultados={resultados}
           revisiones={revisiones}
-          progreso={{
-            evaluando: ejecucion.evaluando,
-            inicio: ejecucion.inicio,
-            completadosEnEstaCorrida: ejecucion.completados,
-            totalEnEstaCorrida: ejecucion.total,
-          }}
-          ahora={ahora}
+          progreso={
+            resumen.fila && {
+              enFila: resumen.fila.en_fila,
+              procesando: resumen.fila.procesando,
+              porDelante: resumen.fila.por_delante,
+              capacidad: resumen.fila.capacidad,
+              etaSegundos: resumen.fila.eta_segundos,
+            }
+          }
+          ocupado={ocupadoFila}
           hojaActiva={panel?.hoja ?? null}
           puedeEvaluar={!soloLectura}
-          onDetener={() => {
-            ejecutor.detener(id)
-            setAviso('Evaluación en pausa. Lo evaluado quedó guardado.')
-          }}
+          onDetener={pausar}
           onContinuar={evaluarPendientes}
           onAbrir={(hoja, requisito) => resultados[hoja] && setPanel({ hoja, requisito: requisito ?? null })}
           onSiguientePendiente={() => irSiguientePendiente(null)}

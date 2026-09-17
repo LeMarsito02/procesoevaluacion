@@ -1,13 +1,11 @@
 """Procesos y evaluaciones guardados en el servidor: creación, asignación,
-evaluación por proponente, revisiones, aprobación, informe y documentos."""
+fila de evaluación, revisiones, aprobación, informe y documentos."""
 from __future__ import annotations
 
-import asyncio
 from datetime import date, datetime
 from pathlib import Path
 from uuid import UUID
 
-from asgiref.sync import sync_to_async
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from django.http import HttpRequest, HttpResponse
@@ -16,13 +14,15 @@ from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
-from api.ejecucion import evaluar_todos_en_proceso
 from cuentas.correo import enviar_asignacion
 from cuentas.models import Entidad, Rol, TipoArea, Usuario
-from cuentas.seguridad import auditar, sesion_activa
+from cuentas.seguridad import auditar, requiere_rol, sesion_activa
+from evaluaciones import servicios
 from evaluaciones.models import (
-    REQUISITOS_IGNORADOS,
     EstadoEvaluacion,
+    EstadoTrabajo,
+    Trabajador,
+    Trabajo,
     Evaluacion,
     Proceso,
     Proponente,
@@ -38,8 +38,7 @@ from evaluaciones.permisos import (
     puede_ver,
     tiene_area,
 )
-from motor.esquemas.proceso import Proponente as ProponenteMotor
-from motor.esquemas.proceso import ProcesoDocumentoBase, ResultadoRequisito
+from motor.esquemas.proceso import ProcesoDocumentoBase
 from motor.excel.filler import fill_template
 from motor.integrations.drive import download_file_bytes
 from motor.procesamiento.zip_utils import extraer_pdfs
@@ -65,6 +64,17 @@ class AvanceOut(Schema):
     con_error: int
     pendientes: int
     revisados: int
+    en_fila: int
+    procesando: int
+
+
+class FilaOut(Schema):
+    en_fila: int
+    procesando: int
+    por_delante: int
+    capacidad: int
+    segundos_por_proponente: float
+    eta_segundos: int | None
 
 
 class EvaluacionResumenOut(Schema):
@@ -85,6 +95,8 @@ class EvaluacionResumenOut(Schema):
     aprobada_en: datetime | None
     puede_trabajar: bool
     puede_gestionar: bool
+    # Solo cuando hay trabajos pendientes en la fila.
+    fila: FilaOut | None = None
 
 
 class ProcesoResumenOut(Schema):
@@ -175,45 +187,11 @@ def _persona(u: Usuario | None) -> PersonaOut | None:
     return PersonaOut(id=u.id, nombre_completo=u.nombre_completo, email=u.email) if u else None
 
 
-def _avances(ids: list[UUID]) -> dict[UUID, AvanceOut]:
-    """Avance de varias evaluaciones con pocas consultas."""
-    if not ids:
-        return {}
-    evaluaciones = Evaluacion.objects.filter(id__in=ids).annotate(n=Count("proceso__proponentes", distinct=True))
-    total = {e.id: e.n for e in evaluaciones}
-    base = Resultado.objects.filter(evaluacion_id__in=ids).exclude(requisito__in=REQUISITOS_IGNORADOS)
-    evaluados = dict(base.values("evaluacion_id").annotate(n=Count("proponente_id", distinct=True)).values_list("evaluacion_id", "n"))
-    con_error = dict(
-        base.exclude(datos__error=None)
-        .values("evaluacion_id")
-        .annotate(n=Count("proponente_id", distinct=True))
-        .values_list("evaluacion_id", "n")
-    )
-    claves_revisadas = set(
-        Revision.objects.filter(evaluacion_id__in=ids).values_list("evaluacion_id", "proponente_id", "requisito")
-    )
-    pendientes: dict[UUID, int] = {}
-    for ev, prop, req in base.filter(requiere_revision=True).values_list("evaluacion_id", "proponente_id", "requisito"):
-        if (ev, prop, req) not in claves_revisadas:
-            pendientes[ev] = pendientes.get(ev, 0) + 1
-    revisados: dict[UUID, int] = {}
-    for ev, _, req in claves_revisadas:
-        if req not in REQUISITOS_IGNORADOS:
-            revisados[ev] = revisados.get(ev, 0) + 1
-    return {
-        i: AvanceOut(
-            proponentes=total.get(i, 0),
-            evaluados=evaluados.get(i, 0),
-            con_error=con_error.get(i, 0),
-            pendientes=pendientes.get(i, 0),
-            revisados=revisados.get(i, 0),
-        )
-        for i in ids
-    }
-
-
 def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[EvaluacionResumenOut]:
-    avances = _avances([e.id for e in evaluaciones])
+    ids = [e.id for e in evaluaciones]
+    avances = servicios.avances(ids)
+    con_fila = [i for i in ids if avances[i].en_fila or avances[i].procesando]
+    filas = servicios.estado_fila(con_fila)
     return [
         EvaluacionResumenOut(
             id=e.id,
@@ -222,7 +200,8 @@ def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[Evaluac
             estado=e.estado,
             estado_nombre=e.get_estado_display(),
             responsable=_persona(e.responsable),
-            avance=avances[e.id],
+            avance=AvanceOut(**avances[e.id].dict()),
+            fila=FilaOut(**filas[e.id].dict()) if e.id in filas else None,
             entidad_id=e.entidad_id,
             entidad_nombre=e.entidad.nombre,
             proceso_id=e.proceso_id,
@@ -266,35 +245,6 @@ def _responsable_valido(entidad_id: UUID, tipo: str, responsable_id: UUID, actor
     if persona.id != actor.id and persona.rol == Rol.EVALUADOR and not tiene_area(persona, tipo):
         raise HttpError(400, f"{persona.nombre_completo} no pertenece al área {TipoArea(tipo).label.lower()}.")
     return persona
-
-
-def _requiere_revision(r: ResultadoRequisito) -> bool:
-    return bool(r.error) or (r.cumple is not True and not (r.motivo or "").startswith("N.A."))
-
-
-def _actualizar_estado(evaluacion: Evaluacion) -> None:
-    if evaluacion.estado == EstadoEvaluacion.APROBADA:
-        return
-    avance = _avances([evaluacion.id])[evaluacion.id]
-    if avance.evaluados == 0:
-        nuevo = EstadoEvaluacion.ASIGNADA if evaluacion.responsable_id else EstadoEvaluacion.SIN_ASIGNAR
-    elif avance.evaluados < avance.proponentes:
-        nuevo = EstadoEvaluacion.EVALUANDO
-    else:
-        nuevo = EstadoEvaluacion.EN_REVISION
-    if nuevo != evaluacion.estado:
-        evaluacion.estado = nuevo
-        evaluacion.save(update_fields=["estado", "actualizada_en"])
-
-
-def _aplicar_revision(datos: dict, revision: Revision | None) -> ResultadoRequisito:
-    r = ResultadoRequisito.model_validate(datos)
-    if revision is None:
-        return r
-    if revision.cumple:
-        return r.model_copy(update={"cumple": True, "motivo": None, "error": None})
-    motivo = revision.nota or r.motivo or r.error or "Revisado: no cumple"
-    return r.model_copy(update={"cumple": False, "error": None, "motivo": motivo})
 
 
 # --- Procesos ---
@@ -463,7 +413,7 @@ def carga_del_equipo(request: HttpRequest, entidad_id: UUID | None = None) -> li
             estado=EstadoEvaluacion.APROBADA
         )
     )
-    avances = _avances([e.id for e in activas])
+    avances = servicios.avances([e.id for e in activas])
     salida = []
     for m in miembros:
         propias = [e for e in activas if e.responsable_id == m.id]
@@ -480,6 +430,53 @@ def carga_del_equipo(request: HttpRequest, entidad_id: UUID | None = None) -> li
             )
         )
     return salida
+
+
+class TrabajadorOut(Schema):
+    id: str
+    capacidad: int
+    iniciado_en: datetime
+    latido: datetime
+    activo: bool
+
+
+class EstadoFilaOut(Schema):
+    capacidad_activa: int
+    segundos_por_proponente: float
+    total_en_fila: int
+    total_procesando: int
+    trabajadores: list[TrabajadorOut]
+    evaluaciones: list[EvaluacionResumenOut]
+
+
+@router.get("/fila/estado", response=EstadoFilaOut)
+def estado_de_la_fila(request: HttpRequest) -> EstadoFilaOut:
+    """Qué se está evaluando y qué espera turno. Administradores ven su
+    entidad; el superadmin, toda la plataforma y los trabajadores."""
+    usuario: Usuario = request.auth
+    requiere_rol(usuario, (Rol.ADMIN_ENTIDAD,))
+    pendientes = Trabajo.objects.filter(estado__in=servicios.PENDIENTES)
+    if not usuario.es_superadmin:
+        pendientes = pendientes.filter(entidad_id=usuario.entidad_id)
+    ids = pendientes.values_list("evaluacion_id", flat=True).distinct()
+    evaluaciones = list(_evaluaciones_qs(usuario).filter(id__in=ids).order_by("creada_en"))
+    limite = timezone.now() - servicios.LATIDO_VIGENTE
+    trabajadores = (
+        [
+            TrabajadorOut(id=t.id, capacidad=t.capacidad, iniciado_en=t.iniciado_en, latido=t.latido, activo=t.latido >= limite)
+            for t in Trabajador.objects.order_by("iniciado_en")
+        ]
+        if usuario.es_superadmin
+        else []
+    )
+    return EstadoFilaOut(
+        capacidad_activa=servicios.capacidad_activa(),
+        segundos_por_proponente=round(servicios.segundos_por_proponente(), 1),
+        total_en_fila=pendientes.filter(estado=EstadoTrabajo.EN_FILA).count(),
+        total_procesando=pendientes.filter(estado=EstadoTrabajo.PROCESANDO).count(),
+        trabajadores=trabajadores,
+        evaluaciones=_resumenes(usuario, evaluaciones),
+    )
 
 
 # --- Una evaluación ---
@@ -557,7 +554,7 @@ def asignar(request: HttpRequest, evaluacion_id: UUID, datos: AsignarIn) -> Eval
         evaluacion.asignada_por = usuario if nuevo else None
         evaluacion.asignada_en = timezone.now() if nuevo else None
         evaluacion.save()
-        _actualizar_estado(evaluacion)
+        servicios.actualizar_estado(evaluacion)
         auditar(
             request,
             "evaluacion.asignada" if nuevo else "evaluacion.desasignada",
@@ -572,50 +569,64 @@ def asignar(request: HttpRequest, evaluacion_id: UUID, datos: AsignarIn) -> Eval
     return _resumenes(usuario, [evaluacion])[0]
 
 
-def _preparar_evaluacion(usuario: Usuario, evaluacion_id: UUID, proponente_id: UUID):
+class EncolarIn(Schema):
+    # None = los que faltan o quedaron con error.
+    proponente_ids: list[UUID] | None = None
+
+
+class NovedadesOut(Schema):
+    evaluacion: EvaluacionResumenOut
+    resultados: list[dict]
+    hasta: datetime
+
+
+@router.post("/{evaluacion_id}/evaluar", response=EvaluacionResumenOut)
+def evaluar(request: HttpRequest, evaluacion_id: UUID, datos: EncolarIn) -> EvaluacionResumenOut:
+    """Pone proponentes en la fila central. La evaluación sigue en el servidor
+    aunque el usuario cierre la página; al terminar se le avisa por correo."""
+    usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
     exigir_trabajo(usuario, evaluacion)
     if evaluacion.tipo not in TIPOS_DISPONIBLES:
         raise HttpError(400, "Este tipo de evaluación aún no está disponible.")
-    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
-    motor_proponente = ProponenteMotor(
-        numero_orden=proponente.numero_orden,
-        hoja=proponente.hoja,
-        nombre_proponente=proponente.nombre,
-        nombre_archivo=proponente.nombre_archivo,
-        drive_file_id=proponente.drive_file_id,
-        advertencia=proponente.advertencia or None,
-    )
-    documento = ProcesoDocumentoBase.model_validate(evaluacion.proceso.documento_base)
-    return evaluacion, proponente, motor_proponente, documento
+    if datos.proponente_ids is not None:
+        propios = set(Proponente.objects.filter(proceso_id=evaluacion.proceso_id, id__in=datos.proponente_ids).values_list("id", flat=True))
+        if propios != set(datos.proponente_ids):
+            raise HttpError(404, "Algún proponente no pertenece a este proceso.")
+    n = servicios.encolar(evaluacion, datos.proponente_ids, usuario)
+    if n:
+        auditar(request, "evaluacion.encolada", objeto=evaluacion, proceso=evaluacion.proceso.codigo, proponentes=n)
+    evaluacion.refresh_from_db()
+    return _resumenes(usuario, [evaluacion])[0]
 
 
-def _guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultados: list[ResultadoRequisito]) -> None:
-    with transaction.atomic():
-        for r in resultados:
-            Resultado.objects.update_or_create(
-                evaluacion=evaluacion,
-                proponente=proponente,
-                requisito=r.requisito,
-                defaults={
-                    "entidad_id": evaluacion.entidad_id,
-                    "datos": r.model_dump(mode="json"),
-                    "requiere_revision": _requiere_revision(r),
-                },
-            )
-        _actualizar_estado(evaluacion)
-
-
-@router.post("/{evaluacion_id}/proponentes/{proponente_id}/evaluar", response=list[ResultadoRequisito])
-async def evaluar_proponente(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID) -> list[ResultadoRequisito]:
+@router.post("/{evaluacion_id}/pausar", response=EvaluacionResumenOut)
+def pausar(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
     usuario: Usuario = request.auth
-    evaluacion, proponente, motor_proponente, documento = await sync_to_async(_preparar_evaluacion)(
-        usuario, evaluacion_id, proponente_id
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    if not puede_trabajar(usuario, evaluacion):
+        raise HttpError(403, "Solo el responsable o el jefe del área pueden pausar esta evaluación.")
+    n = servicios.cancelar(evaluacion)
+    if n:
+        auditar(request, "evaluacion.pausada", objeto=evaluacion, proceso=evaluacion.proceso.codigo, retirados=n)
+    evaluacion.refresh_from_db()
+    return _resumenes(usuario, [evaluacion])[0]
+
+
+@router.get("/{evaluacion_id}/novedades", response=NovedadesOut)
+def novedades(request: HttpRequest, evaluacion_id: UUID, desde: datetime | None = None) -> NovedadesOut:
+    """Estado y resultados nuevos desde `desde` (para refrescar mientras evalúa)."""
+    usuario: Usuario = request.auth
+    ahora = timezone.now()
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    resultados = Resultado.objects.filter(evaluacion=evaluacion)
+    if desde is not None:
+        resultados = resultados.filter(evaluado_en__gte=desde)
+    return NovedadesOut(
+        evaluacion=_resumenes(usuario, [evaluacion])[0],
+        resultados=list(resultados.values_list("datos", flat=True)),
+        hasta=ahora,
     )
-    resultados = await evaluar_todos_en_proceso(motor_proponente, documento)
-    # Si el usuario cerró la página, el resultado igual se guarda.
-    await asyncio.shield(sync_to_async(_guardar_resultados)(evaluacion, proponente, resultados))
-    return resultados
 
 
 @router.put("/{evaluacion_id}/revisiones", response={200: RevisionOut | None})
@@ -662,7 +673,7 @@ def aprobar(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
     exigir_gestion(usuario, evaluacion)
-    avance = _avances([evaluacion.id])[evaluacion.id]
+    avance = servicios.avances([evaluacion.id])[evaluacion.id]
     if avance.evaluados < avance.proponentes:
         raise HttpError(409, f"Faltan {avance.proponentes - avance.evaluados} proponentes por evaluar.")
     if avance.pendientes:
@@ -686,7 +697,7 @@ def reabrir(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
     evaluacion.aprobada_por = None
     evaluacion.aprobada_en = None
     evaluacion.save()
-    _actualizar_estado(evaluacion)
+    servicios.actualizar_estado(evaluacion)
     auditar(request, "evaluacion.reabierta", objeto=evaluacion, proceso=evaluacion.proceso.codigo)
     return _resumenes(usuario, [evaluacion])[0]
 
@@ -702,23 +713,13 @@ def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
     proponentes = list(proceso.proponentes.all())
     revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion)}
     resultados = [
-        _aplicar_revision(r.datos, revisiones.get((r.proponente_id, r.requisito)))
+        servicios.aplicar_revision(r.datos, revisiones.get((r.proponente_id, r.requisito)))
         for r in Resultado.objects.filter(evaluacion=evaluacion)
     ]
     contenido = fill_template(
         str(plantilla),
         ProcesoDocumentoBase.model_validate(proceso.documento_base),
-        [
-            ProponenteMotor(
-                numero_orden=p.numero_orden,
-                hoja=p.hoja,
-                nombre_proponente=p.nombre,
-                nombre_archivo=p.nombre_archivo,
-                drive_file_id=p.drive_file_id,
-                advertencia=p.advertencia or None,
-            )
-            for p in proponentes
-        ],
+        [servicios.proponente_motor(p) for p in proponentes],
         resultados,
     )
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"

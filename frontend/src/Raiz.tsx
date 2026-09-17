@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import Topbar from './components/Topbar'
 import { cerrarSesion, obtenerYo, type Usuario } from './cuentas'
-import { hayEjecucionesActivas } from './ejecutor'
 import { ErrorApi, MENSAJE_SISTEMA } from './http'
 import PaginaCuenta from './paginas/PaginaCuenta'
 import PaginaEntidades from './paginas/PaginaEntidades'
 import PaginaEntrar from './paginas/PaginaEntrar'
 import PaginaEquipo from './paginas/PaginaEquipo'
 import PaginaEvaluacion from './paginas/PaginaEvaluacion'
+import PaginaFila from './paginas/PaginaFila'
 import PaginaInicio from './paginas/PaginaInicio'
 import PaginaNuevoProceso from './paginas/PaginaNuevoProceso'
 import PaginaProcesos from './paginas/PaginaProcesos'
@@ -46,15 +46,6 @@ export default function Raiz() {
     consultarSesion()
   }
 
-  // Avisar antes de cerrar la pestaña si hay una evaluación corriendo.
-  useEffect(() => {
-    const alSalir = (e: BeforeUnloadEvent) => {
-      if (hayEjecucionesActivas()) e.preventDefault()
-    }
-    window.addEventListener('beforeunload', alSalir)
-    return () => window.removeEventListener('beforeunload', alSalir)
-  }, [])
-
   useEffect(() => {
     const vencida = () => setUsuario(null)
     window.addEventListener('sesion-vencida', vencida)
@@ -67,7 +58,6 @@ export default function Raiz() {
   }
 
   const salir = useCallback(async () => {
-    if (hayEjecucionesActivas() && !window.confirm('Hay una evaluación en curso. Si cierra sesión se pausará. ¿Continuar?')) return
     try {
       await cerrarSesion()
     } finally {
@@ -115,6 +105,7 @@ export default function Raiz() {
     pagina = <PaginaNuevoProceso />
     conTopbar = false
   } else if (ruta === '/procesos') pagina = <PaginaProcesos />
+  else if (ruta === '/fila' && (usuario.rol === 'superadmin' || usuario.rol === 'admin_entidad')) pagina = <PaginaFila />
   else if (ruta === '/equipo' && puedeGestionarEquipo(usuario)) pagina = <PaginaEquipo />
   else if (ruta === '/entidades' && usuario.rol === 'superadmin') pagina = <PaginaEntidades />
   else if (ruta === '/cuenta') pagina = <PaginaCuenta />

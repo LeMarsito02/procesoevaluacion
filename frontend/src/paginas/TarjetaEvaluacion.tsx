@@ -1,5 +1,6 @@
 import Icono from '../components/Icono'
 import type { EvaluacionResumen } from '../evaluaciones'
+import { formatDuracion } from '../format'
 import { navegar } from '../rutas'
 import { diasParaCierre, porcentajeAvance, textoCierre } from './avance'
 
@@ -41,6 +42,15 @@ export default function TarjetaEvaluacion({
           </div>
           <span className="num small">{pct}%</span>
         </div>
+        {e.fila && (
+          <div className="tarjeta-ev-fila small">
+            <span className="pulso" />
+            {e.fila.procesando > 0 ? 'Evaluando' : 'En fila'} · {e.fila.en_fila + e.fila.procesando} por evaluar
+            {e.fila.capacidad === 0
+              ? ' · servicio detenido'
+              : e.fila.eta_segundos !== null && ` · ~${formatDuracion(e.fila.eta_segundos * 1000)}`}
+          </div>
+        )}
         <div className="tarjeta-ev-datos small muted">
           <span>
             {e.avance.evaluados}/{e.avance.proponentes} evaluados

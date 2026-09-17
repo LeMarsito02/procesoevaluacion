@@ -46,6 +46,7 @@ function Navegacion({ compacta }: { compacta: boolean }) {
   const enlaces = [
     { ruta: '/', nombre: 'Mis evaluaciones', visible: true },
     { ruta: '/procesos', nombre: 'Procesos', visible: true },
+    { ruta: '/fila', nombre: 'Fila', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad' },
     { ruta: '/equipo', nombre: 'Equipo', visible: puedeGestionarEquipo(u) },
     { ruta: '/entidades', nombre: 'Entidades', visible: u.rol === 'superadmin' },
   ]
@@ -156,6 +157,11 @@ function MenuUsuario() {
           <button type="button" role="menuitem" onClick={() => ir('/procesos')}>
             <Icono nombre="carpeta" tam={16} /> Procesos de la entidad
           </button>
+          {(u.rol === 'superadmin' || u.rol === 'admin_entidad') && (
+            <button type="button" role="menuitem" onClick={() => ir('/fila')}>
+              <Icono nombre="reloj" tam={16} /> Fila de evaluación
+            </button>
+          )}
           {puedeGestionarEquipo(u) && (
             <button type="button" role="menuitem" onClick={() => ir('/equipo')}>
               <Icono nombre="usuarios" tam={16} /> Equipo

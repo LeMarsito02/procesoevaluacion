@@ -16,6 +16,17 @@ export interface Avance {
   con_error: number
   pendientes: number
   revisados: number
+  en_fila: number
+  procesando: number
+}
+
+export interface Fila {
+  en_fila: number
+  procesando: number
+  por_delante: number
+  capacidad: number
+  segundos_por_proponente: number
+  eta_segundos: number | null
 }
 
 export interface EvaluacionResumen {
@@ -36,6 +47,7 @@ export interface EvaluacionResumen {
   aprobada_en: string | null
   puede_trabajar: boolean
   puede_gestionar: boolean
+  fila: Fila | null
 }
 
 export interface ProcesoResumen {
@@ -111,9 +123,13 @@ export const guardarRevision = (id: string, proponenteId: string, requisito: num
     cumple,
   })
 
-export function evaluarProponente(id: string, proponenteId: string, signal?: AbortSignal) {
-  return pedirJson<ResultadoRequisito[]>(`/api/evaluaciones/${id}/proponentes/${proponenteId}/evaluar`, { method: 'POST', signal })
-}
+export const encolarEvaluacion = (id: string, proponenteIds?: string[]) =>
+  enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/evaluar`, 'POST', { proponente_ids: proponenteIds ?? null })
+export const pausarEvaluacion = (id: string) => enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/pausar`, 'POST')
+export const novedadesEvaluacion = (id: string, desde: string | null) =>
+  pedirJson<{ evaluacion: EvaluacionResumen; resultados: ResultadoRequisito[]; hasta: string }>(
+    `/api/evaluaciones/${id}/novedades${desde ? `?desde=${encodeURIComponent(desde)}` : ''}`,
+  )
 
 async function descargarBlob(ruta: string): Promise<{ blob: Blob; nombre: string | null }> {
   const res = await pedir(ruta)
@@ -128,3 +144,22 @@ export const verDocumentoProponente = (id: string, proponenteId: string, archivo
   descargarBlob(`/api/evaluaciones/${id}/proponentes/${proponenteId}/documento?archivo=${encodeURIComponent(archivo)}`).then((r) => r.blob)
 
 export type { AnalisisResponse }
+
+export interface TrabajadorFila {
+  id: string
+  capacidad: number
+  iniciado_en: string
+  latido: string
+  activo: boolean
+}
+
+export interface EstadoFilaGlobal {
+  capacidad_activa: number
+  segundos_por_proponente: number
+  total_en_fila: number
+  total_procesando: number
+  trabajadores: TrabajadorFila[]
+  evaluaciones: EvaluacionResumen[]
+}
+
+export const estadoDeLaFila = () => pedirJson<EstadoFilaGlobal>('/api/evaluaciones/fila/estado')

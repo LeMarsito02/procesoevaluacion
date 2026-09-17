@@ -20,6 +20,7 @@ export function formatDuracion(ms: number): string {
   const minutos = Math.floor(totalSegundos / 60)
   const segundos = totalSegundos % 60
   if (minutos === 0) return `${segundos}s`
+  if (minutos >= 60) return `${Math.floor(minutos / 60)} h ${String(minutos % 60).padStart(2, '0')} min`
   return `${minutos}m ${String(segundos).padStart(2, '0')}s`
 }
 

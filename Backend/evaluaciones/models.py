@@ -120,3 +120,58 @@ class Revision(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["evaluacion", "proponente", "requisito"], name="revision_unica")
         ]
+
+
+class EstadoTrabajo(models.TextChoices):
+    EN_FILA = "en_fila", "En fila"
+    PROCESANDO = "procesando", "Procesando"
+    TERMINADO = "terminado", "Terminado"
+    ERROR = "error", "Error"
+    CANCELADO = "cancelado", "Cancelado"
+
+
+class Trabajo(models.Model):
+    """Evaluación de un proponente en la fila central.
+
+    Sin Row-Level Security a propósito: la fila es compartida y el tiempo
+    estimado de cada entidad depende de los trabajos de las demás. No guarda
+    contenido de documentos, solo identificadores y estado; la API siempre
+    filtra por entidad antes de mostrar algo.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="trabajos")
+    proponente = models.ForeignKey(Proponente, on_delete=models.CASCADE, related_name="trabajos")
+    estado = models.CharField(max_length=20, choices=EstadoTrabajo.choices, default=EstadoTrabajo.EN_FILA, db_index=True)
+    # Turno dentro de su evaluación: la fila atiende primero los turnos bajos de
+    # todas las evaluaciones (reparto por turnos, una grande no bloquea a otra).
+    turno = models.PositiveIntegerField()
+    solicitado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    creado_en = models.DateTimeField(auto_now_add=True)
+    iniciado_en = models.DateTimeField(null=True, blank=True)
+    terminado_en = models.DateTimeField(null=True, blank=True)
+    latido = models.DateTimeField(null=True, blank=True)
+    trabajador = models.CharField(max_length=120, blank=True)
+    intentos = models.PositiveSmallIntegerField(default=0)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["estado", "turno", "creado_en"], name="trabajo_orden_fila")]
+        constraints = [
+            # Un proponente no puede estar dos veces pendiente en la misma evaluación.
+            models.UniqueConstraint(
+                fields=["evaluacion", "proponente"],
+                condition=models.Q(estado__in=["en_fila", "procesando"]),
+                name="trabajo_pendiente_unico",
+            )
+        ]
+
+
+class Trabajador(models.Model):
+    """Proceso que atiende la fila (se registra y envía latidos)."""
+
+    id = models.CharField(primary_key=True, max_length=120)
+    capacidad = models.PositiveSmallIntegerField()
+    iniciado_en = models.DateTimeField(auto_now_add=True)
+    latido = models.DateTimeField()

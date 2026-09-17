@@ -1,15 +1,21 @@
 """Pruebas de procesos, asignaciones, revisiones y aislamiento (app y RLS)."""
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest import mock
+
+from asgiref.sync import async_to_sync
 
 from django.core import mail
 from django.db import ProgrammingError, transaction
+from django.utils import timezone
 
 from cuentas.aislamiento import NINGUNA, SISTEMA, fijar_entidad
 from cuentas.models import Rol, TipoArea, Usuario
 from cuentas.tests import CLAVE, BaseCuentas, Cliente, crear_entidad
-from evaluaciones.models import EstadoEvaluacion, Evaluacion, Proceso
+from evaluaciones import servicios
+from evaluaciones.models import EstadoEvaluacion, EstadoTrabajo, Evaluacion, Proceso, Trabajador, Trabajo
+from evaluaciones.trabajador import trabajar
 from motor.esquemas.proceso import ResultadoRequisito
 
 DOCUMENTO_BASE = {
@@ -76,12 +82,17 @@ class BaseEvaluaciones(BaseCuentas):
         return c, r.json()[0]
 
     def evaluar_todo(self, c, evaluacion_id):
+        """Encola todo y deja que el trabajador real atienda la fila con el motor simulado."""
         detalle = c.get(f"/api/evaluaciones/{evaluacion_id}").json()
-        with mock.patch("api.evaluaciones.evaluar_todos_en_proceso", motor_falso):
-            for p in detalle["proponentes"]:
-                r = c.post(f"/api/evaluaciones/{evaluacion_id}/proponentes/{p['id']}/evaluar")
-                self.assertEqual(r.status_code, 200, r.content)
+        r = c.post(f"/api/evaluaciones/{evaluacion_id}/evaluar", {})
+        self.assertEqual(r.status_code, 200, r.content)
+        correr_fila()
         return detalle
+
+
+def correr_fila(motor=motor_falso):
+    with mock.patch("evaluaciones.trabajador.evaluar_todos_en_proceso", motor):
+        async_to_sync(trabajar)(2, una_vez=True)
 
 
 class CrearYAsignarTests(BaseEvaluaciones):
@@ -267,14 +278,12 @@ class TrabajoTests(BaseEvaluaciones):
             # Pueden consultar…
             self.assertEqual(c.get(f"/api/evaluaciones/{eid}").status_code, 200)
             # …pero no evaluar.
-            with mock.patch("api.evaluaciones.evaluar_todos_en_proceso", motor_falso):
-                self.assertEqual(c.post(f"/api/evaluaciones/{eid}/proponentes/{prop}/evaluar").status_code, 403, email)
+            self.assertEqual(c.post(f"/api/evaluaciones/{eid}/evaluar", {"proponente_ids": [prop]}).status_code, 403, email)
 
     def test_proponente_de_otro_proceso_rechazado(self):
         _, otro = self.crear(codigo="OTRO-001")
         prop_otro = self.jefe.get(f"/api/evaluaciones/{otro['id']}").json()["proponentes"][0]["id"]
-        with mock.patch("api.evaluaciones.evaluar_todos_en_proceso", motor_falso):
-            r = self.abogado.post(f"/api/evaluaciones/{self.ev['id']}/proponentes/{prop_otro}/evaluar")
+        r = self.abogado.post(f"/api/evaluaciones/{self.ev['id']}/evaluar", {"proponente_ids": [prop_otro]})
         self.assertEqual(r.status_code, 404)
 
     def test_endpoints_de_medicion_cerrados_fuera_de_debug(self):
@@ -334,3 +343,103 @@ class EntidadNueva(BaseEvaluaciones):
         c = Cliente()
         c.entrar("admin@iccu.gov.co")
         self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
+
+
+class FilaTests(BaseEvaluaciones):
+    def setUp(self):
+        self.jefe, self.ev = self.crear()
+        _, self.ev2 = self.crear(codigo="SEGUNDO-001")
+        self.eid, self.eid2 = self.ev["id"], self.ev2["id"]
+
+    def test_encolar_no_duplica_y_muestra_fila(self):
+        r = self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
+        self.assertEqual(r.json()["estado"], EstadoEvaluacion.EVALUANDO)
+        self.assertEqual(r.json()["fila"]["en_fila"], 2)
+        # Sin trabajadores activos no hay tiempo estimado.
+        self.assertIsNone(r.json()["fila"]["eta_segundos"])
+        self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
+        self.assertEqual(Trabajo.objects.filter(evaluacion_id=self.eid).count(), 2)
+        # Con un trabajador latiendo sí hay estimación.
+        Trabajador.objects.create(id="prueba", capacidad=2, latido=timezone.now())
+        fila = self.jefe.get(f"/api/evaluaciones/{self.eid}/novedades").json()["evaluacion"]["fila"]
+        self.assertEqual(fila["capacidad"], 2)
+        self.assertGreater(fila["eta_segundos"], 0)
+
+    def test_reparto_por_turnos_entre_evaluaciones(self):
+        self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
+        self.jefe.post(f"/api/evaluaciones/{self.eid2}/evaluar", {})
+        orden = []
+        while (t := servicios.reclamar("prueba")) is not None:
+            orden.append(str(t.evaluacion_id))
+        # Primero un proponente de cada evaluación, luego el segundo de cada una.
+        self.assertEqual(orden[0], self.eid)
+        self.assertEqual(orden[1], self.eid2)
+        self.assertEqual(sorted(orden[:2]), sorted(orden[2:]))
+
+    def test_trabajador_evalua_guarda_y_avisa(self):
+        self.jefe.post(f"/api/evaluaciones/{self.eid}/asignar", {"responsable_id": str(self.evaluador.id)})
+        self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
+        with self.captureOnCommitCallbacks(execute=True):
+            correr_fila()
+        resumen = self.jefe.get(f"/api/evaluaciones/{self.eid}").json()["evaluacion"]
+        self.assertEqual(resumen["estado"], EstadoEvaluacion.EN_REVISION)
+        self.assertEqual(resumen["avance"]["evaluados"], 2)
+        self.assertIsNone(resumen["fila"])
+        self.assertEqual(mail.outbox[-1].to, ["abogado@iccu.gov.co"])
+        self.assertIn("Evaluación terminada", mail.outbox[-1].subject)
+        self.assertFalse(Trabajador.objects.exists())
+        # Novedades desde antes de evaluar trae los resultados guardados.
+        r = self.jefe.get(f"/api/evaluaciones/{self.eid}/novedades?desde=2000-01-01T00:00:00Z").json()
+        self.assertEqual(len(r["resultados"]), 6)
+
+    def test_error_del_motor_no_detiene_la_fila(self):
+        async def motor_roto(proponente, proceso):
+            if proponente.hoja == "P-01":
+                raise RuntimeError("zip dañado")
+            return resultados_falsos(proponente, proceso)
+
+        self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
+        correr_fila(motor_roto)
+        estados = dict(Trabajo.objects.filter(evaluacion_id=self.eid).values_list("proponente__hoja", "estado"))
+        self.assertEqual(estados, {"P-01": EstadoTrabajo.ERROR, "P-02": EstadoTrabajo.TERMINADO})
+
+    def test_pausar_saca_lo_que_no_empezo(self):
+        self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
+        servicios.reclamar("prueba")  # uno queda procesando
+        r = self.jefe.post(f"/api/evaluaciones/{self.eid}/pausar").json()
+        self.assertEqual(r["fila"]["en_fila"], 0)
+        self.assertEqual(r["fila"]["procesando"], 1)
+
+    def test_huerfanos_vuelven_a_la_fila_y_luego_fallan(self):
+        self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
+        viejo = timezone.now() - timedelta(minutes=10)
+        for intento in range(3):
+            t = servicios.reclamar("caido")
+            Trabajo.objects.filter(pk=t.pk).update(latido=viejo)
+            servicios.recuperar_huerfanos()
+        t.refresh_from_db()
+        self.assertEqual(t.estado, EstadoTrabajo.ERROR)
+
+    def test_consulta_no_encola_ni_pausa(self):
+        c = Cliente()
+        c.entrar("control@iccu.gov.co")
+        self.assertEqual(c.post(f"/api/evaluaciones/{self.eid}/evaluar", {}).status_code, 403)
+        self.assertEqual(c.post(f"/api/evaluaciones/{self.eid}/pausar").status_code, 403)
+
+    def test_otra_entidad_no_ve_novedades(self):
+        c = Cliente()
+        c.entrar("admin@otra.gov.co")
+        self.assertEqual(c.get(f"/api/evaluaciones/{self.eid}/novedades").status_code, 404)
+
+    def test_estado_de_la_fila_por_rol(self):
+        self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
+        c = Cliente()
+        c.entrar("admin@iccu.gov.co")
+        r = c.get("/api/evaluaciones/fila/estado").json()
+        self.assertEqual(r["total_en_fila"], 2)
+        self.assertEqual([e["id"] for e in r["evaluaciones"]], [self.eid])
+        self.assertEqual(r["trabajadores"], [])
+        otra = Cliente()
+        otra.entrar("admin@otra.gov.co")
+        self.assertEqual(otra.get("/api/evaluaciones/fila/estado").json()["evaluaciones"], [])
+        self.assertEqual(self.jefe.get("/api/evaluaciones/fila/estado").status_code, 403)
