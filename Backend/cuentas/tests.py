@@ -83,15 +83,15 @@ class InicioSesionTests(BaseCuentas):
         c = Cliente()
         self.assertEqual(c.get("/api/health").status_code, 200)
         self.assertEqual(c.post("/api/procesos/evaluar-todos/proponente", {}).status_code, 401)
-        self.assertEqual(c.post("/api/procesos/generar-excel", {}).status_code, 401)
+        self.assertEqual(c.post("/api/evaluaciones/procesos", {}).status_code, 401)
 
     def test_evaluacion_con_sesion_exige_csrf(self):
         c = Cliente()
         c.entrar("abogado@iccu.gov.co")
-        r = c.http.post("/api/procesos/generar-excel", {}, content_type="application/json")
+        r = c.http.post("/api/evaluaciones/procesos", {}, content_type="application/json")
         self.assertEqual(r.status_code, 403)
         # Con CSRF pasa la autenticación y llega a la validación del cuerpo.
-        self.assertEqual(c.post("/api/procesos/generar-excel", {}).status_code, 422)
+        self.assertEqual(c.post("/api/evaluaciones/procesos", {}).status_code, 422)
 
     def test_login_sin_csrf_rechazado(self):
         http = Client(enforce_csrf_checks=True)

@@ -1,0 +1,124 @@
+/** API de procesos y evaluaciones guardados en el servidor. */
+import type { AnalisisResponse, ProcesoDocumentoBase, Proponente, ResultadoRequisito } from './api'
+import { detalleError, enviarJson, ErrorApi, pedir, pedirJson } from './http'
+
+export type EstadoEvaluacion = 'sin_asignar' | 'asignada' | 'evaluando' | 'en_revision' | 'aprobada'
+
+export interface Persona {
+  id: string
+  nombre_completo: string
+  email: string
+}
+
+export interface Avance {
+  proponentes: number
+  evaluados: number
+  con_error: number
+  pendientes: number
+  revisados: number
+}
+
+export interface EvaluacionResumen {
+  id: string
+  tipo: string
+  tipo_nombre: string
+  estado: EstadoEvaluacion
+  estado_nombre: string
+  responsable: Persona | null
+  avance: Avance
+  proceso_id: string
+  proceso_codigo: string
+  proceso_objeto: string
+  fecha_cierre: string
+  actualizada_en: string
+  aprobada_en: string | null
+  puede_trabajar: boolean
+  puede_gestionar: boolean
+}
+
+export interface ProcesoResumen {
+  id: string
+  codigo: string
+  objeto: string
+  fecha_cierre: string
+  creado_en: string
+  creado_por: Persona
+  proponentes: number
+  evaluaciones: EvaluacionResumen[]
+}
+
+export interface ProponenteGuardado extends Proponente {
+  id: string
+}
+
+export interface RevisionGuardada {
+  proponente_id: string
+  hoja: string
+  requisito: number
+  cumple: boolean
+  nota: string
+  usuario: string
+  fecha: string
+}
+
+export interface EvaluacionDetalle {
+  evaluacion: EvaluacionResumen
+  documento_base: ProcesoDocumentoBase
+  carpeta_drive: string
+  proponentes_no_reconocidos: string[]
+  proponentes: ProponenteGuardado[]
+  resultados: ResultadoRequisito[]
+  revisiones: RevisionGuardada[]
+}
+
+export interface MiembroCarga extends Persona {
+  rol: string
+  rol_nombre: string
+  areas: string[]
+  evaluaciones_activas: number
+  pendientes: number
+}
+
+export const listarProcesos = () => pedirJson<ProcesoResumen[]>('/api/evaluaciones/procesos')
+export const misEvaluaciones = () => pedirJson<EvaluacionResumen[]>('/api/evaluaciones/mias')
+export const cargaEquipo = () => pedirJson<MiembroCarga[]>('/api/evaluaciones/equipo')
+export const obtenerEvaluacion = (id: string) => pedirJson<EvaluacionDetalle>(`/api/evaluaciones/${id}`)
+
+export const crearProceso = (datos: {
+  documento_base: ProcesoDocumentoBase
+  carpeta_drive: string
+  proponentes: Proponente[]
+  proponentes_no_reconocidos: string[]
+  tipos: string[]
+}) => enviarJson<EvaluacionResumen[]>('/api/evaluaciones/procesos', 'POST', datos)
+
+export const guardarDocumentoBase = (id: string, doc: ProcesoDocumentoBase) =>
+  enviarJson<ProcesoDocumentoBase>(`/api/evaluaciones/${id}/documento-base`, 'PUT', doc)
+export const asignarEvaluacion = (id: string, responsableId: string | null) =>
+  enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/asignar`, 'POST', { responsable_id: responsableId })
+export const aprobarEvaluacion = (id: string) => enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/aprobar`, 'POST')
+export const reabrirEvaluacion = (id: string) => enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/reabrir`, 'POST')
+export const guardarRevision = (id: string, proponenteId: string, requisito: number, cumple: boolean | null) =>
+  enviarJson<RevisionGuardada | null>(`/api/evaluaciones/${id}/revisiones`, 'PUT', {
+    proponente_id: proponenteId,
+    requisito,
+    cumple,
+  })
+
+export function evaluarProponente(id: string, proponenteId: string, signal?: AbortSignal) {
+  return pedirJson<ResultadoRequisito[]>(`/api/evaluaciones/${id}/proponentes/${proponenteId}/evaluar`, { method: 'POST', signal })
+}
+
+async function descargarBlob(ruta: string): Promise<{ blob: Blob; nombre: string | null }> {
+  const res = await pedir(ruta)
+  if (!res.ok) throw new ErrorApi(res.status, await detalleError(res))
+  const disposicion = res.headers.get('Content-Disposition') ?? ''
+  const nombre = /filename="([^"]+)"/.exec(disposicion)?.[1] ?? null
+  return { blob: await res.blob(), nombre }
+}
+
+export const descargarInforme = (id: string) => descargarBlob(`/api/evaluaciones/${id}/informe`)
+export const verDocumentoProponente = (id: string, proponenteId: string, archivo: string) =>
+  descargarBlob(`/api/evaluaciones/${id}/proponentes/${proponenteId}/documento?archivo=${encodeURIComponent(archivo)}`).then((r) => r.blob)
+
+export type { AnalisisResponse }

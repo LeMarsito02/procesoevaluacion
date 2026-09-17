@@ -19,10 +19,15 @@ interface Props {
   noReconocidos: string[]
   driveError: string | null
   hayResultados: boolean
+  /** Deshabilita la edición (sin permiso o evaluación aprobada). */
+  soloLectura?: boolean
+  /** Texto del botón principal; por defecto "Evaluar N proponentes". */
+  textoAccion?: string
+  ocupado?: boolean
   onCambiarObjeto: (v: string) => void
   onCambiarLote: (indice: number, cambios: Partial<Lote>) => void
   onCambiarGarantia: (cambios: { vigenciaMeses?: number; porcentajePct?: number; baseCalculo?: BaseCalculo }) => void
-  onVolver: () => void
+  onVolver: (() => void) | null
   onEvaluar: () => void
 }
 
@@ -39,9 +44,10 @@ export default function PasoDatos(p: Props) {
 
   return (
     <main className="page">
+      <fieldset className="fieldset-limpio" disabled={p.soloLectura}>
       <div className="page-head">
         <div>
-          <div className="eyebrow">Paso 2 de 4</div>
+          <div className="eyebrow">Evaluación jurídica</div>
           <h1>Verifique los datos del proceso</h1>
           <p>
             Esto es lo que se leyó del Documento Base. Si algo no coincide, corríjalo antes de evaluar: estos valores se
@@ -295,18 +301,25 @@ export default function PasoDatos(p: Props) {
         )}
       </section>
 
+      </fieldset>
+
       <div className="acciones-pie">
-        <button className="btn btn-ghost" type="button" onClick={p.onVolver}>
-          <Icono nombre="atras" /> Cambiar documento o carpeta
-        </button>
+        {p.onVolver ? (
+          <button className="btn btn-ghost" type="button" onClick={p.onVolver}>
+            <Icono nombre="atras" /> Cambiar documento o carpeta
+          </button>
+        ) : (
+          <span />
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           {n > 0 && !p.hayResultados && (
             <span className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <Icono nombre="reloj" tam={15} /> Hasta ~{estimacionMinutos(n)} min · puede revisar mientras avanza
             </span>
           )}
-          <button className="btn btn-primary btn-lg" type="button" onClick={p.onEvaluar} disabled={n === 0}>
-            {p.hayResultados ? 'Ver evaluación' : `Evaluar ${n} proponentes`} <Icono nombre="flecha" />
+          <button className="btn btn-primary btn-lg" type="button" onClick={p.onEvaluar} disabled={n === 0 || p.ocupado}>
+            {p.ocupado && <span className="spinner" />}
+            {p.textoAccion ?? (p.hayResultados ? 'Ver evaluación' : `Evaluar ${n} proponentes`)} <Icono nombre="flecha" />
           </button>
         </div>
       </div>

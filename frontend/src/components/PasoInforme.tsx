@@ -4,6 +4,8 @@ import Icono from './Icono'
 
 interface Props {
   codigoProceso: string
+  /** Nombre de archivo que genera el servidor. */
+  nombreArchivo: string
   proponentes: Proponente[]
   resultados: Record<string, ResultadoRequisito[]>
   revisiones: Revisiones
@@ -28,7 +30,7 @@ export default function PasoInforme(p: Props) {
     <main className="page page-narrow">
       <div className="page-head">
         <div>
-          <div className="eyebrow">Paso 4 de 4</div>
+          <div className="eyebrow">Evaluación jurídica</div>
           <h1>Informe de evaluación jurídica</h1>
           <p>Descargue el Excel con el resultado de cada proponente, listo para el informe del proceso {p.codigoProceso}.</p>
         </div>
@@ -97,7 +99,7 @@ export default function PasoInforme(p: Props) {
           <Icono nombre="descargar" tam={22} />
         </div>
         <div style={{ flex: 1 }}>
-          <strong>INFORME EVALUACION JURIDICA {p.codigoProceso}.xlsx</strong>
+          <strong>{p.nombreArchivo}</strong>
           <div className="small muted">Plantilla oficial con un resultado por requisito y por proponente.</div>
         </div>
         <button className="btn btn-primary btn-lg" type="button" onClick={p.onGenerar} disabled={p.generando || evaluados.length === 0}>
@@ -118,7 +120,7 @@ export default function PasoInforme(p: Props) {
           <Icono nombre="atras" /> Volver a la revisión
         </button>
         <button className="btn btn-ghost" type="button" onClick={p.onNuevaEvaluacion}>
-          <Icono nombre="mas" /> Nueva evaluación
+          <Icono nombre="mas" /> Nuevo proceso
         </button>
       </div>
     </main>

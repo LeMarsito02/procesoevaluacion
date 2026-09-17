@@ -1,18 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { navegar, useRuta } from '../rutas'
 import { puedeGestionarEquipo, useSesion } from '../sesion'
+import type { Paso } from '../pasos'
 import Icono from './Icono'
 
-export type Paso = 'nuevo' | 'datos' | 'evaluacion' | 'informe'
-
-const PASOS: { id: Paso; nombre: string }[] = [
-  { id: 'nuevo', nombre: 'Proceso' },
-  { id: 'datos', nombre: 'Datos del proceso' },
-  { id: 'evaluacion', nombre: 'Evaluación y revisión' },
-  { id: 'informe', nombre: 'Informe' },
-]
-
 interface PropsPasos {
+  lista: { id: Paso; nombre: string }[]
   paso: Paso
   pasosDisponibles: Set<Paso>
   onIr: (paso: Paso) => void
@@ -37,32 +30,34 @@ export default function Topbar({ codigoProceso = null, pasos }: Props) {
             <span className="sub">{codigoProceso ? `Proceso ${codigoProceso}` : 'by LeMarTek'}</span>
           </div>
         </button>
-        {pasos ? <Stepper {...pasos} /> : <Navegacion />}
+        <Navegacion compacta={!!pasos} />
+        {pasos && <Stepper {...pasos} />}
         <MenuUsuario />
       </div>
     </header>
   )
 }
 
-function Navegacion() {
+function Navegacion({ compacta }: { compacta: boolean }) {
   const sesion = useSesion()
   const ruta = useRuta()
   if (!sesion) return null
   const u = sesion.usuario
   const enlaces = [
-    { ruta: '/', nombre: 'Evaluar', visible: true },
+    { ruta: '/', nombre: 'Mis evaluaciones', visible: true },
+    { ruta: '/procesos', nombre: 'Procesos', visible: true },
     { ruta: '/equipo', nombre: 'Equipo', visible: puedeGestionarEquipo(u) },
     { ruta: '/entidades', nombre: 'Entidades', visible: u.rol === 'superadmin' },
   ]
   return (
-    <nav className="nav-principal" aria-label="Secciones">
+    <nav className="nav-principal" data-compacta={compacta} aria-label="Secciones">
       {enlaces
         .filter((e) => e.visible)
         .map((e) => (
           <a
             key={e.ruta}
             href={e.ruta}
-            aria-current={ruta === e.ruta ? 'page' : undefined}
+            aria-current={ruta === e.ruta || (e.ruta === '/procesos' && ruta.startsWith('/procesos')) ? 'page' : undefined}
             onClick={(ev) => {
               ev.preventDefault()
               navegar(e.ruta)
@@ -75,11 +70,11 @@ function Navegacion() {
   )
 }
 
-function Stepper({ paso, pasosDisponibles, onIr }: PropsPasos) {
-  const indiceActual = PASOS.findIndex((p) => p.id === paso)
+function Stepper({ lista, paso, pasosDisponibles, onIr }: PropsPasos) {
+  const indiceActual = lista.findIndex((p) => p.id === paso)
   return (
     <nav className="stepper" aria-label="Pasos de la evaluación">
-      {PASOS.map((p, i) => {
+      {lista.map((p, i) => {
         const estado = i === indiceActual ? 'active' : i < indiceActual ? 'done' : 'todo'
         const clicable = p.id !== paso && pasosDisponibles.has(p.id)
         return (
@@ -156,7 +151,10 @@ function MenuUsuario() {
             </span>
           </div>
           <button type="button" role="menuitem" onClick={() => ir('/')}>
-            <Icono nombre="balanza" tam={16} /> Evaluar
+            <Icono nombre="balanza" tam={16} /> Mis evaluaciones
+          </button>
+          <button type="button" role="menuitem" onClick={() => ir('/procesos')}>
+            <Icono nombre="carpeta" tam={16} /> Procesos de la entidad
           </button>
           {puedeGestionarEquipo(u) && (
             <button type="button" role="menuitem" onClick={() => ir('/equipo')}>

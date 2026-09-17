@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import App from './App'
 import Topbar from './components/Topbar'
 import { cerrarSesion, obtenerYo, type Usuario } from './cuentas'
-import { borrarSesion } from './estado'
+import { hayEjecucionesActivas } from './ejecutor'
 import { ErrorApi, MENSAJE_SISTEMA } from './http'
 import PaginaCuenta from './paginas/PaginaCuenta'
 import PaginaEntidades from './paginas/PaginaEntidades'
 import PaginaEntrar from './paginas/PaginaEntrar'
 import PaginaEquipo from './paginas/PaginaEquipo'
+import PaginaEvaluacion from './paginas/PaginaEvaluacion'
+import PaginaInicio from './paginas/PaginaInicio'
+import PaginaNuevoProceso from './paginas/PaginaNuevoProceso'
+import PaginaProcesos from './paginas/PaginaProcesos'
 import PaginaInvitacion from './paginas/PaginaInvitacion'
 import PaginaRestablecer from './paginas/PaginaRestablecer'
 import { encajar, navegar, useRuta } from './rutas'
@@ -43,6 +46,15 @@ export default function Raiz() {
     consultarSesion()
   }
 
+  // Avisar antes de cerrar la pestaña si hay una evaluación corriendo.
+  useEffect(() => {
+    const alSalir = (e: BeforeUnloadEvent) => {
+      if (hayEjecucionesActivas()) e.preventDefault()
+    }
+    window.addEventListener('beforeunload', alSalir)
+    return () => window.removeEventListener('beforeunload', alSalir)
+  }, [])
+
   useEffect(() => {
     const vencida = () => setUsuario(null)
     window.addEventListener('sesion-vencida', vencida)
@@ -55,11 +67,10 @@ export default function Raiz() {
   }
 
   const salir = useCallback(async () => {
+    if (hayEjecucionesActivas() && !window.confirm('Hay una evaluación en curso. Si cierra sesión se pausará. ¿Continuar?')) return
     try {
       await cerrarSesion()
     } finally {
-      // La evaluación guardada en el navegador no debe quedar para el siguiente usuario.
-      borrarSesion()
       setUsuario(null)
       navegar('/', true)
     }
@@ -94,23 +105,25 @@ export default function Raiz() {
 
   if (!usuario) return <PaginaEntrar onEntrar={entrar} />
 
-  let pagina = null
-  if (ruta === '/equipo' && puedeGestionarEquipo(usuario)) pagina = <PaginaEquipo />
+  const evaluacion = encajar('/evaluaciones/:id', ruta)
+  let pagina: React.ReactNode
+  let conTopbar = true
+  if (evaluacion) {
+    pagina = <PaginaEvaluacion key={evaluacion.id} id={evaluacion.id} />
+    conTopbar = false
+  } else if (ruta === '/procesos/nuevo' && usuario.rol !== 'consulta' && usuario.rol !== 'superadmin') {
+    pagina = <PaginaNuevoProceso />
+    conTopbar = false
+  } else if (ruta === '/procesos') pagina = <PaginaProcesos />
+  else if (ruta === '/equipo' && puedeGestionarEquipo(usuario)) pagina = <PaginaEquipo />
   else if (ruta === '/entidades' && usuario.rol === 'superadmin') pagina = <PaginaEntidades />
   else if (ruta === '/cuenta') pagina = <PaginaCuenta />
+  else pagina = <PaginaInicio />
 
   return (
     <ContextoSesion.Provider value={{ usuario, salir }}>
-      {/* La evaluación sigue montada (y corriendo) mientras se visitan otras páginas. */}
-      <div hidden={pagina !== null}>
-        <App />
-      </div>
-      {pagina && (
-        <>
-          <Topbar />
-          {pagina}
-        </>
-      )}
+      {conTopbar && <Topbar />}
+      {pagina}
     </ContextoSesion.Provider>
   )
 }

@@ -9,7 +9,7 @@ interface Props {
   archivo: string
   resultado: ResultadoRequisito
   revisiones: Revisiones
-  onRevisar: (hoja: string, requisito: number, cumple: boolean | undefined) => void
+  onRevisar: ((hoja: string, requisito: number, cumple: boolean | undefined) => void) | null
   onCerrar: () => void
 }
 
@@ -66,13 +66,17 @@ export default function VisorDocumento({ url, archivo, resultado, revisiones, on
             </div>
           )}
           <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {decision === undefined ? (
+            {!onRevisar ? (
+              <span className="small muted">
+                {decision === undefined ? 'Solo lectura' : <>Decisión registrada: <strong>{decision ? 'Cumple' : 'No cumple'}</strong></>}
+              </span>
+            ) : decision === undefined ? (
               <>
                 <span className="small muted">{esPendiente(estado) ? 'Después de revisar el documento:' : '¿Está de acuerdo con el resultado?'}</span>
-                <button className="btn btn-ok" type="button" onClick={() => onRevisar(resultado.hoja, resultado.requisito, true)}>
+                <button className="btn btn-ok" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, true)}>
                   <Icono nombre="check" tam={16} /> Cumple
                 </button>
-                <button className="btn btn-bad" type="button" onClick={() => onRevisar(resultado.hoja, resultado.requisito, false)}>
+                <button className="btn btn-bad" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, false)}>
                   <Icono nombre="x" tam={16} /> No cumple
                 </button>
               </>
@@ -81,7 +85,7 @@ export default function VisorDocumento({ url, archivo, resultado, revisiones, on
                 <span className="small">
                   Usted decidió: <strong>{decision ? 'Cumple' : 'No cumple'}</strong>
                 </span>
-                <button className="btn btn-secondary" type="button" onClick={() => onRevisar(resultado.hoja, resultado.requisito, undefined)}>
+                <button className="btn btn-secondary" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, undefined)}>
                   <Icono nombre="deshacer" tam={16} /> Deshacer decisión
                 </button>
               </>

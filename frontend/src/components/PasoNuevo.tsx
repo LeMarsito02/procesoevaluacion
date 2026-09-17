@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import type { SesionGuardada } from '../estado'
 import Icono from './Icono'
 
 interface Props {
@@ -9,11 +8,9 @@ interface Props {
   archivo: File | null
   analizando: boolean
   error: string | null
-  sesionGuardada: SesionGuardada | null
   onCambiar: (campos: { codigoProceso?: string; fechaCierre?: string; carpetaDrive?: string; archivo?: File | null }) => void
   onAnalizar: () => void
-  onRetomar: () => void
-  onDescartarSesion: () => void
+  onCancelar: () => void
 }
 
 function tamanoLegible(bytes: number): string {
@@ -22,7 +19,7 @@ function tamanoLegible(bytes: number): string {
 }
 
 export default function PasoNuevo(props: Props) {
-  const { codigoProceso, fechaCierre, carpetaDrive, archivo, analizando, error, sesionGuardada } = props
+  const { codigoProceso, fechaCierre, carpetaDrive, archivo, analizando, error } = props
   const inputArchivo = useRef<HTMLInputElement>(null)
   const [arrastrando, setArrastrando] = useState(false)
 
@@ -39,34 +36,14 @@ export default function PasoNuevo(props: Props) {
     <main className="page page-narrow">
       <div className="page-head">
         <div>
-          <img className="logo-inicio" src="/logo-mievaluador.png" alt="MiEvaluador by LeMarTek" />
-          <div className="eyebrow">Nueva evaluación</div>
-          <h1>Evalúe los requisitos jurídicos de un proceso</h1>
+          <div className="eyebrow">Nuevo proceso</div>
+          <h1>Cree un proceso para evaluar</h1>
           <p>
             Cargue el Documento Base y la carpeta con las ofertas. El sistema revisa los documentos de cada proponente y
             le muestra qué cumple y qué necesita su revisión.
           </p>
         </div>
       </div>
-
-      {sesionGuardada && (
-        <div className="callout callout-info" style={{ marginBottom: 20, alignItems: 'center' }}>
-          <Icono nombre="reloj" />
-          <div style={{ flex: 1 }}>
-            <strong>Tiene una evaluación en curso: {sesionGuardada.codigoProceso}</strong>
-            <div className="small">
-              {Object.keys(sesionGuardada.resultados).length} de {sesionGuardada.proponentes.length} proponentes
-              evaluados · guardada el {new Date(sesionGuardada.guardadoEn).toLocaleString('es-CO')}
-            </div>
-          </div>
-          <button className="btn btn-ghost btn-sm" type="button" onClick={props.onDescartarSesion}>
-            Descartar
-          </button>
-          <button className="btn btn-primary btn-sm" type="button" onClick={props.onRetomar}>
-            Continuar
-          </button>
-        </div>
-      )}
 
       <form
         className="card"
@@ -175,7 +152,10 @@ export default function PasoNuevo(props: Props) {
           </div>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}>
+          <button className="btn btn-ghost" type="button" onClick={props.onCancelar}>
+            Cancelar
+          </button>
           <button className="btn btn-primary btn-lg" type="submit" disabled={!listo || analizando}>
             {analizando ? (
               <>

@@ -18,6 +18,7 @@ from ninja.errors import HttpError
 from ninja.security import APIKeyCookie
 from django.conf import settings
 
+from cuentas.aislamiento import SISTEMA, fijar_entidad
 from cuentas.models import EventoAuditoria, IntentoInicioSesion, Rol, Usuario
 
 # --- Bloqueo de fuerza bruta ---
@@ -40,6 +41,7 @@ class SesionActiva(APIKeyCookie):
             return None
         if usuario.requiere_2fa and not request.session.get("segundo_factor_ok"):
             return None
+        fijar_entidad(SISTEMA if usuario.es_superadmin else str(usuario.entidad_id))
         return usuario
 
 

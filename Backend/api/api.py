@@ -1,47 +1,53 @@
 """API HTTP de MiEvaluador (Django Ninja).
 
-Porta 1:1 los endpoints de la versión FastAPI (mismas rutas, mismos esquemas
-y mismo formato de error `{"detail": ...}`), para que el frontend y los
-scripts de medición sigan funcionando. La lógica de evaluación vive en el
-paquete `motor`, que no depende de Django.
+- /auth, /equipo, /plataforma: identidad y gestión (api.auth, api.equipo).
+- /evaluaciones: procesos y evaluaciones guardados por entidad (api.evaluaciones).
+- /procesos/analizar: lee el Documento Base y la carpeta de Drive antes de crear el proceso.
+- /procesos/evaluar-*: evaluación directa sin guardar, solo para medición
+  (DEBUG o superadmin); no expone datos de ninguna entidad.
+
+La lógica de evaluación vive en el paquete `motor`, que no depende de Django.
 """
 from __future__ import annotations
 
 import asyncio
 import atexit
 from datetime import date
-from pathlib import Path
 
-from django.http import HttpRequest, HttpResponse
+from django.conf import settings
+from django.http import HttpRequest
 from ninja import File, Form, NinjaAPI, Router
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
 from api.auth import router as auth_router
 from api.equipo import equipo, plataforma
+from api.evaluaciones import router as evaluaciones_router
 from cuentas.seguridad import sesion_activa
+from evaluaciones.permisos import puede_crear_procesos
 from motor.esquemas.proceso import (
     AnalisisResponse,
     EvaluarProponenteRequest,
     EvaluarRequisitosRequest,
-    GenerarExcelRequest,
     ProcesoDocumentoBase,
     Proponente,
     ResultadoRequisito,
-    VerDocumentoRequest,
 )
-from motor.evaluacion.todos import EVALUADORES_POR_REQUISITO, EvaluadorProponente, evaluar_proponente_todos
-from motor.excel.filler import fill_template
-from motor.integrations.drive import DriveAccessError, DriveConfigError, download_file_bytes, list_proponentes
+from motor.evaluacion.todos import EVALUADORES_POR_REQUISITO, EvaluadorProponente
+from motor.integrations.drive import DriveAccessError, DriveConfigError, list_proponentes
 from motor.parsers.documento_base import build_proceso
-from motor.procesamiento.zip_utils import extraer_pdfs
-from motor.workers import BrokenProcessPool, detener_pool, obtener_pool, obtener_pool_pesado
+from api.ejecucion import evaluar_todos_en_proceso as _evaluar_todos_en_proceso
+from motor.workers import BrokenProcessPool, detener_pool, obtener_pool
 
 api = NinjaAPI(title="MiEvaluador API", version="1.0", urls_namespace="api")
 # Toda la evaluación exige sesión iniciada (y CSRF en las peticiones que modifican).
 procesos = Router(tags=["procesos"], auth=sesion_activa)
 
-PLANTILLA_JURIDICA = Path(__file__).resolve().parent.parent / "motor" / "plantillas" / "plantilla_evaluacion_juridica.xlsx"
+
+
+def _solo_medicion(request: HttpRequest) -> None:
+    if not (settings.DEBUG or request.auth.es_superadmin):
+        raise HttpError(404, "No encontrado.")
 
 atexit.register(detener_pool)
 
@@ -59,6 +65,8 @@ async def analizar_documento_base(
     archivo: File[UploadedFile],
     carpeta_drive: Form[str | None] = None,
 ) -> AnalisisResponse:
+    if not puede_crear_procesos(request.auth):
+        raise HttpError(403, "Su rol no permite crear procesos.")
     nombre = (archivo.name or "").lower()
     if archivo.content_type not in ("application/pdf", "application/octet-stream") and not nombre.endswith(".pdf"):
         raise HttpError(400, "El archivo debe ser un PDF.")
@@ -91,23 +99,6 @@ async def analizar_documento_base(
     )
 
 
-@procesos.post("/generar-excel")
-async def generar_excel(request: HttpRequest, payload: GenerarExcelRequest) -> HttpResponse:
-    if not PLANTILLA_JURIDICA.exists():
-        raise HttpError(500, "No se encontró la plantilla de Excel en el servidor.")
-    try:
-        contenido = await asyncio.to_thread(
-            fill_template, str(PLANTILLA_JURIDICA), payload.documento_base, payload.proponentes, payload.resultados
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HttpError(500, f"No se pudo generar el Excel: {exc}") from exc
-
-    nombre_archivo = f"INFORME EVALUACION JURIDICA {payload.documento_base.codigo_proceso}.xlsx"
-    respuesta = HttpResponse(contenido, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    respuesta["Content-Disposition"] = f'attachment; filename="{nombre_archivo}"'
-    return respuesta
-
-
 async def _evaluar_en_proceso(
     evaluador: EvaluadorProponente, proponente: Proponente, proceso: ProcesoDocumentoBase, requisito: int
 ) -> ResultadoRequisito:
@@ -138,6 +129,7 @@ async def _evaluar_en_proceso(
 
 def _registrar_rutas_requisito(numero: int, evaluador: EvaluadorProponente) -> None:
     async def evaluar_lote(request: HttpRequest, payload: EvaluarRequisitosRequest) -> list[ResultadoRequisito]:
+        _solo_medicion(request)
         if not payload.proponentes:
             raise HttpError(400, "No hay proponentes para evaluar.")
         resultados = await asyncio.gather(
@@ -146,6 +138,7 @@ def _registrar_rutas_requisito(numero: int, evaluador: EvaluadorProponente) -> N
         return sorted(resultados, key=lambda r: r.numero_orden)
 
     async def evaluar_individual(request: HttpRequest, payload: EvaluarProponenteRequest) -> ResultadoRequisito:
+        _solo_medicion(request)
         return await _evaluar_en_proceso(evaluador, payload.proponente, payload.documento_base, numero)
 
     procesos.add_api_operation(
@@ -168,86 +161,23 @@ for _numero, _evaluador in EVALUADORES_POR_REQUISITO.items():
     _registrar_rutas_requisito(_numero, _evaluador)
 
 
-_CARRIL_PESADO: asyncio.Lock | None = None
-
-
-def _carril_pesado() -> asyncio.Lock:
-    # El candado se crea dentro del bucle de eventos que lo usa.
-    global _CARRIL_PESADO
-    if _CARRIL_PESADO is None:
-        _CARRIL_PESADO = asyncio.Lock()
-    return _CARRIL_PESADO
-
-
-async def _evaluar_todos_en_proceso(proponente: Proponente, proceso: ProcesoDocumentoBase) -> list[ResultadoRequisito]:
-    """Todos los requisitos de un proponente en un solo worker. Si el worker
-    muere o algún requisito queda con error, se reintenta solo en el carril
-    pesado y se conserva el intento con menos errores."""
-    loop = asyncio.get_running_loop()
-
-    def con_error(mensaje: str) -> list[ResultadoRequisito]:
-        return [
-            ResultadoRequisito(
-                hoja=proponente.hoja,
-                numero_orden=proponente.numero_orden,
-                nombre_proponente=proponente.nombre_proponente,
-                requisito=numero,
-                error=mensaje,
-            )
-            for numero in EVALUADORES_POR_REQUISITO
-        ]
-
-    def errores(resultados: list[ResultadoRequisito]) -> int:
-        return sum(1 for r in resultados if r.error)
-
-    try:
-        resultados = await loop.run_in_executor(obtener_pool(), evaluar_proponente_todos, proponente, proceso)
-    except (BrokenProcessPool, MemoryError) as exc:
-        resultados = con_error(
-            f"No se pudo evaluar (el proceso murió, posiblemente por falta de memoria): {exc}. Revísalo manualmente."
-        )
-    except Exception as exc:  # noqa: BLE001
-        resultados = con_error(f"No se pudo evaluar automáticamente: {exc}")
-
-    if errores(resultados) == 0:
-        return resultados
-
-    async with _carril_pesado():
-        try:
-            reintento = await loop.run_in_executor(obtener_pool_pesado(), evaluar_proponente_todos, proponente, proceso)
-        except Exception:  # noqa: BLE001
-            return resultados
-    return reintento if errores(reintento) < errores(resultados) else resultados
-
-
 @procesos.post("/evaluar-todos/proponente", response=list[ResultadoRequisito])
 async def evaluar_todos_proponente(request: HttpRequest, payload: EvaluarProponenteRequest) -> list[ResultadoRequisito]:
+    _solo_medicion(request)
     return await _evaluar_todos_en_proceso(payload.proponente, payload.documento_base)
 
 
 @procesos.post("/evaluar-todos", response=list[ResultadoRequisito])
 async def evaluar_todos(request: HttpRequest, payload: EvaluarRequisitosRequest) -> list[ResultadoRequisito]:
+    _solo_medicion(request)
     if not payload.proponentes:
         raise HttpError(400, "No hay proponentes para evaluar.")
     por_proponente = await asyncio.gather(*(_evaluar_todos_en_proceso(p, payload.documento_base) for p in payload.proponentes))
     return sorted((r for lista in por_proponente for r in lista), key=lambda r: (r.numero_orden, r.requisito))
 
 
-@procesos.post("/proponentes/documento")
-async def ver_documento(request: HttpRequest, payload: VerDocumentoRequest) -> HttpResponse:
-    try:
-        zip_bytes = await asyncio.to_thread(download_file_bytes, payload.drive_file_id)
-    except Exception as exc:  # noqa: BLE001
-        raise HttpError(502, f"No se pudo descargar el archivo de Drive: {exc}") from exc
-
-    pdfs = await asyncio.to_thread(extraer_pdfs, zip_bytes)
-    contenido = pdfs.get(payload.archivo_evaluado)
-    if contenido is None:
-        raise HttpError(404, "No se encontró ese documento dentro del archivo del proponente.")
-    return HttpResponse(contenido, content_type="application/pdf")
-
-
 api.add_router("/procesos", procesos)
 api.add_router("/auth", auth_router)
 api.add_router("/equipo", equipo)
 api.add_router("/plataforma", plataforma)
+api.add_router("/evaluaciones", evaluaciones_router)

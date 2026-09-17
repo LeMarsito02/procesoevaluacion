@@ -18,7 +18,8 @@ interface Props {
   requisitoDestacado: number | null
   abriendoDocumento: string | null
   onCerrar: () => void
-  onRevisar: (hoja: string, requisito: number, cumple: boolean | undefined) => void
+  /** null = solo lectura (sin permiso o evaluación aprobada). */
+  onRevisar: ((hoja: string, requisito: number, cumple: boolean | undefined) => void) | null
   onVerDocumento: (resultado: ResultadoRequisito, archivo: string) => void
   onAnterior: (() => void) | null
   onSiguiente: (() => void) | null
@@ -179,21 +180,25 @@ export default function PanelProponente(p: Props) {
                           </div>
                         )}
                         <div className="acciones" style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
-                          {decision === undefined ? (
+                          {!p.onRevisar ? (
+                            <span className="small muted">
+                              {decision === undefined ? 'Solo lectura' : <>Decisión registrada: <strong>{decision ? 'Cumple' : 'No cumple'}</strong></>}
+                            </span>
+                          ) : decision === undefined ? (
                             esPendiente(estado) ? (
                               <>
                                 <span className="small muted" style={{ marginRight: 'auto' }}>
                                   Su decisión:
                                 </span>
-                                <button className="btn btn-ok btn-sm" type="button" onClick={() => p.onRevisar(r.hoja, r.requisito, true)}>
+                                <button className="btn btn-ok btn-sm" type="button" onClick={() => p.onRevisar?.(r.hoja, r.requisito, true)}>
                                   <Icono nombre="check" tam={15} /> Cumple
                                 </button>
-                                <button className="btn btn-bad btn-sm" type="button" onClick={() => p.onRevisar(r.hoja, r.requisito, false)}>
+                                <button className="btn btn-bad btn-sm" type="button" onClick={() => p.onRevisar?.(r.hoja, r.requisito, false)}>
                                   <Icono nombre="x" tam={15} /> No cumple
                                 </button>
                               </>
                             ) : (
-                              <button className="btn btn-ghost btn-sm" type="button" onClick={() => p.onRevisar(r.hoja, r.requisito, false)}>
+                              <button className="btn btn-ghost btn-sm" type="button" onClick={() => p.onRevisar?.(r.hoja, r.requisito, false)}>
                                 ¿No está de acuerdo? Marcar como no cumple
                               </button>
                             )
@@ -202,7 +207,7 @@ export default function PanelProponente(p: Props) {
                               <span className="small" style={{ marginRight: 'auto' }}>
                                 Usted decidió: <strong>{decision ? 'Cumple' : 'No cumple'}</strong>
                               </span>
-                              <button className="btn btn-ghost btn-sm" type="button" onClick={() => p.onRevisar(r.hoja, r.requisito, undefined)}>
+                              <button className="btn btn-ghost btn-sm" type="button" onClick={() => p.onRevisar?.(r.hoja, r.requisito, undefined)}>
                                 <Icono nombre="deshacer" tam={15} /> Deshacer
                               </button>
                             </>

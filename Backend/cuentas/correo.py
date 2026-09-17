@@ -33,3 +33,16 @@ def enviar_recuperacion(usuario: Usuario, uid: str, token: str) -> None:
         f"Recibimos una solicitud para restablecer tu contraseña. Usa este enlace (vale {horas} horas):\n{enlace}\n\n"
         f"Si no la solicitaste, ignora este correo: tu contraseña no cambia.\n\n— MiEvaluador by LeMarTek",
     )
+
+
+def enviar_asignacion(evaluacion, responsable: Usuario, asignada_por: Usuario) -> None:
+    proceso = evaluacion.proceso
+    enlace = f"{settings.FRONTEND_URL}/evaluaciones/{evaluacion.id}"
+    _enviar(
+        responsable.email,
+        f"Nueva evaluación asignada: {proceso.codigo}",
+        f"Hola {responsable.nombre_completo},\n\n"
+        f"{asignada_por.nombre_completo} le asignó la evaluación {evaluacion.get_tipo_display().lower()} del proceso "
+        f"{proceso.codigo} (cierre: {proceso.fecha_cierre:%d/%m/%Y}).\n\n"
+        f"Ábrala aquí:\n{enlace}\n\n— MiEvaluador by LeMarTek",
+    )

@@ -22,6 +22,8 @@ interface Props {
   progreso: ProgresoEvaluacion
   ahora: number
   hojaActiva: string | null
+  /** false = sin permiso para lanzar la evaluación (solo lectura). */
+  puedeEvaluar: boolean
   onDetener: () => void
   onContinuar: () => void
   onAbrir: (hoja: string, requisito?: number) => void
@@ -121,7 +123,7 @@ export default function PasoEvaluacion(p: Props) {
     <main className="page">
       <div className="page-head">
         <div>
-          <div className="eyebrow">Paso 3 de 4</div>
+          <div className="eyebrow">Evaluación jurídica</div>
           <h1>Evaluación y revisión</h1>
           <p>
             Haga clic en un proponente o en cualquier casilla para ver el detalle. Solo necesita revisar las casillas en{' '}
@@ -155,7 +157,8 @@ export default function PasoEvaluacion(p: Props) {
                   {restante !== null && ` · faltan aprox. ${formatDuracion(restante)}`}
                 </p>
                 <p className="small muted" style={{ marginTop: 6 }}>
-                  Puede empezar a revisar los que ya terminaron. Si cierra esta pestaña, lo evaluado queda guardado.
+                  Puede empezar a revisar los que ya terminaron y moverse por otras páginas. Si cierra la pestaña, la
+                  evaluación se pausa y lo evaluado queda guardado en el servidor.
                 </p>
               </>
             ) : (
@@ -167,7 +170,7 @@ export default function PasoEvaluacion(p: Props) {
               </>
             )}
           </div>
-          {p.progreso.evaluando ? (
+          {!p.puedeEvaluar ? null : p.progreso.evaluando ? (
             <button className="btn btn-secondary" type="button" onClick={p.onDetener}>
               <Icono nombre="pausa" tam={15} /> Pausar
             </button>
@@ -219,9 +222,11 @@ export default function PasoEvaluacion(p: Props) {
             {conError} proponente(s) no se pudieron evaluar por completo (casillas rojas). Puede reintentarlos o revisarlos
             manualmente.
           </div>
-          <button className="btn btn-secondary btn-sm" type="button" onClick={p.onContinuar}>
-            Reintentar
-          </button>
+          {p.puedeEvaluar && (
+            <button className="btn btn-secondary btn-sm" type="button" onClick={p.onContinuar}>
+              Reintentar
+            </button>
+          )}
         </div>
       )}
 

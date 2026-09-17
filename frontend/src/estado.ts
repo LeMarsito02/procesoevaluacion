@@ -1,4 +1,4 @@
-import type { AnalisisResponse, ProcesoDocumentoBase, Proponente, ResultadoRequisito } from './api'
+import type { ResultadoRequisito } from './api'
 import { REQUISITOS } from './requisitos'
 
 /** Estado de un requisito tal como lo ve el abogado. */
@@ -64,68 +64,3 @@ export function resumenProponente(lista: ResultadoRequisito[] | undefined, revis
   }
   return { total: visibles.length, pendientes, revisados, noCumple }
 }
-
-// ---------------------------------------------------------------------------
-// Guardado en el navegador: una evaluación de 81 proponentes toma tiempo y no
-// debe perderse si se cierra la pestaña. Todo con try/catch: si el navegador
-// no deja guardar, la aplicación sigue funcionando igual.
-// ---------------------------------------------------------------------------
-
-export interface SesionGuardada {
-  version: 1
-  guardadoEn: number
-  codigoProceso: string
-  fechaCierre: string
-  carpetaDrive: string
-  proceso: ProcesoDocumentoBase
-  proponentes: Proponente[]
-  noReconocidos: string[]
-  driveError: string | null
-  resultados: Record<string, ResultadoRequisito[]>
-  revisiones: Revisiones
-}
-
-const CLAVE_SESION = 'evaluador-juridico:sesion'
-
-export function guardarSesion(sesion: SesionGuardada): void {
-  try {
-    localStorage.setItem(CLAVE_SESION, JSON.stringify(sesion))
-  } catch {
-    try {
-      // Si no cabe, se guarda sin las listas de archivos disponibles.
-      const liviana = {
-        ...sesion,
-        resultados: Object.fromEntries(
-          Object.entries(sesion.resultados).map(([h, lista]) => [
-            h,
-            lista.map((r) => ({ ...r, archivos_disponibles: [] })),
-          ]),
-        ),
-      }
-      localStorage.setItem(CLAVE_SESION, JSON.stringify(liviana))
-    } catch {
-      /* sin guardado: la app sigue funcionando */
-    }
-  }
-}
-
-export function leerSesion(): SesionGuardada | null {
-  try {
-    const crudo = localStorage.getItem(CLAVE_SESION)
-    if (!crudo) return null
-    const sesion = JSON.parse(crudo) as SesionGuardada
-    return sesion.version === 1 ? sesion : null
-  } catch {
-    return null
-  }
-}
-
-export function borrarSesion(): void {
-  try {
-    localStorage.removeItem(CLAVE_SESION)
-  } catch {
-    /* nada */
-  }
-}
-
-export type { AnalisisResponse }
