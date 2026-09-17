@@ -235,7 +235,7 @@ def _evaluar_proponente_antecedente(
         )
 
     tipo_proponente = obtener_tipo_proponente(pdfs)
-    personas = obtener_personas_a_verificar(pdfs, tipo_proponente)
+    personas = obtener_personas_a_verificar(pdfs, tipo_proponente, proceso.codigo_proceso)
     resultado = evaluar_antecedente(pdfs, config, personas)
 
     return finalizar(

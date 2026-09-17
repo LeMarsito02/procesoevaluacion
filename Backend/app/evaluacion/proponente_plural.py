@@ -10,6 +10,7 @@ from app.evaluacion.formato1 import (
     _extraer_representante_legal,
     _guardar_cache,
     _leer_cache,
+    _codigo_variantes,
     _norm,
     en_encabezado,
     encontrar_formato1,
@@ -17,6 +18,7 @@ from app.evaluacion.formato1 import (
     obtener_tipo_proponente,
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
+from app.llm.cliente import aparece_en_texto, consultar_json
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from app.procesamiento.pdf_utils import extraer_texto
 from app.procesamiento.zip_utils import extraer_pdfs
@@ -106,18 +108,29 @@ def _orden_busqueda_formato2(nombres: list[str]) -> list[str]:
 
 
 @memo_por_pdfs
-def encontrar_formato2(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
+def encontrar_formato2(pdfs: dict[str, bytes], codigo_proceso: str | None = None) -> tuple[str, str] | None:
     """Busca, entre los PDF del proponente, el Formato 2 (Conformación de
     Proponente Plural) por su título interno. Devuelve (nombre_archivo,
-    texto_completo) o None."""
+    texto_completo) o None.
+
+    Con `codigo_proceso`, exige además que el documento mencione ese
+    proceso: los proponentes adjuntan como experiencia los documentos
+    consorciales de contratos anteriores, con el mismo título (se confirmó
+    un caso real donde se tomaba el de un consorcio de otro contrato y se
+    verificaban los antecedentes de un representante equivocado)."""
+    variantes = _codigo_variantes(codigo_proceso) if codigo_proceso else None
     for nombre in _orden_busqueda_formato2(list(pdfs.keys())):
         contenido = pdfs[nombre]
         try:
             texto = extraer_texto(contenido, max_paginas=PAGINAS_A_REVISAR)
         except Exception:  # noqa: BLE001
             continue
-        if es_titulo_formato2(_norm(texto)):
-            return nombre, texto
+        texto_norm = _norm(texto)
+        if not es_titulo_formato2(texto_norm):
+            continue
+        if variantes is not None and not any(patron.search(texto_norm) for patron in variantes):
+            continue
+        return nombre, texto
     return None
 
 
@@ -150,6 +163,9 @@ def extraer_datos_plural(texto: str) -> DatosProponentePlural:
         # caso queda (correctamente) para revisión humana, aunque el motivo
         # mostrado puede no reflejar el porcentaje real.
         contenido_tabla = re.sub(r"\(\d+\)", "", tabla_match.group(1))
+        # La nota "...DEBE SER IGUAL AL 100%" a veces queda intercalada en
+        # la tabla (PDF a dos columnas) y su 100% se contaba como integrante.
+        contenido_tabla = re.sub(r"IGUAL\s+AL\s+100\s*%", "", contenido_tabla)
         contenido_tabla = re.sub(r"(?:TOTAL|SUMA)\s*\d{1,3}(?:[.,]\d+)?\s*%?", "", contenido_tabla)
         con_signo = PORCENTAJE_CON_SIGNO_RE.findall(contenido_tabla)
         if con_signo:
@@ -176,6 +192,84 @@ def extraer_datos_plural(texto: str) -> DatosProponentePlural:
     )
 
 
+_INSTRUCCION_FORMATO2 = (
+    "Este es el documento de conformación de un consorcio o unión temporal. Extrae los integrantes con su porcentaje "
+    "de participación, y el representante legal designado (principal) y su suplente, con sus números de cédula. "
+    'Responde JSON: {"integrantes": [{"nombre": str, "porcentaje": number}], '
+    '"representante_principal": {"nombre": str|null, "cedula": str|null}, '
+    '"representante_suplente": {"nombre": str|null, "cedula": str|null}}'
+)
+
+
+def _persona_verificada(dato: object, texto: str) -> tuple[str, str | None] | None:
+    if not isinstance(dato, dict):
+        return None
+    nombre = dato.get("nombre")
+    if not isinstance(nombre, str) or len(nombre.split()) < 2 or not aparece_en_texto(nombre, texto):
+        return None
+    cedula = dato.get("cedula")
+    cedula_ok = cedula if isinstance(cedula, str) and aparece_en_texto(cedula, texto, numerico=True) else None
+    return re.sub(r"\s+", " ", nombre).strip(" ."), cedula_ok
+
+
+def _porcentajes_verificados(integrantes: object, texto: str) -> list[float]:
+    """Porcentajes del modelo aceptados solo si TODOS aparecen escritos como
+    porcentaje en el documento ("70%", "70,0 %") junto a un integrante cuyo
+    nombre sí está en el texto."""
+    if not isinstance(integrantes, list) or len(integrantes) < 2:
+        return []
+    texto_norm = _norm(texto)
+    porcentajes = []
+    for integrante in integrantes:
+        if not isinstance(integrante, dict):
+            return []
+        nombre, porcentaje = integrante.get("nombre"), integrante.get("porcentaje")
+        if not isinstance(nombre, str) or not aparece_en_texto(nombre, texto):
+            return []
+        if not isinstance(porcentaje, (int, float)) or not 0 < porcentaje <= 100:
+            return []
+        entero = int(porcentaje)
+        if not re.search(rf"(?<![\d.,]){entero}(?:[.,]\d+)?\s*%", texto_norm):
+            return []
+        porcentajes.append(float(porcentaje))
+    return porcentajes
+
+
+@memo_por_pdfs
+def datos_formato2(
+    pdfs: dict[str, bytes], codigo_proceso: str | None = None
+) -> tuple[str, DatosProponentePlural, bool] | None:
+    """(archivo, datos, se_usó_IA) del Formato 2, o None si no se encontró.
+    Primero las reglas; lo que no logren leer lo intenta el modelo local, y
+    cada dato suyo se verifica contra el texto del documento."""
+    encontrado = encontrar_formato2(pdfs, codigo_proceso)
+    if encontrado is None:
+        return None
+    archivo, texto = encontrado
+    datos = extraer_datos_plural(texto)
+    if datos.porcentajes and datos.representante_principal:
+        return archivo, datos, False
+
+    respuesta = consultar_json(_INSTRUCCION_FORMATO2, texto)
+    if not respuesta:
+        return archivo, datos, False
+    uso_ia = False
+    porcentajes = datos.porcentajes
+    if not porcentajes:
+        porcentajes = _porcentajes_verificados(respuesta.get("integrantes"), texto)
+        uso_ia = uso_ia or bool(porcentajes)
+    principal, suplente = datos.representante_principal, datos.representante_suplente
+    if principal is None:
+        principal = _persona_verificada(respuesta.get("representante_principal"), texto)
+        suplente = suplente or _persona_verificada(respuesta.get("representante_suplente"), texto)
+        uso_ia = uso_ia or principal is not None
+    return (
+        archivo,
+        DatosProponentePlural(porcentajes=porcentajes, representante_principal=principal, representante_suplente=suplente),
+        uso_ia,
+    )
+
+
 class ResultadoEvaluacionPlural:
     def __init__(
         self,
@@ -190,7 +284,9 @@ class ResultadoEvaluacionPlural:
         self.archivo_formato2 = archivo_formato2
 
 
-def evaluar_requisito4(pdfs: dict[str, bytes], tipo_proponente: str | None) -> ResultadoEvaluacionPlural:
+def evaluar_requisito4(
+    pdfs: dict[str, bytes], tipo_proponente: str | None, codigo_proceso: str | None = None
+) -> ResultadoEvaluacionPlural:
     """Requisito 4: Conformación de Proponente Plural (Formato 2). N.A. si el
     proponente es individual (persona natural o jurídica); si es Consorcio o
     Unión Temporal, debe aportar el Formato 2 con los integrantes y sus
@@ -204,7 +300,7 @@ def evaluar_requisito4(pdfs: dict[str, bytes], tipo_proponente: str | None) -> R
             archivo_formato2=None,
         )
 
-    encontrado = encontrar_formato2(pdfs)
+    encontrado = datos_formato2(pdfs, codigo_proceso)
     if encontrado is None:
         return ResultadoEvaluacionPlural(
             cumple=False,
@@ -216,8 +312,7 @@ def evaluar_requisito4(pdfs: dict[str, bytes], tipo_proponente: str | None) -> R
             archivo_formato2=None,
         )
 
-    archivo_formato2, texto = encontrado
-    datos = extraer_datos_plural(texto)
+    archivo_formato2, datos, uso_ia = encontrado
 
     motivos = []
     if not datos.porcentajes:
@@ -238,12 +333,17 @@ def evaluar_requisito4(pdfs: dict[str, bytes], tipo_proponente: str | None) -> R
 
     cumple = not motivos
     motivo = "; ".join(motivos) if motivos else None
+    if uso_ia:
+        nota = "datos del Formato 2 leídos con IA local y verificados contra el texto"
+        motivo = f"{motivo} ({nota})" if motivo else nota
 
     return ResultadoEvaluacionPlural(cumple=cumple, motivo=motivo, datos=datos, archivo_formato2=archivo_formato2)
 
 
 @memo_por_pdfs
-def obtener_personas_a_verificar(pdfs: dict[str, bytes], tipo_proponente: str | None) -> list[tuple[str, str | None]]:
+def obtener_personas_a_verificar(
+    pdfs: dict[str, bytes], tipo_proponente: str | None, codigo_proceso: str | None = None
+) -> list[tuple[str, str | None]]:
     """Devuelve la lista de personas cuyos antecedentes (REDAM, Contraloría,
     Procuraduría, Policía, RNMC) hay que verificar: el representante legal
     declarado en el Formato 1 si el proponente es individual, o el
@@ -254,11 +354,10 @@ def obtener_personas_a_verificar(pdfs: dict[str, bytes], tipo_proponente: str | 
     if tipo_proponente not in ("consorcio", "union_temporal"):
         return _representante_formato1(pdfs)
 
-    encontrado = encontrar_formato2(pdfs)
+    encontrado = datos_formato2(pdfs, codigo_proceso)
     personas: list[tuple[str, str | None]] = []
     if encontrado is not None:
-        _, texto = encontrado
-        datos = extraer_datos_plural(texto)
+        _, datos, _ = encontrado
         if datos.representante_principal:
             personas.append(datos.representante_principal)
         if datos.representante_suplente:
@@ -277,11 +376,21 @@ def _representante_formato1(pdfs: dict[str, bytes]) -> list[tuple[str, str | Non
     if encontrado_f1 is None:
         return []
     _, contenido = encontrado_f1
-    texto_norm = _norm(extraer_texto(contenido))
+    texto = extraer_texto(contenido)
+    texto_norm = _norm(texto)
     nombre = _extraer_representante_legal(texto_norm) or _extraer_nombre_apertura(texto_norm)
-    if not nombre:
-        return []
-    return [(nombre, extraer_cedula_representante(texto_norm))]
+    if nombre:
+        return [(nombre, extraer_cedula_representante(texto_norm))]
+    respuesta = consultar_json(_INSTRUCCION_FORMATO1, texto)
+    persona = _persona_verificada(respuesta, texto) if respuesta else None
+    return [persona] if persona else []
+
+
+_INSTRUCCION_FORMATO1 = (
+    "Esta es la carta de presentación de una oferta. Extrae el nombre completo y el número de cédula de la persona "
+    "que la presenta y firma como representante legal del proponente (o como proponente, si es persona natural). "
+    'Responde JSON: {"nombre": str|null, "cedula": str|null}'
+)
 
 
 def evaluar_proponente_requisito4(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
@@ -322,7 +431,7 @@ def evaluar_proponente_requisito4(proponente: Proponente, proceso: ProcesoDocume
         )
 
     tipo_proponente = obtener_tipo_proponente(pdfs)
-    resultado = evaluar_requisito4(pdfs, tipo_proponente)
+    resultado = evaluar_requisito4(pdfs, tipo_proponente, proceso.codigo_proceso)
 
     return finalizar(
         ResultadoRequisito(
