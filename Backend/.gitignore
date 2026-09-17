@@ -7,3 +7,5 @@ storage/output/*
 cache/
 *.xlsx
 .scratch/
+.env
+.env.*
