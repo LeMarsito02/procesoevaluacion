@@ -78,7 +78,7 @@ def _llamar_sin_candado(instruccion: str, documento: str) -> str:
         "stream": False,
         "format": "json",
         "think": False,
-        "keep_alive": "10m",
+        "keep_alive": os.environ.get("LLM_KEEP_ALIVE", "2m"),
         "options": {"temperature": 0, "num_ctx": LLM_CONTEXTO_TOKENS},
         "messages": [
             {"role": "system", "content": _SISTEMA},
