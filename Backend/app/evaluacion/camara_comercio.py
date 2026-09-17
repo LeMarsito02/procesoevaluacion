@@ -16,6 +16,7 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from app.llm.cliente import cita_literal, consultar_json
 from app.procesamiento.pdf_utils import abrir_pdf, buscar_pagina, extraer_texto, texto_pagina
 from app.procesamiento.zip_utils import extraer_pdfs
 
@@ -296,26 +297,116 @@ def evaluar_requisito7(
     return ResultadoEvaluacionCamara(cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0])
 
 
-# Confirmado con dos redacciones reales distintas para "sin restricción de
-# cuantía": "SIN LIMITE DE CUANTIA" (Cámara de Valledupar) y "NO TENDRA
-# RESTRICCIONES DE CONTRATACION POR RAZON DE LA NATURALEZA NI DE LA CUANTIA"
-# (Cámara de Barrancabermeja). Si no calza ninguna, no se asume que SÍ hay
-# límite — solo que no se pudo confirmar que no lo haya, y en cualquiera de
-# los dos casos el abogado indicó que debe quedar para revisión humana (un
-# límite requeriría cruzar el valor del proceso contra un acta de
-# autorización, algo que no es automatizable con certeza).
+# Redacciones reales de "el representante legal no tiene límite para
+# contratar", confirmadas en certificados de este proceso: "SIN LIMITE DE
+# CUANTIA" (Valledupar), "NO TENDRA RESTRICCIONES DE CONTRATACION POR RAZON
+# DE LA NATURALEZA NI DE LA CUANTIA" (Barrancabermeja, texto legal de las
+# S.A.S.), "QUIEN NO TENDRA RESTRICCIONES PARA CONTRATAR", "EL GERENTE NO
+# TENDRA RESTRICCIONES EN CUANTO A LA CUANTIA O NATURALEZA DE LOS ACTOS O
+# CONTRATOS", "PODRA CELEBRAR TODA CLASE DE CONTRATOS ... SIN RESERVA NI
+# LIMITACION" y "EJECUTAR TODOS LOS ACTOS O CONTRATOS SIN NINGUN TIPO DE
+# LIMITACION". Las de "sin limitación" exigen que se hable de contratos
+# justo antes, para no confundirlas con otras (ej. un suplente que "podrá
+# obrar ... sin ninguna limitación").
 FACULTADES_SIN_LIMITE_PATRONES = [
     re.compile(r"SIN LIMITE(?:S)? DE CUANTIA"),
-    re.compile(r"NO TENDR[AÁ]?\S* RESTRICCION(?:ES)?\s+DE\s+CONTRATACION.{0,80}CUANTIA"),
+    re.compile(r"NO TENDR[AÁ]N?\s+(?:NINGUNA\s+)?RESTRICCION(?:ES)?\s+(?:DE\s+CONTRATACION|PARA\s+CONTRATAR|EN\s+CUANTO\s+A\s+LA\s+CUANTIA)"),
     re.compile(r"SIN RESTRICCION(?:ES)?.{0,40}CUANTIA"),
+    re.compile(r"CONTRAT.{0,100}SIN (?:NINGUN[OA]? )?(?:TIPO DE )?(?:RESERVA NI |RESTRICCION NI )?LIMITACI"),
 ]
+
+# Un límite de cuantía explícito siempre va a revisión humana: decidir si el
+# proceso lo supera y si hay un acta de autorización válida es un juicio del
+# abogado (así lo pidió).
+LIMITE_CUANTIA_RE = re.compile(
+    r"S\.?\s*M\.?\s*M\.?\s*L\.?\s*V|SALARIOS MINIMOS|HASTA POR (?:LA SUMA|UN VALOR|UN MONTO|\$)"
+    r"|CUANTIA (?:SUPERIOR|MAYOR|QUE EXCEDA)|(?:SUPERIOR|SUPERIORES|MAYOR|MAYORES) A \$|QUE EXCEDA(?:N)? (?:DE )?\$"
+)
+
+# Sección del certificado con las facultades del representante legal: desde
+# su encabezado hasta el de nombramientos (o un máximo de caracteres).
+SECCION_FACULTADES_RE = re.compile(
+    r"(?:FACULTADES Y LIMITACIONES DEL REPRESENTANTE LEGAL|FACULTADES DEL REPRESENTANTE LEGAL|FUNCIONES DEL (?:GERENTE|REPRESENTANTE LEGAL))"
+    r"(.{0,9000}?)(?=NOMBRAMIENTOS|REVISORES? FISCAL|$)",
+    re.DOTALL,
+)
+MAX_CARACTERES_SECCION_FACULTADES = 7000
+
+_INSTRUCCION_FACULTADES = (
+    "Lee las facultades del representante legal de esta sociedad y responde si el certificado le impone alguna "
+    "restricción o límite para CELEBRAR CONTRATOS o PRESENTAR PROPUESTAS en procesos de contratación, ya sea por "
+    "cuantía/monto (por ejemplo un tope en salarios mínimos o en pesos) o por requerir autorización previa de la "
+    "junta directiva o asamblea para contratar. Las autorizaciones para otros actos (vender o gravar bienes, "
+    "reformar estatutos, nombrar empleados) NO cuentan como restricción para contratar. "
+    'Responde JSON: {"restriccion_para_contratar": true|false, "cita": "frase exacta del documento que la impone, o null"}'
+)
+
+
+# La Cámara de Medellín no usa encabezado de facultades: las describe bajo
+# un encabezado "REPRESENTACION LEGAL" a secas (Barranquilla: "REPRESENTACION
+# LEGAL ADMINISTRACION:"), justo antes de
+# "NOMBRAMIENTOS" (se descarta el del título "...EXISTENCIA Y REPRESENTACION
+# LEGAL" que se repite en cada página).
+SECCION_REPRESENTACION_LEGAL_RE = re.compile(
+    r"(?<!EXISTENCIA Y )REPRESENTACION LEGAL (?:[A-Z]+: )?(?:LA|EL|LOS) (.{0,9000}?)(?=NOMBRAMIENTOS|REVISORES? FISCAL|$)",
+    re.DOTALL,
+)
+
+
+def _seccion_facultades(texto_norm: str) -> str:
+    match = SECCION_FACULTADES_RE.search(texto_norm) or SECCION_REPRESENTACION_LEGAL_RE.search(texto_norm)
+    if not match:
+        return ""
+    return match.group(0)[:MAX_CARACTERES_SECCION_FACULTADES]
+
+
+def _evaluar_facultades_certificado(nombre: str, texto_norm: str) -> tuple[bool, str | None]:
+    """(cumple, motivo) para un Certificado de Existencia."""
+    if any(patron.search(texto_norm) for patron in FACULTADES_SIN_LIMITE_PATRONES):
+        return True, None
+
+    seccion = _seccion_facultades(texto_norm)
+    if not seccion:
+        return False, (
+            f"no se encontró la sección de facultades del representante legal en '{nombre}' — revisa manualmente "
+            "si tiene límites para contratar"
+        )
+
+    limite = LIMITE_CUANTIA_RE.search(seccion)
+    if limite:
+        fragmento = seccion[max(0, limite.start() - 150) : limite.end() + 100]
+        return False, (
+            f"'{nombre}' menciona un posible límite de cuantía para el representante legal (\"...{fragmento}...\") — "
+            "revisa si el proceso lo supera y si hay autorización"
+        )
+
+    respuesta = consultar_json(_INSTRUCCION_FACULTADES, seccion)
+    if respuesta is None or not isinstance(respuesta.get("restriccion_para_contratar"), bool):
+        return False, (
+            f"'{nombre}' no dice expresamente que el representante legal no tenga restricción para contratar y no se "
+            "pudo analizar automáticamente — revisa manualmente"
+        )
+    if respuesta["restriccion_para_contratar"]:
+        cita = respuesta.get("cita")
+        if isinstance(cita, str) and cita_literal(cita, seccion):
+            return False, f"'{nombre}' restringe al representante legal para contratar: \"{cita}\" — revisa manualmente"
+        return False, (
+            f"'{nombre}' podría restringir al representante legal para contratar (no se pudo ubicar la frase exacta) "
+            "— revisa manualmente"
+        )
+    return True, (
+        f"'{nombre}': las facultades del representante legal no mencionan límites de cuantía ni autorizaciones para "
+        "contratar (analizado con IA local)"
+    )
 
 
 def evaluar_requisito8(pdfs: dict[str, bytes], tipo_proponente: str | None) -> ResultadoEvaluacionCamara:
-    """Requisito 8: Facultades del representante legal — cumple solo cuando
-    el certificado indica expresamente que no hay restricción de cuantía
-    para contratar. Cualquier otro caso (hay un límite mencionado, o no se
-    pudo confirmar) queda para revisión humana. N.A. si es persona natural."""
+    """Requisito 8: Facultades del representante legal. Cumple cuando el
+    certificado dice expresamente que no hay restricción para contratar, o
+    cuando sus facultades no imponen ningún límite (confirmado por el modelo
+    local, sin montos ni topes detectados). Un límite de cuantía o una
+    autorización requerida para contratar siempre queda para revisión
+    humana. N.A. si es persona natural."""
     if tipo_proponente == "persona_natural":
         return ResultadoEvaluacionCamara(
             cumple=True, motivo="N.A. — persona natural, no aplica certificado de facultades", archivo=None
@@ -329,17 +420,18 @@ def evaluar_requisito8(pdfs: dict[str, bytes], tipo_proponente: str | None) -> R
             archivo=None,
         )
 
-    motivos = []
+    no_cumple: list[str] = []
+    notas: list[str] = []
     for nombre in encontrados:
-        texto_norm = _norm(_texto_completo(pdfs, nombre))
-        if not any(patron.search(texto_norm) for patron in FACULTADES_SIN_LIMITE_PATRONES):
-            motivos.append(
-                f"'{nombre}' no confirma expresamente que el representante legal no tenga restricción de cuantía "
-                "para contratar — revisa manualmente si menciona un límite y si el proceso lo supera"
-            )
+        cumple_certificado, motivo = _evaluar_facultades_certificado(nombre, _norm(_texto_completo(pdfs, nombre)))
+        if not cumple_certificado:
+            no_cumple.append(motivo or "")
+        elif motivo:
+            notas.append(motivo)
 
-    cumple = not motivos
-    return ResultadoEvaluacionCamara(cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0])
+    if no_cumple:
+        return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(no_cumple), archivo=encontrados[0])
+    return ResultadoEvaluacionCamara(cumple=True, motivo="; ".join(notas) if notas else None, archivo=encontrados[0])
 
 
 # Sección de sanciones del RUP, confirmada con RUP reales de este proceso:
