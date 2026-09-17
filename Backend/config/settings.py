@@ -20,6 +20,23 @@ def _lista(variable: str, defecto: str = "") -> list[str]:
     return [v.strip() for v in os.environ.get(variable, defecto).split(",") if v.strip()]
 
 
+def _ips_locales() -> list[str]:
+    """IPs del equipo en la red local (para el entorno de desarrollo, donde la
+    dirección cambia según la red a la que esté conectado)."""
+    import socket
+
+    ips = {"127.0.0.1"}
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 1))  # no envía nada: solo resuelve la interfaz de salida
+            ips.add(s.getsockname()[0])
+    except OSError:
+        pass
+    return sorted(ips)
+
+
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = _lista("DJANGO_ALLOWED_HOSTS")
@@ -107,6 +124,18 @@ CSRF_TRUSTED_ORIGINS = _lista("CORS_ORIGENES")
 
 # --- CORS (frontend en otro puerto/dominio) ---
 CORS_ALLOWED_ORIGINS = _lista("CORS_ORIGENES")
+
+# En desarrollo, si se expone el entorno a la red local, se aceptan también las
+# direcciones del equipo (cambian según la red). En producción no aplica.
+if DEBUG and os.environ.get("EXPONER_EN_RED") == "1":
+    _PUERTO_APP = os.environ.get("PUERTO_APP", "5173")
+    for _ip in _ips_locales():
+        if _ip not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(_ip)
+        _origen = f"http://{_ip}:{_PUERTO_APP}"
+        if _origen not in CORS_ALLOWED_ORIGINS:
+            CORS_ALLOWED_ORIGINS.append(_origen)
+            CSRF_TRUSTED_ORIGINS.append(_origen)
 CORS_ALLOW_CREDENTIALS = True
 
 # --- Seguridad en producción ---
