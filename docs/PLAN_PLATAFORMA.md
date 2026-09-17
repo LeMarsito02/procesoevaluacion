@@ -1,6 +1,6 @@
 # Plan: MiEvaluador como plataforma multi-entidad y multi-evaluación
 
-Estado: **propuesta v2 para revisión** (no implementado). Incorpora las decisiones del 17/09/2026.
+Estado: **v2 en implementación** (F0–F4 y F6 hechos; F5 preparado a la espera de ejemplos reales). Decisiones del 17/09/2026.
 
 ## 1. Objetivo
 
@@ -149,9 +149,9 @@ Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión 
 | **F1. Identidad y aislamiento** ✅ | Entidades, áreas, usuarios, roles, login (+ botones de próximamente), invitaciones, recuperación, auditoría, superadmin con 2FA, pruebas de aislamiento. La RLS se aplica en F2 sobre las tablas de datos de la entidad (procesos, evaluaciones, documentos) | Dos entidades de prueba no se ven entre sí. |
 | **F2. Procesos, evaluaciones y asignaciones** ✅ | Procesos con varias evaluaciones; asignación por jefe; "Mis evaluaciones", "Procesos de la entidad", "Equipo y asignaciones"; revisiones guardadas en el servidor; RLS de PostgreSQL con rol de base de datos sin privilegios | Un jefe asigna, el evaluador revisa desde otro equipo sin perder nada. |
 | **F3. Fila de trabajos** ✅ | Worker separado, reparto justo, barras de progreso y ETA en vivo, pausar/cancelar, recuperación, correos | Varias evaluaciones de distintos usuarios avanzan en orden y avisan por correo. |
-| **F4. Criterios configurables** | Nivel 1 (parámetros) y nivel 2 (plantillas de regla) con prueba contra ofertas reales y versionado | Una entidad crea un requisito nuevo sin programar y lo prueba. |
-| **F5. Tipos técnica y financiera** | Con los ejemplos reales: catálogos, evaluadores, plantillas, medición contra informes reales | Acierto medido de cada tipo. |
-| **F6. IA para requisitos y endurecimiento** | Nivel 3 (requisito asistido por IA), retención de 30 días, límites, copias de seguridad, despliegue en LeMarCloud | Lista de verificación de seguridad completa. |
+| **F4. Plantillas de evaluación por entidad** ✅ | Cada entidad define, por tipo, sus requisitos (numeración, nombre, grupo), la verificación de cada uno (del motor o armada con bloques), parámetros (vigencias, sigla, beneficiario), su Excel con mapeo y versiones; prueba contra ofertas reales y propuesta con IA; el superadmin elige la base al crear la entidad | Una entidad crea un requisito nuevo sin programar y lo prueba. |
+| **F5. Tipos técnica y financiera** (preparado) | Con los ejemplos reales: catálogos, evaluadores, plantillas, medición contra informes reales | Acierto medido de cada tipo. |
+| **F6. IA para requisitos y endurecimiento** ✅ | Nivel 3 (requisito asistido por IA), retención de 30 días, límites, copias de seguridad, despliegue en LeMarCloud | Lista de verificación de seguridad completa. |
 
 ## 11. Pendiente por definir
 
@@ -159,3 +159,11 @@ Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión 
 2. **Retención**: al eliminar documentos a los 30 días, ¿se conservan resultados, decisiones e informes? (propuesta: sí).
 3. **Asignación**: ¿un jefe asigna la evaluación completa a una persona, o también puede repartir proponentes de un mismo proceso entre varios evaluadores? (propuesta: ambas).
 4. **Aprobación**: ¿el informe debe aprobarlo el jefe antes de descargarlo como definitivo? (propuesta: sí, con borrador descargable antes).
+
+
+## 12. Estado de la implementación (17/09/2026)
+
+- **Tipos de evaluación**: registro en `Backend/evaluaciones/tipos.py`. Técnica y financiera se crean, asignan y tienen plantilla (requisitos con bloques y Excel), pero su motor automático está "en preparación". Para habilitarlas: agregar sus verificaciones a `motor/criterios.py` (`VERIFICACIONES`) y marcarlas `disponible=True`.
+- **Plantilla de evaluación** (`PlantillaEvaluacion`, versionada): definición en `motor/criterios.py` (`DefinicionEvaluacion`); cada evaluación guarda la versión con la que se hizo y puede actualizarse a la vigente.
+- **Retención**: `manage.py aplicar_retencion` (diario). **Respaldo**: `scripts/respaldo.sh` (restauración verificada). **Límites** de peticiones por usuario/IP. **Despliegue**: `despliegue/` y `docs/DESPLIEGUE.md`.
+- **Pendiente**: permisos temporales de soporte para personal de LeMarTek (decisión #2); módulos técnico y financiero (F5, con ejemplos reales).

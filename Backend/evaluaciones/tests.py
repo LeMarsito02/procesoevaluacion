@@ -584,3 +584,230 @@ class PlantillasTests(BaseEvaluaciones):
         otra = Cliente()
         otra.entrar("admin@otra.gov.co")
         self.assertIsNotNone(otra.get("/api/configuracion/plantillas").json()[0]["activa"])
+
+
+def definicion_propia():
+    """ICCU sin sanciones del RUP, con numeración propia y un requisito nuevo por bloques."""
+    from motor.criterios import definicion_sistema
+
+    base = definicion_sistema("juridica").model_dump(mode="json")
+    requisitos = [r for r in base["requisitos"] if r["verificacion"] != "juridica.sanciones_rup"]
+    for i, r in enumerate(requisitos, start=1):
+        r["numero"] = i
+    requisitos.append(
+        {
+            "numero": 30,
+            "titulo": "Certificado de la Junta Central de Contadores",
+            "corto": "JCC",
+            "grupo": "antecedentes",
+            "verificacion": "personalizado",
+            "config": {"frases_documento": ["JUNTA CENTRAL DE CONTADORES"], "bloques": [{"tipo": "vigencia_maxima", "meses": 3}]},
+        }
+    )
+    return {"parametros": {"copnia_meses": 6}, "requisitos": requisitos}
+
+
+class PlantillaEvaluacionTests(BaseEvaluaciones):
+    def setUp(self):
+        self.admin = Cliente()
+        self.admin.entrar("admin@iccu.gov.co")
+
+    def publicar(self, c=None, definicion=None, nombre="Jurídica ICCU 2026", entidad_id=None):
+        c = c or self.admin
+        url = "/api/configuracion/evaluaciones" + (f"?entidad_id={entidad_id}" if entidad_id else "")
+        return c.post(url, {"tipo": "juridica", "nombre": nombre, "definicion": definicion or definicion_propia()})
+
+    def test_catalogo_del_motor(self):
+        cat = self.admin.get("/api/configuracion/catalogo?tipo=juridica").json()
+        self.assertEqual(len(cat["verificaciones"]), 17)
+        self.assertIn("copnia_meses", {p["clave"] for p in cat["parametros"]})
+
+    def test_sin_version_propia_usa_la_base_del_sistema(self):
+        juridica = self.admin.get("/api/configuracion/evaluaciones").json()[0]
+        self.assertIsNone(juridica["activa"])
+        self.assertEqual(len(juridica["definicion"]["requisitos"]), 17)
+
+    def test_publicar_y_evaluar_con_la_definicion_de_la_entidad(self):
+        r = self.publicar()
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.json()["version"], 1)
+
+        jefe, ev = self.crear()
+        self.assertEqual(ev["plantilla_version"], 1)
+        detalle = jefe.get(f"/api/evaluaciones/{ev['id']}").json()
+        self.assertEqual(len(detalle["catalogo"]), 17)
+        self.assertEqual(detalle["catalogo"][-1]["titulo"], "Certificado de la Junta Central de Contadores")
+        self.assertTrue(detalle["catalogo"][-1]["personalizado"])
+
+        recibido = {}
+
+        async def motor_que_mira(proponente, proceso):
+            recibido["criterios"] = proceso.criterios
+            return resultados_falsos(proponente, proceso)
+
+        jefe.post(f"/api/evaluaciones/{ev['id']}/evaluar", {})
+        correr_fila(motor_que_mira)
+        self.assertEqual(recibido["criterios"]["parametros"], {"copnia_meses": 6})
+        self.assertEqual(len(recibido["criterios"]["requisitos"]), 17)
+
+    def test_nueva_version_y_actualizar_evaluacion(self):
+        self.publicar()
+        jefe, ev = self.crear()
+        self.evaluar_todo(jefe, ev["id"])
+        from motor.criterios import definicion_sistema
+
+        v2 = definicion_sistema("juridica").model_dump(mode="json")
+        v2["requisitos"] = [r for r in v2["requisitos"] if r["numero"] in (1, 2)]
+        self.assertEqual(self.publicar(definicion=v2, nombre="Solo carta y aval").json()["version"], 2)
+
+        resumen = jefe.get(f"/api/evaluaciones/{ev['id']}").json()["evaluacion"]
+        self.assertTrue(resumen["plantilla_desactualizada"])
+        r = jefe.post(f"/api/evaluaciones/{ev['id']}/actualizar-plantilla")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["plantilla_version"], 2)
+        self.assertFalse(r.json()["plantilla_desactualizada"])
+        # Se descartan resultados de requisitos que ya no existen (13) y se vuelve a evaluar a todos.
+        self.assertEqual(Trabajo.objects.filter(evaluacion_id=ev["id"], estado=EstadoTrabajo.EN_FILA).count(), 2)
+        self.assertEqual(jefe.post(f"/api/evaluaciones/{ev['id']}/actualizar-plantilla").status_code, 409)
+        versiones = self.admin.get("/api/configuracion/evaluaciones").json()[0]["versiones"]
+        self.assertEqual([(v["version"], v["activa"], v["evaluaciones"]) for v in versiones], [(2, True, 1), (1, False, 0)])
+
+    def test_validacion_de_la_definicion(self):
+        d = definicion_propia()
+        d["requisitos"][1]["numero"] = d["requisitos"][0]["numero"]
+        r = self.publicar(definicion=d)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("repetidos", r.json()["detail"])
+        d = definicion_propia()
+        d["parametros"]["copnia_meses"] = 100
+        self.assertEqual(self.publicar(definicion=d).status_code, 400)
+        d = definicion_propia()
+        d["requisitos"][0]["verificacion"] = "juridica.inventada"
+        self.assertEqual(self.publicar(definicion=d).status_code, 400)
+        self.assertEqual(self.publicar(definicion={"requisitos": []}).status_code, 400)
+
+    def test_permisos_y_aislamiento(self):
+        v = self.publicar().json()
+        otra = Cliente()
+        otra.entrar("admin@otra.gov.co")
+        self.assertIsNone(otra.get("/api/configuracion/evaluaciones").json()[0]["activa"])
+        self.assertEqual(otra.post(f"/api/configuracion/evaluaciones/{v['id']}/activar").status_code, 404)
+        jefe = Cliente()
+        jefe.entrar("jefe@iccu.gov.co")
+        self.assertEqual(self.publicar(c=jefe).status_code, 403)
+
+    def test_superadmin_crea_entidad_con_base_o_copia(self):
+        import pyotp
+
+        self.publicar()
+        c = Cliente()
+        c.entrar("santiagopebe01@lemartek.com")
+        secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
+        c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
+        r = c.post("/api/plataforma/entidades", {"nombre": "Instituto de Desarrollo Urbano", "nit": "899999081", "email_admin": "a@idu.gov.co", "sigla": "idu"})
+        self.assertEqual(r.status_code, 201, r.content)
+        idu = r.json()["id"]
+        juridica = c.get(f"/api/configuracion/evaluaciones?entidad_id={idu}").json()[0]
+        self.assertEqual(juridica["activa"]["version"], 1)
+        self.assertEqual(juridica["definicion"]["parametros"]["prefijo_codigo"], "IDU")
+        self.assertIn("IDU", juridica["definicion"]["parametros"]["beneficiario_claves"])
+
+        r = c.post(
+            "/api/plataforma/entidades",
+            {"nombre": "Copia ICCU", "nit": "123", "email_admin": "a@copia.gov.co", "base": "copiar", "copiar_de": str(self.iccu.id)},
+        )
+        self.assertEqual(r.status_code, 201, r.content)
+        copia = c.get(f"/api/configuracion/evaluaciones?entidad_id={r.json()['id']}").json()[0]
+        self.assertEqual(copia["activa"]["nombre"], "Jurídica ICCU 2026")
+        self.assertEqual(len(copia["definicion"]["requisitos"]), 17)
+
+    def test_probar_requisito_contra_ofertas(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        _, ev = self.crear()
+        props = self.admin.get(f"/api/evaluaciones/{ev['id']}").json()["proponentes"]
+        requisito = definicion_propia()["requisitos"][-1]
+
+        def falso(proponente, proceso, req, parametros):
+            from motor.esquemas.proceso import ResultadoRequisito
+
+            return ResultadoRequisito(hoja=proponente.hoja, numero_orden=proponente.numero_orden, nombre_proponente=proponente.nombre_proponente, requisito=req["numero"], cumple=proponente.hoja == "P-01", motivo=None if proponente.hoja == "P-01" else "No se encontró el documento")
+
+        with ThreadPoolExecutor(2) as pool, mock.patch("api.configuracion.obtener_pool", return_value=pool), mock.patch("api.configuracion.probar_requisito", falso):
+            r = self.admin.post("/api/configuracion/requisitos/probar", {"evaluacion_id": ev["id"], "requisito": requisito, "proponente_ids": [p["id"] for p in props]})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(sorted((x["hoja"], x["cumple"]) for x in r.json()), [("P-01", True), ("P-02", False)])
+        otra = Cliente()
+        otra.entrar("admin@otra.gov.co")
+        r = otra.post("/api/configuracion/requisitos/probar", {"evaluacion_id": ev["id"], "requisito": requisito, "proponente_ids": [props[0]["id"]]})
+        self.assertEqual(r.status_code, 404)
+
+    def test_proponer_con_ia(self):
+        propuesta = {
+            "titulo": "Certificado de la Junta Central de Contadores del contador",
+            "corto": "JCC",
+            "grupo": "antecedentes",
+            "verifica": "Sin antecedentes y máximo 3 meses",
+            "config": {"frases_documento": ["JUNTA CENTRAL DE CONTADORES"], "bloques": [{"tipo": "vigencia_maxima", "meses": 3}, {"tipo": "contiene", "frases": ["NO REGISTRA ANTECEDENTES"]}]},
+        }
+        with mock.patch("api.configuracion.consultar_json", return_value=propuesta):
+            r = self.admin.post("/api/configuracion/requisitos/proponer", {"descripcion": "Certificado de la Junta Central de Contadores del contador con vigencia de 3 meses que diga no registra antecedentes"})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["verificacion"], "personalizado")
+        with mock.patch("api.configuracion.consultar_json", return_value=None):
+            r = self.admin.post("/api/configuracion/requisitos/proponer", {"descripcion": "Certificado de la Junta Central de Contadores del contador"})
+        self.assertEqual(r.status_code, 503)
+
+
+class RetencionTests(BaseEvaluaciones):
+    def test_borra_ofertas_de_procesos_aprobados_hace_mas_de_30_dias(self):
+        import os
+        import tempfile
+        import time as tiempo
+        from pathlib import Path
+
+        from evaluaciones import retencion
+
+        jefe, ev = self.crear()
+        _, otro = self.crear(codigo="VIGENTE-001")
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            ofertas = cache / "drive_files"
+            ocr = cache / "ocr"
+            ofertas.mkdir()
+            ocr.mkdir()
+            for fid in ("a1", "a2"):
+                (ofertas / f"{fid}.zip").write_bytes(b"zip")
+                (ofertas / f"{fid}.meta.json").write_text("{}")
+            viejo = ocr / "viejo.txt"
+            viejo.write_text("texto")
+            hace_40_dias = tiempo.time() - 40 * 86400
+            os.utime(viejo, (hace_40_dias, hace_40_dias))
+            (ocr / "reciente.txt").write_text("texto")
+
+            with mock.patch.object(retencion, "CACHE", cache), mock.patch.object(retencion, "DIRECTORIO_OFERTAS", ofertas):
+                # Sin aprobar: no se borra nada de ofertas.
+                self.assertEqual(retencion.aplicar(30).procesos, [])
+                Evaluacion.objects.filter(pk=ev["id"]).update(
+                    estado=EstadoEvaluacion.APROBADA, aprobada_en=timezone.now() - timedelta(days=31)
+                )
+                # El otro proceso vigente usa las mismas ofertas (a1, a2): se conservan.
+                self.assertEqual(retencion.aplicar(30).archivos_ofertas, 0)
+                Evaluacion.objects.filter(pk=otro["id"]).update(
+                    estado=EstadoEvaluacion.APROBADA, aprobada_en=timezone.now() - timedelta(days=35)
+                )
+                simulacro = retencion.aplicar(30, simulacro=True)
+                self.assertTrue((ofertas / "a1.zip").exists())
+                self.assertEqual(sorted(simulacro.procesos), ["VIGENTE-001"])
+                informe = retencion.aplicar(30)
+
+            self.assertEqual(sorted(informe.procesos), ["VIGENTE-001"])
+            self.assertFalse((ofertas / "a1.zip").exists())
+            self.assertFalse(viejo.exists())
+            self.assertTrue((ocr / "reciente.txt").exists())
+
+        # Ya no se pueden abrir los documentos, pero sí el informe y los resultados.
+        prop = jefe.get(f"/api/evaluaciones/{otro['id']}").json()["proponentes"][0]["id"]
+        r = jefe.get(f"/api/evaluaciones/{otro['id']}/proponentes/{prop}/documento?archivo=x.pdf")
+        self.assertEqual(r.status_code, 410)
+        self.assertEqual(jefe.get(f"/api/evaluaciones/{otro['id']}").status_code, 200)

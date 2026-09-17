@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'react'
 import Icono from '../components/Icono'
-import { cambiarEstadoEntidad, crearEntidad, listarEntidades, type Entidad } from '../cuentas'
+import { subirPlantilla } from '../configuracion'
+import {
+  cambiarEstadoEntidad,
+  crearCuentaSoporte,
+  crearEntidad,
+  listarEntidades,
+  personalDeSoporte,
+  type Entidad,
+  type PersonaSoporte,
+} from '../cuentas'
+import { navegar } from '../rutas'
 import { mensajeDe } from '../http'
 
 export default function PaginaEntidades() {
@@ -78,6 +88,9 @@ export default function PaginaEntidades() {
                       <span className="pill" data-estado={e.activa ? 'cumple' : 'error'}>
                         <span className="dot" /> {e.activa ? 'Activa' : 'Suspendida'}
                       </span>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => navegar(`/configuracion?entidad=${e.id}`)}>
+                        Configurar
+                      </button>
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => alternar(e)}>
                         {e.activa ? 'Suspender' : 'Reactivar'}
                       </button>
@@ -96,13 +109,16 @@ export default function PaginaEntidades() {
           </table>
         </div>
       )}
+      <PersonalSoporte onAviso={setAviso} onError={setError} />
+
       {creando && (
         <DialogoEntidad
           onCerrar={() => setCreando(false)}
-          onCreada={(e, email) => {
+          entidades={entidades ?? []}
+          onCreada={(e, email, plantillas) => {
             setCreando(false)
             setEntidades((l) => [...(l ?? []), e].sort((a, b) => a.nombre.localeCompare(b.nombre)))
-            setAviso(`Entidad creada. Invitación enviada a ${email}`)
+            setAviso(`Entidad creada${plantillas ? ` con ${plantillas} plantilla(s) de Excel` : ''}. Invitación enviada a ${email}`)
           }}
         />
       )}
@@ -111,10 +127,29 @@ export default function PaginaEntidades() {
   )
 }
 
-function DialogoEntidad({ onCerrar, onCreada }: { onCerrar: () => void; onCreada: (e: Entidad, email: string) => void }) {
+const TIPOS_PLANTILLA = [
+  { clave: 'juridica', nombre: 'Jurídica' },
+  { clave: 'tecnica', nombre: 'Técnica' },
+  { clave: 'financiera', nombre: 'Financiera' },
+]
+
+function DialogoEntidad({
+  entidades,
+  onCerrar,
+  onCreada,
+}: {
+  entidades: Entidad[]
+  onCerrar: () => void
+  onCreada: (e: Entidad, email: string, plantillas: number) => void
+}) {
   const [nombre, setNombre] = useState('')
   const [nit, setNit] = useState('')
+  const [sigla, setSigla] = useState('')
   const [email, setEmail] = useState('')
+  const [base, setBase] = useState<'sistema' | 'copiar'>('sistema')
+  const [copiarDe, setCopiarDe] = useState('')
+  const [excel, setExcel] = useState<Record<string, File | null>>({})
+  const [creada, setCreada] = useState<Entidad | null>(null)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -122,17 +157,30 @@ function DialogoEntidad({ onCerrar, onCreada }: { onCerrar: () => void; onCreada
     setEnviando(true)
     setError(null)
     try {
-      onCreada(await crearEntidad({ nombre, nit, email_admin: email }), email)
+      // Si falla una plantilla, la entidad ya existe: al reintentar solo se suben las que faltan.
+      const entidad =
+        creada ?? (await crearEntidad({ nombre, nit, email_admin: email, sigla, base, copiar_de: base === 'copiar' ? copiarDe : null }))
+      setCreada(entidad)
+      let subidas = 0
+      for (const [tipo, archivo] of Object.entries(excel)) {
+        if (!archivo) continue
+        await subirPlantilla(tipo, archivo, entidad.id)
+        subidas++
+        setExcel((p) => ({ ...p, [tipo]: null }))
+      }
+      onCreada(entidad, email, subidas)
     } catch (e) {
       setError(mensajeDe(e, 'No se pudo crear la entidad.'))
       setEnviando(false)
     }
   }
 
+  const bloqueado = !!creada
+
   return (
     <>
       <div className="overlay" onClick={onCerrar} />
-      <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="titulo-entidad">
+      <div className="dialogo dialogo-ancho" role="dialog" aria-modal="true" aria-labelledby="titulo-entidad">
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -142,24 +190,82 @@ function DialogoEntidad({ onCerrar, onCreada }: { onCerrar: () => void; onCreada
           <div className="card-head">
             <div>
               <h2 id="titulo-entidad">Nueva entidad</h2>
-              <p>Se crean sus áreas jurídica, técnica y financiera, y se invita a su primer administrador.</p>
+              <p>Se crean sus áreas, su forma de evaluar y se invita a su primer administrador.</p>
             </div>
             <button type="button" className="btn btn-ghost btn-icon" onClick={onCerrar} aria-label="Cerrar">
               <Icono nombre="x" />
             </button>
           </div>
-          <div className="field" style={{ marginBottom: 16 }}>
-            <label htmlFor="ent-nombre">Nombre</label>
-            <input id="ent-nombre" className="input" value={nombre} onChange={(e) => setNombre(e.target.value)} autoFocus required />
+
+          <div className="grid-2" style={{ gap: 14 }}>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label htmlFor="ent-nombre">Nombre</label>
+              <input id="ent-nombre" className="input" value={nombre} onChange={(e) => setNombre(e.target.value)} autoFocus required disabled={bloqueado} />
+            </div>
+            <div className="field">
+              <label htmlFor="ent-nit">NIT</label>
+              <input id="ent-nit" className="input" value={nit} onChange={(e) => setNit(e.target.value)} placeholder="900123456" required disabled={bloqueado} />
+            </div>
+            <div className="field">
+              <label htmlFor="ent-sigla">Sigla</label>
+              <input id="ent-sigla" className="input" value={sigla} onChange={(e) => setSigla(e.target.value)} placeholder="IDU" disabled={bloqueado} />
+              <span className="hint">Como aparece en los códigos de proceso y en las pólizas.</span>
+            </div>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label htmlFor="ent-email">Correo del administrador de la entidad</label>
+              <input id="ent-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required disabled={bloqueado} />
+            </div>
           </div>
-          <div className="field" style={{ marginBottom: 16 }}>
-            <label htmlFor="ent-nit">NIT</label>
-            <input id="ent-nit" className="input" value={nit} onChange={(e) => setNit(e.target.value)} placeholder="900123456" required />
+
+          <div className="field" style={{ marginTop: 18 }}>
+            <label>¿Cómo evaluará?</label>
+            <div className="opciones">
+              <label className="opcion" data-activo={base === 'sistema'}>
+                <input type="radio" name="base" checked={base === 'sistema'} onChange={() => setBase('sistema')} disabled={bloqueado} />
+                <div>
+                  <strong>Base del sistema</strong>
+                  <span className="small muted">Evaluación jurídica estándar (17 requisitos) adaptada a su sigla. Se ajusta después en Configuración.</span>
+                </div>
+              </label>
+              <label className="opcion" data-activo={base === 'copiar'}>
+                <input type="radio" name="base" checked={base === 'copiar'} onChange={() => setBase('copiar')} disabled={bloqueado || entidades.length === 0} />
+                <div>
+                  <strong>Copiar de otra entidad</strong>
+                  <span className="small muted">Mismos requisitos, parámetros y plantillas de Excel.</span>
+                </div>
+              </label>
+            </div>
+            {base === 'copiar' && (
+              <select className="select" style={{ marginTop: 8 }} value={copiarDe} onChange={(e) => setCopiarDe(e.target.value)} required disabled={bloqueado}>
+                <option value="">Elija la entidad…</option>
+                {entidades.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.nombre}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
-          <div className="field">
-            <label htmlFor="ent-email">Correo del administrador de la entidad</label>
-            <input id="ent-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+
+          <div className="field" style={{ marginTop: 18 }}>
+            <label>Plantillas de Excel del informe (opcional)</label>
+            <span className="hint">
+              {base === 'copiar' ? 'Si sube una, reemplaza la copiada para ese tipo.' : 'También puede subirlas después en Configuración.'}
+            </span>
+            <div className="plantillas-nueva">
+              {TIPOS_PLANTILLA.map((t) => (
+                <label key={t.clave} className="plantilla-slot" data-lleno={!!excel[t.clave]}>
+                  <Icono nombre={excel[t.clave] ? 'check' : 'subir'} tam={16} />
+                  <span>
+                    <strong>{t.nombre}</strong>
+                    <span className="small muted">{excel[t.clave]?.name ?? 'Elegir archivo…'}</span>
+                  </span>
+                  <input type="file" accept=".xlsx" hidden onChange={(e) => setExcel((p) => ({ ...p, [t.clave]: e.target.files?.[0] ?? null }))} />
+                </label>
+              ))}
+            </div>
           </div>
+
           {error && (
             <div className="callout callout-bad" style={{ marginTop: 16 }} role="alert">
               <Icono nombre="alerta" />
@@ -168,14 +274,76 @@ function DialogoEntidad({ onCerrar, onCreada }: { onCerrar: () => void; onCreada
           )}
           <div className="dialogo-pie">
             <button type="button" className="btn btn-ghost" onClick={onCerrar}>
-              Cancelar
+              {bloqueado ? 'Cerrar' : 'Cancelar'}
             </button>
-            <button type="submit" className="btn btn-primary" disabled={enviando}>
-              {enviando ? <span className="spinner" /> : 'Crear e invitar'}
+            <button type="submit" className="btn btn-primary" disabled={enviando || (base === 'copiar' && !copiarDe)}>
+              {enviando ? <span className="spinner" /> : bloqueado ? 'Reintentar plantillas' : 'Crear e invitar'}
             </button>
           </div>
         </form>
       </div>
     </>
+  )
+}
+
+function PersonalSoporte({ onAviso, onError }: { onAviso: (t: string) => void; onError: (t: string) => void }) {
+  const [personal, setPersonal] = useState<PersonaSoporte[]>([])
+  const [email, setEmail] = useState('')
+  const [nombre, setNombre] = useState('')
+  const [enviando, setEnviando] = useState(false)
+
+  useEffect(() => {
+    personalDeSoporte()
+      .then(setPersonal)
+      .catch(() => setPersonal([]))
+  }, [])
+
+  async function crear() {
+    setEnviando(true)
+    try {
+      const p = await crearCuentaSoporte(email, nombre)
+      setPersonal((l) => [...l, p])
+      setEmail('')
+      setNombre('')
+      onAviso(`Cuenta de soporte creada. ${p.email} recibe un enlace para crear su contraseña.`)
+    } catch (e) {
+      onError(mensajeDe(e))
+    } finally {
+      setEnviando(false)
+    }
+  }
+
+  return (
+    <section className="card" style={{ marginTop: 24 }}>
+      <div className="card-head">
+        <div>
+          <h2>Personal de soporte LeMarTek</h2>
+          <p>No ven datos de ninguna entidad salvo que su administrador les dé acceso temporal (solo lectura, con 2FA).</p>
+        </div>
+        <Icono nombre="escudo" tam={22} />
+      </div>
+      <div className="chips" style={{ marginBottom: 14 }}>
+        {personal.length === 0 && <span className="small muted">Aún no hay personal de soporte.</span>}
+        {personal.map((p) => (
+          <span key={p.id} className="chip" data-activo="true" title={p.email}>
+            {p.nombre_completo}
+          </span>
+        ))}
+      </div>
+      <form
+        className="grid-soporte"
+        style={{ gridTemplateColumns: '1fr 1fr auto' }}
+        onSubmit={(e) => {
+          e.preventDefault()
+          crear()
+        }}
+      >
+        <input className="input" placeholder="Nombre completo" value={nombre} onChange={(e) => setNombre(e.target.value)} required />
+        <input className="input" type="email" placeholder="correo@lemartek.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <button type="submit" className="btn btn-secondary" disabled={enviando}>
+          {enviando ? <span className="spinner oscuro" /> : 'Crear cuenta'}
+        </button>
+      </form>
+    </section>
   )
 }

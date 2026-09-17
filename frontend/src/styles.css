@@ -482,3 +482,21 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 .plantilla-slot:hover { border-color: var(--brand); background: var(--brand-soft); }
 .plantilla-slot[data-lleno='true'] { border-style: solid; border-color: #a9dfd3; background: var(--ok-soft); color: var(--ok); }
 @media (max-width: 560px) { .plantillas-nueva { grid-template-columns: 1fr; } }
+.editor-evaluacion { display: flex; flex-direction: column; gap: 16px; margin-bottom: 20px; }
+.editor-evaluacion .card + .card { margin-top: 0; }
+.tag-bloques { background: var(--ai-soft); color: var(--ai); }
+.agregar-requisito { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.agregar-requisito .select { width: auto; min-width: 300px; }
+.proponer-ia { margin-top: 16px; padding: 14px; border-radius: 12px; background: var(--ai-soft); display: flex; flex-direction: column; gap: 8px; color: #3b2fa0; }
+.publicar[data-cambios='true'] { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-soft); }
+.grid-req { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 14px; }
+.bloques { display: flex; flex-direction: column; gap: 8px; }
+.bloque { border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.bloque-cabeza { display: flex; gap: 10px; align-items: center; }
+.probar { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.pestanas { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.pestanas button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 14px; font-weight: 500; color: var(--ink-2); cursor: pointer; }
+.pestanas button[aria-selected='true'] { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
+@media (max-width: 760px) { .grid-req { grid-template-columns: 1fr; } .grid-req .field { grid-column: auto !important; } }
+.aviso-soporte { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 16px; background: var(--ai-soft); color: #3b2fa0; font-size: 13.5px; flex-wrap: wrap; }
+.grid-soporte { display: grid; grid-template-columns: 1.4fr 140px 2fr auto; gap: 10px; } @media (max-width: 900px) { .grid-soporte { grid-template-columns: 1fr; } }

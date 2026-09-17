@@ -1,0 +1,23 @@
+# API, trabajador de la fila y tareas programadas de MiEvaluador.
+FROM python:3.14-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+
+# OCR en español (tesseract), .rar (7-Zip) y cliente de PostgreSQL para respaldos.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa 7zip postgresql-client tini \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10001 mievaluador
+WORKDIR /app
+
+COPY Backend/requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY --chown=mievaluador:mievaluador Backend/ .
+RUN mkdir -p cache almacenamiento && chown -R mievaluador:mievaluador cache almacenamiento \
+ && rm -rf .scratch .env credentials/*.json
+
+USER mievaluador
+ENTRYPOINT ["tini", "--"]
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]

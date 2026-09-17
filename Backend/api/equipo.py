@@ -8,14 +8,24 @@ from uuid import UUID
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.http import HttpRequest
+from django.contrib.auth.tokens import default_token_generator
 from django.shortcuts import get_object_or_404
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
+from typing import Literal
+
+from django.core.files.base import ContentFile
+
 from api.auth import AreaOut, UsuarioOut, usuario_out
-from cuentas.correo import enviar_invitacion
-from cuentas.models import Area, Entidad, EventoAuditoria, Invitacion, Rol, TipoArea, Usuario
+from evaluaciones import servicios
+from evaluaciones.models import PlantillaEvaluacion, PlantillaInforme
+from motor import criterios
+from cuentas.correo import enviar_acceso_soporte, enviar_invitacion, enviar_recuperacion
+from cuentas.models import AccesoSoporte, Area, Entidad, EventoAuditoria, Invitacion, Rol, TipoArea, Usuario
 from cuentas.seguridad import auditar, de_mi_entidad, nuevo_token, requiere_rol, sesion_activa
 
 equipo = Router(tags=["equipo"], auth=sesion_activa)
@@ -57,6 +67,12 @@ class EntidadIn(Schema):
     nombre: str
     nit: str
     email_admin: str
+    # Sigla con la que aparece en códigos de proceso y pólizas (ej. ICCU, IDU).
+    sigla: str = ""
+    # Cómo evaluará: "sistema" = base del sistema adaptada a su sigla;
+    # "copiar" = plantillas (evaluación y Excel) de otra entidad.
+    base: Literal["sistema", "copiar"] = "sistema"
+    copiar_de: UUID | None = None
 
 
 class EntidadOut(Schema):
@@ -251,10 +267,37 @@ def crear_entidad(request: HttpRequest, datos: EntidadIn):
             entidad = Entidad.objects.create(nombre=nombre, nit=nit)
             Area.objects.bulk_create([Area(entidad=entidad, tipo=t) for t in TipoArea.values])
             auditar(request, "entidad.creada", entidad_id=entidad.id, objeto=entidad, nombre=nombre, nit=nit)
+            _plantillas_iniciales(request, entidad, datos)
             crear_invitacion(request, entidad, datos.email_admin, Rol.ADMIN_ENTIDAD, [])
     except IntegrityError as exc:
         raise HttpError(409, "Ya existe una entidad con ese NIT.") from exc
     return 201, _entidad_out(entidad)
+
+
+def _plantillas_iniciales(request: HttpRequest, entidad: Entidad, datos: EntidadIn) -> None:
+    usuario = request.auth
+    if datos.base == "copiar":
+        if datos.copiar_de is None:
+            raise HttpError(400, "Elija la entidad de la que se copian las plantillas.")
+        origen = get_object_or_404(Entidad, pk=datos.copiar_de)
+        for p in PlantillaEvaluacion.objects.filter(entidad=origen, activa=True):
+            servicios.nueva_version(
+                entidad.id, p.tipo, p.nombre, criterios.DefinicionEvaluacion.model_validate(p.definicion), usuario,
+                f"Copiada de {origen.nombre} (versión {p.version}).",
+            )
+        for pi in PlantillaInforme.objects.filter(entidad=origen, activa=True):
+            copia = PlantillaInforme(
+                entidad=entidad, tipo=pi.tipo, nombre_original=pi.nombre_original, mapeo=pi.mapeo, inspeccion=pi.inspeccion, subida_por=usuario
+            )
+            with pi.archivo.open("rb") as f:
+                copia.archivo.save(pi.nombre_original, ContentFile(f.read()), save=False)
+            copia.save()
+        return
+    definicion = servicios.definicion_base_para(TipoArea.JURIDICA, datos.sigla, entidad.nombre)
+    servicios.nueva_version(
+        entidad.id, TipoArea.JURIDICA, f"Evaluación jurídica {datos.sigla.strip().upper() or entidad.nombre}", definicion, usuario,
+        "Base del sistema al crear la entidad.",
+    )
 
 
 @plataforma.patch("/entidades/{entidad_id}", response=EntidadOut)
@@ -290,3 +333,114 @@ def ver_auditoria(request: HttpRequest, entidad_id: UUID | None = None, limite: 
         )
         for e in qs[: max(1, min(limite, 1000))]
     ]
+
+
+# --- Acceso temporal de soporte de LeMarTek ---
+class SoporteOut(Schema):
+    id: UUID
+    nombre_completo: str
+    email: str
+
+
+class AccesoSoporteOut(Schema):
+    id: UUID
+    soporte: SoporteOut
+    otorgado_por: str | None
+    motivo: str
+    creado_en: datetime
+    expira_en: datetime
+    revocado_en: datetime | None
+    vigente: bool
+
+
+class OtorgarSoporteIn(Schema):
+    soporte_id: UUID
+    horas: int
+    motivo: str
+
+
+class CrearSoporteIn(Schema):
+    email: str
+    nombre_completo: str
+
+
+def _acceso_out(a: AccesoSoporte) -> AccesoSoporteOut:
+    return AccesoSoporteOut(
+        id=a.id,
+        soporte=SoporteOut(id=a.soporte.id, nombre_completo=a.soporte.nombre_completo, email=a.soporte.email),
+        otorgado_por=a.otorgado_por.nombre_completo if a.otorgado_por else None,
+        motivo=a.motivo,
+        creado_en=a.creado_en,
+        expira_en=a.expira_en,
+        revocado_en=a.revocado_en,
+        vigente=a.vigente,
+    )
+
+
+@equipo.get("/soporte", response=dict)
+def soporte_de_la_entidad(request: HttpRequest, entidad_id: UUID | None = None) -> dict:
+    requiere_rol(request.auth, (Rol.ADMIN_ENTIDAD,))
+    entidad = _entidad_objetivo(request.auth, entidad_id)
+    accesos = AccesoSoporte.objects.filter(entidad=entidad).select_related("soporte", "otorgado_por")[:50]
+    personal = Usuario.objects.filter(rol=Rol.SOPORTE, is_active=True).order_by("nombre_completo")
+    return {
+        "accesos": [_acceso_out(a).dict() for a in accesos],
+        "personal": [SoporteOut(id=u.id, nombre_completo=u.nombre_completo, email=u.email).dict() for u in personal],
+    }
+
+
+@equipo.post("/soporte", response={201: AccesoSoporteOut})
+def otorgar_soporte(request: HttpRequest, datos: OtorgarSoporteIn, entidad_id: UUID | None = None):
+    usuario: Usuario = request.auth
+    requiere_rol(usuario, (Rol.ADMIN_ENTIDAD,))
+    entidad = _entidad_objetivo(usuario, entidad_id)
+    if not 1 <= datos.horas <= 72:
+        raise HttpError(400, "El acceso puede durar entre 1 y 72 horas.")
+    motivo = " ".join(datos.motivo.split())
+    if len(motivo) < 5:
+        raise HttpError(400, "Indique el motivo del acceso (queda en la auditoría).")
+    soporte = Usuario.objects.filter(pk=datos.soporte_id, rol=Rol.SOPORTE, is_active=True).first()
+    if soporte is None:
+        raise HttpError(400, "Esa persona no es del soporte de LeMarTek.")
+    with transaction.atomic():
+        acceso = AccesoSoporte.objects.create(
+            entidad=entidad, soporte=soporte, otorgado_por=usuario, motivo=motivo, expira_en=timezone.now() + timedelta(hours=datos.horas)
+        )
+        auditar(request, "soporte.acceso_otorgado", entidad_id=entidad.id, objeto=acceso, soporte=soporte.email, horas=datos.horas, motivo=motivo)
+        transaction.on_commit(lambda: enviar_acceso_soporte(acceso, soporte))
+    return 201, _acceso_out(acceso)
+
+
+@equipo.delete("/soporte/{acceso_id}", response={204: None})
+def revocar_soporte(request: HttpRequest, acceso_id: UUID):
+    usuario: Usuario = request.auth
+    requiere_rol(usuario, (Rol.ADMIN_ENTIDAD,))
+    acceso = get_object_or_404(de_mi_entidad(AccesoSoporte.objects.select_related("soporte"), usuario), pk=acceso_id)
+    if acceso.revocado_en is None:
+        acceso.revocado_en = timezone.now()
+        acceso.save(update_fields=["revocado_en"])
+        auditar(request, "soporte.acceso_revocado", entidad_id=acceso.entidad_id, objeto=acceso, soporte=acceso.soporte.email)
+    return 204, None
+
+
+@plataforma.get("/soporte", response=list[SoporteOut])
+def personal_de_soporte(request: HttpRequest) -> list[SoporteOut]:
+    _solo_superadmin(request)
+    return [SoporteOut(id=u.id, nombre_completo=u.nombre_completo, email=u.email) for u in Usuario.objects.filter(rol=Rol.SOPORTE)]
+
+
+@plataforma.post("/soporte", response={201: SoporteOut})
+def crear_soporte(request: HttpRequest, datos: CrearSoporteIn):
+    """Crea una cuenta de soporte de LeMarTek; la persona define su contraseña
+    con el enlace de recuperación que le llega al correo."""
+    _solo_superadmin(request)
+    email = datos.email.strip().lower()
+    if not email.endswith("@lemartek.com"):
+        raise HttpError(400, "El soporte debe usar un correo @lemartek.com.")
+    if Usuario.objects.filter(email=email).exists():
+        raise HttpError(409, "Ya existe un usuario con ese correo.")
+    usuario = Usuario.objects.create_user(email, None, nombre_completo=" ".join(datos.nombre_completo.split()), rol=Rol.SOPORTE)
+    uid = urlsafe_base64_encode(force_bytes(usuario.pk))
+    transaction.on_commit(lambda: enviar_recuperacion(usuario, uid, default_token_generator.make_token(usuario)))
+    auditar(request, "soporte.cuenta_creada", entidad_id=None, objeto=usuario, email=email)
+    return 201, SoporteOut(id=usuario.id, nombre_completo=usuario.nombre_completo, email=usuario.email)

@@ -1,5 +1,6 @@
 /** API de procesos y evaluaciones guardados en el servidor. */
 import type { AnalisisResponse, ProcesoDocumentoBase, Proponente, ResultadoRequisito } from './api'
+import type { InfoRequisito } from './requisitos'
 import { detalleError, enviarJson, ErrorApi, pedir, pedirJson } from './http'
 
 export type EstadoEvaluacion = 'sin_asignar' | 'asignada' | 'evaluando' | 'en_revision' | 'aprobada'
@@ -48,6 +49,9 @@ export interface EvaluacionResumen {
   puede_trabajar: boolean
   puede_gestionar: boolean
   tipo_disponible: boolean
+  plantilla_version: number | null
+  plantilla_nombre: string
+  plantilla_desactualizada: boolean
   fila: Fila | null
 }
 
@@ -84,6 +88,7 @@ export interface EvaluacionDetalle {
   proponentes: ProponenteGuardado[]
   resultados: ResultadoRequisito[]
   revisiones: RevisionGuardada[]
+  catalogo: InfoRequisito[]
 }
 
 export interface MiembroCarga extends Persona {
@@ -174,3 +179,6 @@ export interface TipoEvaluacion {
 }
 
 export const listarTipos = () => pedirJson<TipoEvaluacion[]>('/api/evaluaciones/tipos')
+
+export const actualizarPlantillaEvaluacion = (id: string) =>
+  enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/actualizar-plantilla`, 'POST')

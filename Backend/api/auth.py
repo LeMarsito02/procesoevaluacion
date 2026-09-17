@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from uuid import UUID
 
 import pyotp
@@ -21,7 +22,7 @@ from ninja.errors import HttpError
 from ninja.utils import check_csrf
 
 from cuentas.correo import enviar_recuperacion
-from cuentas.models import Invitacion, Usuario
+from cuentas.models import AccesoSoporte, Invitacion, Usuario
 from cuentas.seguridad import auditar, hash_token, inicio_bloqueado, ip_de, registrar_intento, sesion_activa
 
 router = Router(tags=["autenticación"])
@@ -51,6 +52,8 @@ class UsuarioOut(Schema):
     rol_nombre: str
     entidad: EntidadResumen | None
     areas: list[AreaOut]
+    # Soporte de LeMarTek: hasta cuándo puede ver la entidad elegida (solo lectura).
+    acceso_soporte_hasta: datetime | None = None
 
 
 class CsrfOut(Schema):
@@ -114,6 +117,7 @@ def usuario_out(usuario: Usuario) -> UsuarioOut:
         rol_nombre=usuario.get_rol_display(),
         entidad=EntidadResumen(id=usuario.entidad.id, nombre=usuario.entidad.nombre) if usuario.entidad else None,
         areas=[AreaOut(id=a.id, tipo=a.tipo, nombre=a.get_tipo_display()) for a in usuario.areas.all()],
+        acceso_soporte_hasta=getattr(getattr(usuario, "acceso_soporte", None), "expira_en", None),
     )
 
 
@@ -319,3 +323,54 @@ def aceptar_invitacion(request: HttpRequest, token: str, datos: AceptarInvitacio
         invitacion.save(update_fields=["aceptada_en"])
         auditar(request, "invitacion.aceptada", usuario=usuario, objeto=invitacion)
     return _iniciar(request, usuario, segundo_factor=False)
+
+
+# --- Soporte de LeMarTek ---
+class AccesoDisponibleOut(Schema):
+    entidad: EntidadResumen
+    expira_en: datetime
+    motivo: str
+
+
+class EntrarSoporteIn(Schema):
+    entidad_id: UUID
+
+
+def _solo_soporte(usuario: Usuario) -> None:
+    if not usuario.es_soporte:
+        raise HttpError(403, "Solo para el personal de soporte de LeMarTek.")
+
+
+@router.get("/soporte/accesos", auth=sesion_activa, response=list[AccesoDisponibleOut])
+def accesos_de_soporte(request: HttpRequest) -> list[AccesoDisponibleOut]:
+    _solo_soporte(request.auth)
+    accesos = AccesoSoporte.objects.filter(
+        soporte=request.auth, revocado_en__isnull=True, expira_en__gt=timezone.now(), entidad__activa=True
+    ).select_related("entidad")
+    return [
+        AccesoDisponibleOut(entidad=EntidadResumen(id=a.entidad.id, nombre=a.entidad.nombre), expira_en=a.expira_en, motivo=a.motivo)
+        for a in accesos
+    ]
+
+
+@router.post("/soporte/entrar", auth=sesion_activa, response=UsuarioOut)
+def entrar_como_soporte(request: HttpRequest, datos: EntrarSoporteIn) -> UsuarioOut:
+    usuario: Usuario = request.auth
+    _solo_soporte(usuario)
+    request.session["soporte_entidad"] = str(datos.entidad_id)
+    request.user = usuario  # se vuelve a evaluar el permiso con la entidad elegida
+    sesion_activa.authenticate(request, None)
+    if usuario.entidad_id is None:
+        raise HttpError(403, "No tiene un permiso vigente para esa entidad.")
+    auditar(request, "soporte.ingreso", usuario=usuario, entidad_id=usuario.entidad_id, hasta=usuario.acceso_soporte.expira_en.isoformat())
+    return usuario_out(usuario)
+
+
+@router.post("/soporte/salir", auth=sesion_activa, response=UsuarioOut)
+def salir_de_entidad(request: HttpRequest) -> UsuarioOut:
+    usuario: Usuario = request.auth
+    _solo_soporte(usuario)
+    request.session.pop("soporte_entidad", None)
+    usuario.entidad = None
+    usuario.acceso_soporte = None
+    return usuario_out(usuario)

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Proponente, ResultadoRequisito } from '../api'
 import { claveRevision, ETIQUETA_ESTADO, esPendiente, estadoDe, resumenProponente, usaIA, type Estado, type Revisiones } from '../estado'
-import { GRUPOS, ordenarArchivosPorRequisito, REQUISITOS, type GrupoRequisito } from '../requisitos'
+import { GRUPOS, ORDEN_GRUPOS, ordenarArchivosPorRequisito, REQUISITOS } from '../requisitos'
 import Icono from './Icono'
 
 const TIPO: Record<string, string> = {
@@ -108,7 +108,7 @@ export default function PanelProponente(p: Props) {
         </div>
 
         <div className="drawer-body">
-          {(['oferta', 'camara', 'antecedentes'] as GrupoRequisito[]).map((grupo) => (
+          {ORDEN_GRUPOS.filter((g) => REQUISITOS.some((r) => r.grupo === g)).map((grupo) => (
             <div key={grupo}>
               <div className="grupo-titulo">{GRUPOS[grupo]}</div>
               {REQUISITOS.filter((info) => info.grupo === grupo).map((info) => {

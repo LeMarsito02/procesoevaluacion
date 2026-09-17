@@ -1,8 +1,12 @@
-/** Catálogo de requisitos jurídicos tal como los lee un abogado: nombre
- * corto, qué se verificó y a qué grupo de documentos pertenece. El RUT
- * (Requisito 13) se omite por decisión del abogado. */
+/** Catálogo de requisitos tal como los lee el evaluador: nombre corto, qué se
+ * verificó y a qué grupo pertenece.
+ *
+ * Cada entidad define sus propios requisitos (plantilla de evaluación), así que
+ * el catálogo lo manda el servidor con cada evaluación y se instala con
+ * `establecerCatalogo`. Los valores de abajo son la base del sistema (jurídica
+ * del ICCU, sin RUT) y sirven mientras no haya otro. */
 
-export type GrupoRequisito = 'oferta' | 'camara' | 'antecedentes'
+export type GrupoRequisito = 'oferta' | 'camara' | 'antecedentes' | 'adicionales'
 
 export interface InfoRequisito {
   numero: number
@@ -10,13 +14,18 @@ export interface InfoRequisito {
   titulo: string
   verifica: string
   grupo: GrupoRequisito
+  pistas?: string[]
+  personalizado?: boolean
 }
 
 export const GRUPOS: Record<GrupoRequisito, string> = {
   oferta: 'Documentos de la oferta',
   camara: 'Cámara de Comercio',
   antecedentes: 'Antecedentes',
+  adicionales: 'Requisitos adicionales',
 }
+
+export const ORDEN_GRUPOS: GrupoRequisito[] = ['oferta', 'camara', 'antecedentes', 'adicionales']
 
 export const REQUISITOS: InfoRequisito[] = [
   {
@@ -140,9 +149,7 @@ export const REQUISITOS: InfoRequisito[] = [
   },
 ]
 
-export const REQUISITO_POR_NUMERO: Record<number, InfoRequisito> = Object.fromEntries(
-  REQUISITOS.map((r) => [r.numero, r]),
-)
+export const REQUISITO_POR_NUMERO: Record<number, InfoRequisito> = Object.fromEntries(REQUISITOS.map((r) => [r.numero, r]))
 
 /** Palabras en el nombre del archivo que sugieren el documento de cada
  * requisito: se usan para ordenar la lista cuando el sistema no encontró el
@@ -168,7 +175,7 @@ const PISTAS_ARCHIVO: Record<number, string[]> = {
 }
 
 export function ordenarArchivosPorRequisito(requisito: number, archivos: string[]): string[] {
-  const pistas = PISTAS_ARCHIVO[requisito] ?? []
+  const pistas = REQUISITO_POR_NUMERO[requisito]?.pistas ?? PISTAS_ARCHIVO[requisito] ?? []
   const puntaje = (ruta: string) => {
     const nombre = (ruta.split('/').pop() ?? ruta).toLowerCase()
     return pistas.some((p) => nombre.includes(p)) ? 0 : 1
@@ -176,5 +183,19 @@ export function ordenarArchivosPorRequisito(requisito: number, archivos: string[
   return [...archivos].sort((a, b) => puntaje(a) - puntaje(b))
 }
 
-/** Requisitos que la interfaz muestra y cuenta (sin el RUT). */
+/** Requisitos que la interfaz muestra y cuenta. */
 export const NUMEROS_VISIBLES = new Set(REQUISITOS.map((r) => r.numero))
+
+/** Instala el catálogo de la evaluación abierta (plantilla de la entidad). */
+export function establecerCatalogo(lista: InfoRequisito[]) {
+  REQUISITOS.splice(0, REQUISITOS.length, ...lista.map((r) => ({ ...r, grupo: ORDEN_GRUPOS.includes(r.grupo) ? r.grupo : 'adicionales' })))
+  for (const k of Object.keys(REQUISITO_POR_NUMERO)) delete REQUISITO_POR_NUMERO[Number(k)]
+  for (const r of REQUISITOS) REQUISITO_POR_NUMERO[r.numero] = r
+  NUMEROS_VISIBLES.clear()
+  for (const r of REQUISITOS) NUMEROS_VISIBLES.add(r.numero)
+}
+
+/** Requisitos agrupados en el orden de la matriz. */
+export function requisitosOrdenados(): InfoRequisito[] {
+  return ORDEN_GRUPOS.flatMap((g) => REQUISITOS.filter((r) => r.grupo === g))
+}

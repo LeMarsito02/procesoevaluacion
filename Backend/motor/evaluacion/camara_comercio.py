@@ -5,6 +5,7 @@ from datetime import date
 
 from dateutil.relativedelta import relativedelta
 
+from motor import criterios
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.evaluacion.formato1 import (
     _clave_cache,
@@ -28,6 +29,7 @@ from motor.procesamiento.zip_utils import extraer_pdfs
 # el mismo.
 PAGINAS_PARA_TITULO = 6
 
+# Por defecto 1 mes; cada entidad lo ajusta (parámetro "camara_meses").
 VIGENCIA_MAXIMA_MESES = 1
 
 # Título con variantes reales confirmadas entre Cámaras de Comercio: Bogotá
@@ -200,10 +202,14 @@ def _evaluar_vigencia_documentos(
         texto_norm = _norm(_texto_encabezado(pdfs, nombre))
         fecha = _parsear_fecha_expedicion(texto_norm)
         if fecha is None:
-            motivos.append(f"no se pudo leer la fecha de expedición de '{nombre}' — confirma manualmente que no supere 1 mes")
-        elif fecha < fecha_cierre - relativedelta(months=VIGENCIA_MAXIMA_MESES):
+            meses = criterios.valor("camara_meses")
             motivos.append(
-                f"'{nombre}' fue expedido el {fecha.strftime('%d/%m/%Y')}, hace más de {VIGENCIA_MAXIMA_MESES} mes "
+                f"no se pudo leer la fecha de expedición de '{nombre}' — confirma manualmente que no supere "
+                f"{meses} {'mes' if meses == 1 else 'meses'}"
+            )
+        elif fecha < fecha_cierre - relativedelta(months=criterios.valor("camara_meses")):
+            motivos.append(
+                f"'{nombre}' fue expedido el {fecha.strftime('%d/%m/%Y')}, hace más de {criterios.valor('camara_meses')} {'mes' if criterios.valor('camara_meses') == 1 else 'meses'} "
                 f"contado desde la fecha de cierre ({fecha_cierre.strftime('%d/%m/%Y')})"
             )
 

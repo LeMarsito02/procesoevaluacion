@@ -63,3 +63,14 @@ def enviar_evaluacion_terminada(evaluacion, destinatario: Usuario, avance) -> No
         f"Terminó la evaluación {evaluacion.get_tipo_display().lower()} del proceso {proceso.codigo}: "
         f"{', '.join(partes)}.\n\nRevísela aquí:\n{enlace}\n\n— MiEvaluador by LeMarTek",
     )
+
+
+def enviar_acceso_soporte(acceso, soporte: Usuario) -> None:
+    _enviar(
+        soporte.email,
+        f"Acceso de soporte a {acceso.entidad.nombre}",
+        f"Hola {soporte.nombre_completo},\n\n"
+        f"{acceso.otorgado_por.nombre_completo if acceso.otorgado_por else 'La entidad'} le dio acceso de solo lectura a "
+        f"{acceso.entidad.nombre} hasta el {acceso.expira_en:%d/%m/%Y %H:%M} (UTC).\n"
+        f"Motivo: {acceso.motivo}\n\nIngrese a {settings.FRONTEND_URL} y elija la entidad.\n\n— MiEvaluador by LeMarTek",
+    )

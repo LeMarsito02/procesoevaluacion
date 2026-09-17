@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pdfplumber
 
+from motor import criterios
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
@@ -69,6 +70,15 @@ def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str
         "codigo_proceso": proceso.codigo_proceso,
         "lotes": sorted(lote.numero for lote in proceso.lotes),
     }
+    # Datos que cambian el resultado y que el usuario puede corregir antes de
+    # volver a evaluar: sin ellos se servirían resultados viejos desde la caché.
+    g = proceso.garantia_seriedad
+    payload["fecha_cierre"] = proceso.fecha_cierre.isoformat()
+    payload["garantia"] = [g.vigencia_meses, g.porcentaje, g.base_calculo, g.valor_asegurado, g.fecha_vencimiento.isoformat()]
+    payload["lotes_valores"] = sorted((lote.numero, lote.valor_presupuesto) for lote in proceso.lotes)
+    huella = criterios.huella_parametros()
+    if huella:
+        payload["criterios"] = huella
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
@@ -148,8 +158,11 @@ def _codigo_regex(codigo: str) -> re.Pattern[str]:
 
 
 def _codigo_variantes(codigo_proceso: str) -> list[re.Pattern[str]]:
-    core = re.sub(r"^ICCU-", "", codigo_proceso.strip(), flags=re.IGNORECASE)
-    variantes = {codigo_proceso.strip(), core, f"ICCU-{core}"}
+    prefijo = str(criterios.valor("prefijo_codigo") or "").strip()
+    if not prefijo:
+        return [_codigo_regex(codigo_proceso)] if codigo_proceso.strip() else []
+    core = re.sub(rf"^{re.escape(prefijo)}-", "", codigo_proceso.strip(), flags=re.IGNORECASE)
+    variantes = {codigo_proceso.strip(), core, f"{prefijo}-{core}"}
     return [_codigo_regex(v) for v in variantes if v]
 
 

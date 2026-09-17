@@ -22,6 +22,7 @@ from evaluaciones.tipos import MENSAJE_EN_PREPARACION, TIPOS
 from evaluaciones.models import (
     EstadoEvaluacion,
     EstadoTrabajo,
+    PlantillaEvaluacion,
     Trabajador,
     Trabajo,
     Evaluacion,
@@ -94,6 +95,11 @@ class EvaluacionResumenOut(Schema):
     puede_gestionar: bool
     # Hay motor automático para este tipo (técnica y financiera: en preparación).
     tipo_disponible: bool
+    # Versión de la plantilla de evaluación de la entidad con la que se evalúa.
+    plantilla_version: int | None
+    plantilla_nombre: str
+    # La entidad publicó una versión más nueva desde que se creó esta evaluación.
+    plantilla_desactualizada: bool
     # Solo cuando hay trabajos pendientes en la fila.
     fila: FilaOut | None = None
 
@@ -162,6 +168,8 @@ class EvaluacionDetalleOut(Schema):
     proponentes: list[ProponenteOut]
     resultados: list[dict]
     revisiones: list[RevisionOut]
+    # Requisitos de esta evaluación según la plantilla de la entidad.
+    catalogo: list[dict]
 
 
 class AsignarIn(Schema):
@@ -191,6 +199,12 @@ def _persona(u: Usuario | None) -> PersonaOut | None:
 def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[EvaluacionResumenOut]:
     ids = [e.id for e in evaluaciones]
     avances = servicios.avances(ids)
+    activas = {
+        (p.entidad_id, p.tipo): p.id
+        for p in PlantillaEvaluacion.objects.filter(
+            activa=True, entidad_id__in={e.entidad_id for e in evaluaciones}
+        ).only("id", "entidad_id", "tipo")
+    }
     con_fila = [i for i in ids if avances[i].en_fila or avances[i].procesando]
     filas = servicios.estado_fila(con_fila)
     return [
@@ -214,13 +228,16 @@ def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[Evaluac
             puede_trabajar=puede_trabajar(usuario, e),
             puede_gestionar=puede_gestionar(usuario, e),
             tipo_disponible=TIPOS[e.tipo].disponible,
+            plantilla_version=e.plantilla.version if e.plantilla_id else None,
+            plantilla_nombre=e.plantilla.nombre if e.plantilla_id else "Base del sistema",
+            plantilla_desactualizada=activas.get((e.entidad_id, e.tipo)) not in (None, e.plantilla_id),
         )
         for e in evaluaciones
     ]
 
 
 def _evaluaciones_qs(usuario: Usuario):
-    qs = Evaluacion.objects.select_related("proceso", "responsable", "entidad")
+    qs = Evaluacion.objects.select_related("proceso", "responsable", "entidad", "plantilla")
     if not usuario.es_superadmin:
         qs = qs.filter(entidad_id=usuario.entidad_id)
     return qs
@@ -365,6 +382,7 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
                     entidad=entidad,
                     proceso=proceso,
                     tipo=tipo,
+                    plantilla=servicios.plantilla_activa(entidad.id, tipo),
                     responsable=responsable,
                     asignada_por=usuario if responsable else None,
                     asignada_en=timezone.now() if responsable else None,
@@ -397,7 +415,7 @@ def mis_evaluaciones(request: HttpRequest) -> list[EvaluacionResumenOut]:
     """Asignadas a mí y, para jefes y administradores, las de las áreas que gestionan."""
     usuario: Usuario = request.auth
     qs = _evaluaciones_qs(usuario)
-    if usuario.es_superadmin or usuario.rol == Rol.ADMIN_ENTIDAD:
+    if usuario.es_superadmin or usuario.rol in (Rol.ADMIN_ENTIDAD, Rol.SOPORTE):
         pass
     elif usuario.rol == Rol.JEFE_AREA:
         qs = qs.filter(Q(responsable=usuario) | Q(tipo__in=[a.tipo for a in usuario.areas.all()]))
@@ -525,6 +543,7 @@ def detalle(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionDetalleOut:
             for p in proponentes
         ],
         resultados=list(Resultado.objects.filter(evaluacion=evaluacion).values_list("datos", flat=True)),
+        catalogo=servicios.catalogo(servicios.definicion_de(evaluacion)),
         revisiones=[
             RevisionOut(
                 proponente_id=r.proponente_id,
@@ -616,6 +635,33 @@ def evaluar(request: HttpRequest, evaluacion_id: UUID, datos: EncolarIn) -> Eval
     n = servicios.encolar(evaluacion, datos.proponente_ids, usuario)
     if n:
         auditar(request, "evaluacion.encolada", objeto=evaluacion, proceso=evaluacion.proceso.codigo, proponentes=n)
+    evaluacion.refresh_from_db()
+    return _resumenes(usuario, [evaluacion])[0]
+
+
+@router.post("/{evaluacion_id}/actualizar-plantilla", response=EvaluacionResumenOut)
+def actualizar_plantilla(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
+    """Pasa la evaluación a la versión vigente de la plantilla de la entidad y,
+    si ya tenía resultados, vuelve a evaluar a todos los proponentes."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    activa = servicios.plantilla_activa(evaluacion.entidad_id, evaluacion.tipo)
+    if activa is None or activa.id == evaluacion.plantilla_id:
+        raise HttpError(409, "La evaluación ya usa la versión vigente de la plantilla.")
+    anterior = evaluacion.plantilla.version if evaluacion.plantilla_id else None
+    with transaction.atomic():
+        evaluacion.plantilla = activa
+        evaluacion.save(update_fields=["plantilla", "actualizada_en"])
+        # Los resultados y revisiones de requisitos que ya no existen se descartan.
+        numeros = {r.numero for r in servicios.definicion_de(evaluacion).requisitos}
+        Resultado.objects.filter(evaluacion=evaluacion).exclude(requisito__in=numeros).delete()
+        Revision.objects.filter(evaluacion=evaluacion).exclude(requisito__in=numeros).delete()
+        if TIPOS[evaluacion.tipo].disponible and Resultado.objects.filter(evaluacion=evaluacion).exists():
+            todos = list(Proponente.objects.filter(proceso_id=evaluacion.proceso_id).values_list("id", flat=True))
+            servicios.encolar(evaluacion, todos, usuario)
+        servicios.actualizar_estado(evaluacion)
+        auditar(request, "evaluacion.plantilla_actualizada", objeto=evaluacion, antes=anterior, ahora=activa.version)
     evaluacion.refresh_from_db()
     return _resumenes(usuario, [evaluacion])[0]
 
@@ -730,6 +776,10 @@ def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
     if elegida is None:
         raise HttpError(400, "Este tipo de evaluación aún no tiene plantilla de informe. El administrador puede subirla en Configuración.")
     plantilla, mapeo = elegida
+    # Filas del Excel definidas en la plantilla de evaluación (si las trae).
+    filas = {r.numero: r.fila_excel for r in servicios.definicion_de(evaluacion).requisitos if r.fila_excel}
+    if filas:
+        mapeo = mapeo.model_copy(update={"filas_por_requisito": {**mapeo.filas_por_requisito, **filas}})
     proceso = evaluacion.proceso
     proponentes = list(proceso.proponentes.all())
     revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion)}
@@ -759,6 +809,12 @@ def documento(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, ar
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
     proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    if evaluacion.proceso.documentos_eliminados_en:
+        raise HttpError(
+            410,
+            f"Los documentos de este proceso se eliminaron el {timezone.localtime(evaluacion.proceso.documentos_eliminados_en):%d/%m/%Y} "
+            "por la política de retención. Los resultados, decisiones e informes se conservan.",
+        )
     try:
         zip_bytes = download_file_bytes(proponente.drive_file_id)
     except Exception as exc:  # noqa: BLE001

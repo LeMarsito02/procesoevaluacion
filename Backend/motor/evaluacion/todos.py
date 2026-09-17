@@ -27,8 +27,10 @@ from motor.evaluacion.camara_comercio import (
 from motor.evaluacion.copnia import evaluar_proponente_requisito2, evaluar_proponente_requisito3
 from motor.evaluacion.formato1 import evaluar_proponente
 from motor.evaluacion.garantia import evaluar_proponente_requisito11
+from motor.evaluacion.personalizado import evaluar_requisito_personalizado
 from motor.evaluacion.proponente_plural import evaluar_proponente_requisito4
 from motor.evaluacion.seguridad_social import evaluar_proponente_requisito12
+from motor import criterios
 from motor.integrations import drive
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento import pdf_utils, zip_utils
@@ -72,13 +74,27 @@ def liberar_memoria_proponente() -> None:
 
 
 def evaluar_proponente_todos(proponente: Proponente, proceso: ProcesoDocumentoBase) -> list[ResultadoRequisito]:
-    """Evalúa los 18 requisitos de un proponente. Un fallo en un requisito
+    """Evalúa los requisitos de un proponente. Un fallo en un requisito
     queda como error de ese requisito y no impide evaluar los demás."""
     liberar_memoria_proponente()
     try:
-        return _evaluar_todos(proponente, proceso)
+        if proceso.criterios is None:
+            return _evaluar_todos(proponente, proceso)
+        definicion = criterios.DefinicionEvaluacion.model_validate(proceso.criterios)
+        with criterios.usar(definicion.parametros):
+            return _evaluar_definicion(proponente, proceso, definicion)
     finally:
         liberar_memoria_proponente()
+
+
+def _con_error(proponente: Proponente, requisito: int, exc: Exception) -> ResultadoRequisito:
+    return ResultadoRequisito(
+        hoja=proponente.hoja,
+        numero_orden=proponente.numero_orden,
+        nombre_proponente=proponente.nombre_proponente,
+        requisito=requisito,
+        error=f"No se pudo evaluar automáticamente: {exc}",
+    )
 
 
 def _evaluar_todos(proponente: Proponente, proceso: ProcesoDocumentoBase) -> list[ResultadoRequisito]:
@@ -89,13 +105,46 @@ def _evaluar_todos(proponente: Proponente, proceso: ProcesoDocumentoBase) -> lis
         except MemoryError:
             raise
         except Exception as exc:  # noqa: BLE001
-            resultados.append(
-                ResultadoRequisito(
-                    hoja=proponente.hoja,
-                    numero_orden=proponente.numero_orden,
-                    nombre_proponente=proponente.nombre_proponente,
-                    requisito=requisito,
-                    error=f"No se pudo evaluar automáticamente: {exc}",
-                )
-            )
+            resultados.append(_con_error(proponente, requisito, exc))
     return resultados
+
+
+def _evaluar_definicion(
+    proponente: Proponente, proceso: ProcesoDocumentoBase, definicion: criterios.DefinicionEvaluacion
+) -> list[ResultadoRequisito]:
+    """Requisitos en el orden y con la numeración de la entidad: verificaciones
+    del motor (reutilizadas tal cual) o requisitos armados con bloques."""
+    resultados = []
+    for req in definicion.requisitos:
+        try:
+            resultados.append(evaluar_requisito(proponente, proceso, req))
+        except MemoryError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            resultados.append(_con_error(proponente, req.numero, exc))
+    return resultados
+
+
+def evaluar_requisito(
+    proponente: Proponente, proceso: ProcesoDocumentoBase, req: criterios.RequisitoDefinicion
+) -> ResultadoRequisito:
+    if req.verificacion == criterios.PERSONALIZADO:
+        return evaluar_requisito_personalizado(proponente, proceso, req)
+    interno = criterios.VERIFICACIONES[req.verificacion].numero_interno
+    resultado = EVALUADORES_POR_REQUISITO[interno](proponente, proceso)
+    # Los resultados cacheados son objetos compartidos: se copia antes de renumerar.
+    return resultado.model_copy(update={"requisito": req.numero})
+
+
+def probar_requisito(
+    proponente: Proponente, proceso: ProcesoDocumentoBase, req: dict, parametros: dict
+) -> ResultadoRequisito:
+    """Evalúa un solo requisito (para probar uno nuevo antes de activarlo)."""
+    liberar_memoria_proponente()
+    try:
+        with criterios.usar(parametros):
+            return evaluar_requisito(proponente, proceso, criterios.RequisitoDefinicion.model_validate(req))
+    except Exception as exc:  # noqa: BLE001
+        return _con_error(proponente, req.get("numero", 0), exc)
+    finally:
+        liberar_memoria_proponente()

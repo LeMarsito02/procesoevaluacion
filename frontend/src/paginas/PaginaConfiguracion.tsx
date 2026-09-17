@@ -5,16 +5,21 @@ import {
   ajustarMapeo,
   borrarPlantilla,
   descargarPlantilla,
+  catalogoMotor,
   listarPlantillas,
+  listarPlantillasEvaluacion,
   subirPlantilla,
+  type CatalogoMotor,
   type MapeoPlantilla,
   type Plantilla,
+  type PlantillaEvaluacion,
   type PlantillasTipo,
 } from '../configuracion'
 import { listarEntidades, type Entidad } from '../cuentas'
 import { mensajeDe } from '../http'
 import { REQUISITOS } from '../requisitos'
 import { useSesion } from '../sesion'
+import EditorEvaluacion from './configuracion/EditorEvaluacion'
 
 const fecha = (iso: string) => new Date(iso).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })
 
@@ -27,6 +32,11 @@ export default function PaginaConfiguracion() {
     return new URLSearchParams(window.location.search).get('entidad')
   })
   const [plantillas, setPlantillas] = useState<PlantillasTipo[] | null>(null)
+  const [evaluaciones, setEvaluaciones] = useState<PlantillaEvaluacion[] | null>(null)
+  const [catalogos, setCatalogos] = useState<Record<string, CatalogoMotor>>({})
+  const [tipo, setTipo] = useState('juridica')
+  // Cambia al publicar: remonta el editor con la versión nueva.
+  const [revision, setRevision] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
   const [editando, setEditando] = useState<Plantilla | null>(null)
@@ -43,13 +53,23 @@ export default function PaginaConfiguracion() {
 
   const recargar = useCallback(() => {
     if (!entidadId) return
-    listarPlantillas(esSuper ? entidadId : null)
-      .then((p) => {
+    const id = esSuper ? entidadId : null
+    Promise.all([listarPlantillas(id), listarPlantillasEvaluacion(id)])
+      .then(([p, e]) => {
         setPlantillas(p)
+        setEvaluaciones(e)
+        setRevision((r) => r + 1)
         setError(null)
       })
       .catch((e: unknown) => setError(mensajeDe(e)))
   }, [entidadId, esSuper])
+
+  useEffect(() => {
+    if (catalogos[tipo]) return
+    catalogoMotor(tipo)
+      .then((c) => setCatalogos((prev) => ({ ...prev, [tipo]: c })))
+      .catch((e: unknown) => setError(mensajeDe(e)))
+  }, [tipo, catalogos])
 
   useEffect(() => {
     recargar()
@@ -79,7 +99,7 @@ export default function PaginaConfiguracion() {
         <div>
           <div className="eyebrow">{nombreEntidad ?? 'Configuración'}</div>
           <h1>Configuración de la entidad</h1>
-          <p>Plantillas de Excel con las que se genera el informe de cada tipo de evaluación.</p>
+          <p>Cómo evalúa la entidad cada tipo de evaluación: requisitos, verificaciones, parámetros y plantilla de Excel del informe.</p>
         </div>
         {esSuper && (
           <select className="select" style={{ width: 'auto', minWidth: 260 }} value={entidadId ?? ''} onChange={(e) => setEntidadId(e.target.value)} aria-label="Entidad">
@@ -102,29 +122,53 @@ export default function PaginaConfiguracion() {
         </div>
       )}
 
-      <h2 className="seccion-titulo" style={{ color: 'var(--ink)' }}>
-        <Icono nombre="documento" tam={16} /> Plantillas de informe
-      </h2>
-      {!plantillas ? (
+      <div className="pestanas" role="tablist">
+        {(evaluaciones ?? []).map((t) => (
+          <button key={t.tipo} type="button" role="tab" aria-selected={tipo === t.tipo} onClick={() => setTipo(t.tipo)}>
+            Evaluación {t.tipo_nombre.toLowerCase()}
+          </button>
+        ))}
+      </div>
+
+      {!plantillas || !evaluaciones || !catalogos[tipo] ? (
         <div className="vacio">
           <span className="spinner oscuro" />
         </div>
       ) : (
-        <div className="plantillas">
-          {plantillas.map((t) => (
-            <TarjetaPlantilla
-              key={t.tipo}
-              t={t}
-              onSubir={(archivo) => accion(() => subirPlantilla(t.tipo, archivo, esSuper ? entidadId : null), 'Plantilla subida')}
-              onEditar={setEditando}
-              onActivar={(p) => accion(() => activarPlantilla(p.id), 'Plantilla activada')}
-              onBorrar={(p) =>
-                window.confirm(`¿Eliminar la plantilla «${p.nombre_original}»?`) && accion(() => borrarPlantilla(p.id), 'Plantilla eliminada')
-              }
-              onDescargar={(p) => descargarPlantilla(p).catch((e: unknown) => setError(mensajeDe(e)))}
-            />
-          ))}
-        </div>
+        <>
+          <EditorEvaluacion
+            key={`${entidadId}-${tipo}-${revision}`}
+            plantilla={evaluaciones.find((e) => e.tipo === tipo)!}
+            catalogo={catalogos[tipo]}
+            entidadId={entidadId}
+            esSuper={esSuper}
+            onPublicado={(m) => {
+              setAviso(m)
+              recargar()
+            }}
+            onError={setError}
+          />
+          <h2 className="seccion-titulo" style={{ color: 'var(--ink)', marginTop: 8 }}>
+            <Icono nombre="documento" tam={16} /> Plantilla de Excel del informe
+          </h2>
+          <div className="plantillas">
+            {plantillas
+              .filter((t) => t.tipo === tipo)
+              .map((t) => (
+                <TarjetaPlantilla
+                  key={t.tipo}
+                  t={t}
+                  onSubir={(archivo) => accion(() => subirPlantilla(t.tipo, archivo, esSuper ? entidadId : null), 'Plantilla subida')}
+                  onEditar={setEditando}
+                  onActivar={(p) => accion(() => activarPlantilla(p.id), 'Plantilla activada')}
+                  onBorrar={(p) =>
+                    window.confirm(`¿Eliminar la plantilla «${p.nombre_original}»?`) && accion(() => borrarPlantilla(p.id), 'Plantilla eliminada')
+                  }
+                  onDescargar={(p) => descargarPlantilla(p).catch((e: unknown) => setError(mensajeDe(e)))}
+                />
+              ))}
+          </div>
+        </>
       )}
 
       {editando && (

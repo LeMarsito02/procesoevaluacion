@@ -7,6 +7,7 @@ seguros para producción: si falta una variable, falla en vez de quedar abierto.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -120,6 +121,25 @@ if not DEBUG:
 # Los Documentos Base y las ofertas pueden pesar decenas de MB.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 PLANTILLA_MAX_BYTES = 20 * 1024 * 1024
+# --- Límites de peticiones (por usuario o por IP) ---
+# Caché en archivos: la comparten todos los procesos del servidor y funciona en
+# vistas asíncronas (la de base de datos no). Con varios servidores: Redis.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": os.environ.get("CACHE_LIMITES_DIR", str(BASE_DIR / "cache" / "limites")),
+    }
+}
+_EN_PRUEBAS = len(sys.argv) > 1 and sys.argv[1] == "test"
+LIMITES_API = {
+    "anonimo": "100000/m" if _EN_PRUEBAS else os.environ.get("LIMITE_ANONIMO", "60/m"),
+    "usuario": "100000/m" if _EN_PRUEBAS else os.environ.get("LIMITE_USUARIO", "600/m"),
+    # Operaciones pesadas (leen documentos o usan la IA).
+    "pesado": "100000/h" if _EN_PRUEBAS else os.environ.get("LIMITE_PESADO", "60/h"),
+}
+
+# Días que se conservan los documentos de los proponentes tras aprobar el proceso.
+RETENCION_DIAS = int(os.environ.get("RETENCION_DIAS", "30"))
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 
 LANGUAGE_CODE = "es-co"

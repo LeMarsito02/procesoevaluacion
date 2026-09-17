@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
+from motor import criterios
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.evaluacion.formato1 import _clave_cache, _guardar_cache, _leer_cache, _norm, encontrar_formato1
 from motor.integrations.drive import download_file_bytes, get_file_metadata
@@ -62,6 +63,12 @@ def _fecha_en_texto(fecha_ddmmaaaa: str, texto: str) -> bool:
 # palabra "BENEFICIARIO", sin depender del nombre completo (que podría venir
 # con leves variaciones de redacción).
 BENEFICIARIO_RE = re.compile(r"BENEFICIARIO.{0,150}ICCU")
+
+
+def _beneficiario_re() -> re.Pattern[str]:
+    """Beneficiario según la entidad (parámetro "beneficiario_claves")."""
+    claves = [re.escape(_norm(c)) for c in criterios.valor("beneficiario_claves") if c.strip()]
+    return re.compile(r"BENEFICIARIO.{0,150}(?:" + "|".join(claves) + ")") if claves else BENEFICIARIO_RE
 
 # Fila del amparo específico de seriedad de la oferta, con sus propias fechas
 # de vigencia y la suma asegurada. Formatos confirmados:
@@ -165,7 +172,7 @@ def _extraer_poliza_con_ia(texto: str) -> dict[str, str]:
     beneficiario = respuesta.get("beneficiario")
     if isinstance(beneficiario, str) and aparece_en_texto(beneficiario, texto):
         beneficiario_norm = _norm(beneficiario)
-        if "ICCU" in beneficiario_norm or "INSTITUTO DE CAMINOS" in beneficiario_norm:
+        if any(_norm(c) in beneficiario_norm for c in criterios.valor("beneficiario_claves") if c.strip()):
             verificados["beneficiario"] = beneficiario
 
     vigencia = respuesta.get("vigencia_hasta")
@@ -268,7 +275,7 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
 
     motivos = []
 
-    beneficiario_ok = bool(BENEFICIARIO_RE.search(texto_norm))
+    beneficiario_ok = bool(_beneficiario_re().search(texto_norm))
     fecha_hasta_texto, valor_texto = _leer_vigencia_y_valor(texto_norm)
     if valor_texto is not None:
         valor_leido = _parsear_valor_pesos(valor_texto)
@@ -291,7 +298,9 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
             datos_con_ia = True
 
     if not beneficiario_ok:
-        motivos.append("no se pudo confirmar que el beneficiario de la póliza sea la entidad (ICCU)")
+        motivos.append(
+            f"no se pudo confirmar que el beneficiario de la póliza sea la entidad ({criterios.valor('beneficiario_claves')[0]})"
+        )
 
     if fecha_hasta_texto is None or valor_texto is None:
         motivos.append(

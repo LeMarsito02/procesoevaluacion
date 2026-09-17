@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
+import Icono from './components/Icono'
 import Topbar from './components/Topbar'
-import { cerrarSesion, obtenerYo, type Usuario } from './cuentas'
+import { cerrarSesion, obtenerYo, salirDeEntidad, type Usuario } from './cuentas'
 import { ErrorApi, MENSAJE_SISTEMA } from './http'
 import PaginaConfiguracion from './paginas/PaginaConfiguracion'
 import PaginaCuenta from './paginas/PaginaCuenta'
@@ -12,6 +13,7 @@ import PaginaFila from './paginas/PaginaFila'
 import PaginaInicio from './paginas/PaginaInicio'
 import PaginaNuevoProceso from './paginas/PaginaNuevoProceso'
 import PaginaProcesos from './paginas/PaginaProcesos'
+import PaginaSoporte from './paginas/PaginaSoporte'
 import PaginaInvitacion from './paginas/PaginaInvitacion'
 import PaginaRestablecer from './paginas/PaginaRestablecer'
 import { encajar, navegar, useRuta } from './rutas'
@@ -96,6 +98,20 @@ export default function Raiz() {
 
   if (!usuario) return <PaginaEntrar onEntrar={entrar} />
 
+  if (usuario.rol === 'soporte' && !usuario.entidad) {
+    return (
+      <ContextoSesion.Provider value={{ usuario, salir }}>
+        <Topbar />
+        <PaginaSoporte
+          onEntrar={(u) => {
+            setUsuario(u)
+            navegar('/', true)
+          }}
+        />
+      </ContextoSesion.Provider>
+    )
+  }
+
   const evaluacion = encajar('/evaluaciones/:id', ruta)
   let pagina: React.ReactNode
   let conTopbar = true
@@ -115,6 +131,15 @@ export default function Raiz() {
 
   return (
     <ContextoSesion.Provider value={{ usuario, salir }}>
+      {usuario.acceso_soporte_hasta && (
+        <div className="aviso-soporte" role="status">
+          <Icono nombre="escudo" tam={15} /> Acceso de soporte a <strong>{usuario.entidad?.nombre}</strong> · solo lectura · hasta{' '}
+          {new Date(usuario.acceso_soporte_hasta).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => salirDeEntidad().then((u) => setUsuario(u))}>
+            Salir de la entidad
+          </button>
+        </div>
+      )}
       {conTopbar && <Topbar />}
       {pagina}
     </ContextoSesion.Provider>

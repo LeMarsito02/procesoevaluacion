@@ -13,10 +13,6 @@ from django.db import models
 
 from cuentas.models import Entidad, TipoArea
 
-# RUT (Requisito 13): el abogado indicó ignorarlo; no cuenta para avance ni pendientes.
-REQUISITOS_IGNORADOS = frozenset({13})
-
-
 class Proceso(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="procesos")
@@ -27,6 +23,9 @@ class Proceso(models.Model):
     documento_base = models.JSONField()
     carpeta_drive = models.CharField(max_length=500, blank=True)
     proponentes_no_reconocidos = models.JSONField(default=list, blank=True)
+    # Retención: fecha en que se borraron las copias de los documentos de los
+    # proponentes (se conservan resultados, decisiones e informes).
+    documentos_eliminados_en = models.DateTimeField(null=True, blank=True)
     creado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
     creado_en = models.DateTimeField(auto_now_add=True)
 
@@ -75,6 +74,8 @@ class Evaluacion(models.Model):
     asignada_en = models.DateTimeField(null=True, blank=True)
     aprobada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     aprobada_en = models.DateTimeField(null=True, blank=True)
+    # Versión de la plantilla de evaluación con la que se evalúa (None = la base del sistema).
+    plantilla = models.ForeignKey("PlantillaEvaluacion", on_delete=models.PROTECT, null=True, blank=True, related_name="evaluaciones")
     creada_en = models.DateTimeField(auto_now_add=True)
     actualizada_en = models.DateTimeField(auto_now=True)
 
@@ -204,4 +205,31 @@ class PlantillaInforme(models.Model):
             models.UniqueConstraint(
                 fields=["entidad", "tipo"], condition=models.Q(activa=True), name="plantilla_activa_unica"
             )
+        ]
+
+
+class PlantillaEvaluacion(models.Model):
+    """Cómo evalúa una entidad un tipo de evaluación: requisitos, verificación
+    de cada uno, parámetros y (opcional) su plantilla de Excel. Cada cambio es
+    una versión nueva; las evaluaciones guardan la versión con la que se hicieron."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.CASCADE, related_name="plantillas_evaluacion")
+    tipo = models.CharField(max_length=20, choices=TipoArea.choices)
+    version = models.PositiveIntegerField()
+    nombre = models.CharField(max_length=200)
+    # motor.criterios.DefinicionEvaluacion
+    definicion = models.JSONField()
+    nota = models.TextField(blank=True)
+    activa = models.BooleanField(default=True)
+    creada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    creada_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["entidad", "tipo", "version"], name="plantilla_evaluacion_version_unica"),
+            models.UniqueConstraint(
+                fields=["entidad", "tipo"], condition=models.Q(activa=True), name="plantilla_evaluacion_activa_unica"
+            ),
         ]

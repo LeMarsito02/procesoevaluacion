@@ -11,6 +11,7 @@ import VisorDocumento from '../components/VisorDocumento'
 import { propsDatos, useDatosProceso } from '../datosProceso'
 import { claveRevision, esPendiente, estadoDe, resumenProponente, type Revisiones } from '../estado'
 import {
+  actualizarPlantillaEvaluacion,
   aprobarEvaluacion,
   encolarEvaluacion,
   novedadesEvaluacion,
@@ -28,7 +29,7 @@ import {
   type MiembroCarga,
 } from '../evaluaciones'
 import { ErrorApi, mensajeDe } from '../http'
-import { REQUISITOS } from '../requisitos'
+import { establecerCatalogo, REQUISITOS } from '../requisitos'
 import { navegar } from '../rutas'
 import { useSesion } from '../sesion'
 
@@ -116,6 +117,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const datos = useDatosProceso()
   const [datosCargados, setDatosCargados] = useState(false)
   if (!datosCargados) {
+    establecerCatalogo(inicial.catalogo)
     datos.cargar(inicial.documento_base)
     setDatosCargados(true)
   }
@@ -490,6 +492,32 @@ function BarraEvaluacion({
         <span className="small muted">
           {avance.evaluados}/{avance.proponentes} evaluados · {avance.pendientes} por revisar
         </span>
+        <span className="small muted" title="Plantilla de evaluación de la entidad con la que se evalúa">
+          · {resumen.plantilla_nombre}
+          {resumen.plantilla_version !== null && ` (v${resumen.plantilla_version})`}
+        </span>
+        {resumen.plantilla_desactualizada && resumen.puede_trabajar && resumen.estado !== 'aprobada' && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={ocupado}
+            title="La entidad publicó una versión nueva de su plantilla de evaluación"
+            onClick={() => {
+              if (window.confirm('Hay una versión nueva de la plantilla de evaluación. ¿Actualizar? Se volverá a evaluar a todos los proponentes y se descartarán las decisiones de requisitos que ya no existan.')) {
+                setOcupado(true)
+                actualizarPlantillaEvaluacion(resumen.id)
+                  // El catálogo de requisitos cambia: se recarga la evaluación completa.
+                  .then(() => window.location.reload())
+                  .catch((err: unknown) => {
+                    onAviso(mensajeDe(err))
+                    setOcupado(false)
+                  })
+              }
+            }}
+          >
+            <Icono nombre="alerta" tam={14} /> Plantilla nueva disponible
+          </button>
+        )}
         <div className="barra-evaluacion-der">
           {!resumen.puede_trabajar && (
             <span className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

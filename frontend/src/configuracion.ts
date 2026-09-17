@@ -76,3 +76,99 @@ export async function descargarPlantilla(p: Plantilla) {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+// --- Plantillas de evaluación ---
+export type GrupoRequisito = 'oferta' | 'camara' | 'antecedentes' | 'adicionales'
+export type TipoProponente = 'persona_natural' | 'persona_juridica' | 'consorcio' | 'union_temporal'
+
+export interface Bloque {
+  tipo: 'vigencia_maxima' | 'contiene' | 'no_contiene' | 'menciona_representante' | 'menciona_proponente'
+  meses?: number | null
+  frases?: string[]
+}
+
+export interface ConfigPersonalizado {
+  frases_documento: string[]
+  paginas: number
+  bloques: Bloque[]
+  aplica_a: TipoProponente[]
+}
+
+export interface RequisitoDefinicion {
+  numero: number
+  titulo: string
+  corto: string
+  grupo: GrupoRequisito
+  verificacion: string
+  verifica: string
+  fila_excel: number | null
+  config: ConfigPersonalizado | null
+}
+
+export interface DefinicionEvaluacion {
+  parametros: Record<string, unknown>
+  requisitos: RequisitoDefinicion[]
+}
+
+export interface Parametro {
+  clave: string
+  nombre: string
+  descripcion: string
+  defecto: unknown
+  tipo: 'entero' | 'texto' | 'lista_texto'
+  minimo: number | null
+  maximo: number | null
+  unidad: string
+}
+
+export interface VerificacionMotor {
+  clave: string
+  corto: string
+  titulo: string
+  verifica: string
+  grupo: GrupoRequisito
+}
+
+export interface CatalogoMotor {
+  grupos: Record<string, string>
+  parametros: Parametro[]
+  verificaciones: VerificacionMotor[]
+  tipos_proponente: TipoProponente[]
+}
+
+export interface VersionPlantilla {
+  id: string
+  version: number
+  nombre: string
+  nota: string
+  activa: boolean
+  creada_en: string
+  creada_por: string | null
+  evaluaciones: number
+}
+
+export interface PlantillaEvaluacion {
+  tipo: string
+  tipo_nombre: string
+  motor_disponible: boolean
+  activa: VersionPlantilla | null
+  definicion: DefinicionEvaluacion
+  versiones: VersionPlantilla[]
+}
+
+export const catalogoMotor = (tipo: string) => pedirJson<CatalogoMotor>(`/api/configuracion/catalogo?tipo=${tipo}`)
+export const listarPlantillasEvaluacion = (entidadId?: string | null) =>
+  pedirJson<PlantillaEvaluacion[]>(`/api/configuracion/evaluaciones${q(entidadId)}`)
+export const publicarPlantillaEvaluacion = (
+  datos: { tipo: string; nombre: string; definicion: DefinicionEvaluacion; nota: string },
+  entidadId?: string | null,
+) => enviarJson<VersionPlantilla>(`/api/configuracion/evaluaciones${q(entidadId)}`, 'POST', datos)
+export const activarVersionPlantilla = (id: string) => enviarJson<VersionPlantilla>(`/api/configuracion/evaluaciones/${id}/activar`, 'POST')
+export const probarRequisito = (datos: {
+  evaluacion_id: string
+  requisito: RequisitoDefinicion
+  parametros: Record<string, unknown>
+  proponente_ids: string[]
+}) => enviarJson<import('./api').ResultadoRequisito[]>('/api/configuracion/requisitos/probar', 'POST', datos)
+export const proponerRequisito = (tipo: string, descripcion: string) =>
+  enviarJson<RequisitoDefinicion>('/api/configuracion/requisitos/proponer', 'POST', { tipo, descripcion })

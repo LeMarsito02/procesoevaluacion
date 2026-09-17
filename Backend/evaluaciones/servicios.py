@@ -10,16 +10,17 @@ from django.db.models import Count, F, Max, Q
 from django.utils import timezone
 
 from evaluaciones.models import (
-    REQUISITOS_IGNORADOS,
     EstadoEvaluacion,
     EstadoTrabajo,
     Evaluacion,
+    PlantillaEvaluacion,
     Proponente,
     Resultado,
     Revision,
     Trabajador,
     Trabajo,
 )
+from motor import criterios
 from motor.esquemas.proceso import Proponente as ProponenteMotor
 from motor.esquemas.proceso import ResultadoRequisito
 
@@ -50,7 +51,7 @@ def avances(ids: list[UUID]) -> dict[UUID, Avance]:
     salida = {i: Avance() for i in ids}
     for e in Evaluacion.objects.filter(id__in=ids).annotate(n=Count("proceso__proponentes", distinct=True)):
         salida[e.id].proponentes = e.n
-    base = Resultado.objects.filter(evaluacion_id__in=ids).exclude(requisito__in=REQUISITOS_IGNORADOS)
+    base = Resultado.objects.filter(evaluacion_id__in=ids)
     for ev, n in base.values("evaluacion_id").annotate(n=Count("proponente_id", distinct=True)).values_list("evaluacion_id", "n"):
         salida[ev].evaluados = n
     for ev, n in (
@@ -64,9 +65,8 @@ def avances(ids: list[UUID]) -> dict[UUID, Avance]:
     for ev, prop, req in base.filter(requiere_revision=True).values_list("evaluacion_id", "proponente_id", "requisito"):
         if (ev, prop, req) not in revisadas:
             salida[ev].pendientes += 1
-    for ev, _, req in revisadas:
-        if req not in REQUISITOS_IGNORADOS:
-            salida[ev].revisados += 1
+    for ev, _, _req in revisadas:
+        salida[ev].revisados += 1
     for ev, estado, n in (
         Trabajo.objects.filter(evaluacion_id__in=ids, estado__in=PENDIENTES)
         .values("evaluacion_id", "estado")
@@ -272,7 +272,7 @@ def reclamar(trabajador_id: str) -> Trabajo | None:
             trabajador=trabajador_id,
             intentos=F("intentos") + 1,
         )
-    return Trabajo.objects.select_related("evaluacion__proceso", "proponente").get(pk=trabajo.pk)
+    return Trabajo.objects.select_related("evaluacion__proceso", "evaluacion__plantilla", "proponente").get(pk=trabajo.pk)
 
 
 def recuperar_huerfanos(max_intentos: int = 3, sin_latido: timedelta = timedelta(minutes=5)) -> int:
@@ -290,3 +290,61 @@ def recuperar_huerfanos(max_intentos: int = 3, sin_latido: timedelta = timedelta
         t.save(update_fields=["estado", "error", "terminado_en"])
         n += 1
     return n
+
+
+# --- Plantillas de evaluación ---
+def plantilla_activa(entidad_id: UUID, tipo: str) -> PlantillaEvaluacion | None:
+    return PlantillaEvaluacion.objects.filter(entidad_id=entidad_id, tipo=tipo, activa=True).first()
+
+
+def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
+    if evaluacion.plantilla_id:
+        return criterios.DefinicionEvaluacion.model_validate(evaluacion.plantilla.definicion)
+    return criterios.definicion_sistema(evaluacion.tipo)
+
+
+def catalogo(definicion: criterios.DefinicionEvaluacion) -> list[dict]:
+    """Requisitos tal como los muestra la interfaz (nombre, grupo, qué se verifica, pistas de archivo)."""
+    salida = []
+    for r in definicion.requisitos:
+        v = criterios.VERIFICACIONES.get(r.verificacion)
+        pistas = list(v.pistas) if v else [f.lower() for f in (r.config.frases_documento if r.config else [])][:5]
+        salida.append(
+            {
+                "numero": r.numero,
+                "corto": r.corto,
+                "titulo": r.titulo,
+                "verifica": r.verifica or (v.verifica if v else ""),
+                "grupo": r.grupo,
+                "pistas": pistas,
+                "personalizado": r.verificacion == criterios.PERSONALIZADO,
+            }
+        )
+    return salida
+
+
+def nueva_version(entidad_id: UUID, tipo: str, nombre: str, definicion: criterios.DefinicionEvaluacion, usuario, nota: str = "") -> PlantillaEvaluacion:
+    with transaction.atomic():
+        ultima = PlantillaEvaluacion.objects.filter(entidad_id=entidad_id, tipo=tipo).aggregate(m=Max("version"))["m"] or 0
+        PlantillaEvaluacion.objects.filter(entidad_id=entidad_id, tipo=tipo, activa=True).update(activa=False)
+        return PlantillaEvaluacion.objects.create(
+            entidad_id=entidad_id,
+            tipo=tipo,
+            version=ultima + 1,
+            nombre=nombre.strip()[:200],
+            definicion=definicion.model_dump(mode="json"),
+            nota=nota.strip(),
+            creada_por=usuario,
+        )
+
+
+def definicion_base_para(tipo: str, sigla: str, nombre_entidad: str) -> criterios.DefinicionEvaluacion:
+    """Base del sistema adaptada a la entidad: su sigla en el código del proceso
+    y como beneficiario de la póliza."""
+    definicion = criterios.definicion_sistema(tipo)
+    if tipo == "juridica" and sigla.strip():
+        definicion.parametros = {
+            "prefijo_codigo": sigla.strip().upper(),
+            "beneficiario_claves": [sigla.strip().upper(), nombre_entidad.strip().upper()],
+        }
+    return criterios.DefinicionEvaluacion.model_validate(definicion.model_dump())

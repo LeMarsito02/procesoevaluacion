@@ -17,8 +17,9 @@ from datetime import date
 from django.conf import settings
 from django.http import HttpRequest
 from ninja import File, Form, NinjaAPI, Router
-from ninja.errors import HttpError
+from ninja.errors import HttpError, Throttled
 from ninja.files import UploadedFile
+from ninja.throttling import AnonRateThrottle, AuthRateThrottle
 
 from api.auth import router as auth_router
 from api.configuracion import router as configuracion_router
@@ -40,7 +41,12 @@ from motor.parsers.documento_base import build_proceso
 from api.ejecucion import evaluar_todos_en_proceso as _evaluar_todos_en_proceso
 from motor.workers import BrokenProcessPool, detener_pool, obtener_pool
 
-api = NinjaAPI(title="MiEvaluador API", version="1.0", urls_namespace="api")
+api = NinjaAPI(
+    title="MiEvaluador API",
+    version="1.0",
+    urls_namespace="api",
+    throttle=[AnonRateThrottle(settings.LIMITES_API["anonimo"]), AuthRateThrottle(settings.LIMITES_API["usuario"])],
+)
 # Toda la evaluación exige sesión iniciada (y CSRF en las peticiones que modifican).
 procesos = Router(tags=["procesos"], auth=sesion_activa)
 
@@ -53,12 +59,17 @@ def _solo_medicion(request: HttpRequest) -> None:
 atexit.register(detener_pool)
 
 
+@api.exception_handler(Throttled)
+def demasiadas_peticiones(request: HttpRequest, exc: Throttled):
+    return api.create_response(request, {"detail": "Demasiadas solicitudes seguidas. Espere un momento e inténtelo de nuevo."}, status=429)
+
+
 @api.get("/health")
 def health(request: HttpRequest) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@procesos.post("/analizar", response=AnalisisResponse)
+@procesos.post("/analizar", response=AnalisisResponse, throttle=[AuthRateThrottle(settings.LIMITES_API["pesado"])])
 async def analizar_documento_base(
     request: HttpRequest,
     codigo_proceso: Form[str],

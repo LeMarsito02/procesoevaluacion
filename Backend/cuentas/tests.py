@@ -288,3 +288,75 @@ class InvitacionYRecuperacionTests(BaseCuentas):
             evento.save()
         with self.assertRaises(ValueError):
             evento.delete()
+
+
+class SoporteTests(BaseCuentas):
+    """Personal de LeMarTek: nada sin permiso; solo lectura y solo mientras el permiso esté vigente."""
+
+    def setUp(self):
+        import pyotp
+
+        self.soporte = Usuario.objects.create_user("ana@lemartek.com", CLAVE, nombre_completo="Ana Soporte", rol=Rol.SOPORTE)
+        self.c = Cliente()
+        datos = self.c.entrar("ana@lemartek.com")
+        self.assertEqual(datos["estado"], "configurar_2fa")  # el soporte también usa 2FA
+        secreto = self.c.post("/api/auth/2fa/configurar").json()["secreto"]
+        self.c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
+        self.admin = Cliente()
+        self.admin.entrar("admin@iccu.gov.co")
+
+    def otorgar(self, horas=4):
+        with self.captureOnCommitCallbacks(execute=True):
+            return self.admin.post("/api/equipo/soporte", {"soporte_id": str(self.soporte.id), "horas": horas, "motivo": "Revisar error en informe"})
+
+    def test_sin_permiso_no_ve_nada(self):
+        self.assertEqual(self.c.get("/api/auth/soporte/accesos").json(), [])
+        self.assertEqual(self.c.post("/api/auth/soporte/entrar", {"entidad_id": str(self.iccu.id)}).status_code, 403)
+        self.assertIsNone(self.c.get("/api/auth/yo").json()["entidad"])
+        self.assertEqual(self.c.get("/api/evaluaciones/procesos").json(), [])
+
+    def test_con_permiso_entra_solo_lectura_y_se_revoca(self):
+        r = self.otorgar()
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(mail.outbox[-1].to, ["ana@lemartek.com"])
+        self.assertEqual(len(self.c.get("/api/auth/soporte/accesos").json()), 1)
+        yo = self.c.post("/api/auth/soporte/entrar", {"entidad_id": str(self.iccu.id)}).json()
+        self.assertEqual(yo["entidad"]["nombre"], "ICCU")
+        self.assertIsNotNone(yo["acceso_soporte_hasta"])
+        # Ve la entidad pero no puede gestionar ni crear.
+        self.assertEqual(self.c.get("/api/equipo/usuarios").status_code, 403)
+        self.assertEqual(self.c.post("/api/equipo/invitaciones", {"email": "x@iccu.gov.co", "rol": "evaluador"}).status_code, 403)
+        from evaluaciones.permisos import puede_crear_procesos
+
+        self.assertFalse(puede_crear_procesos(self.soporte))
+        # No puede entrar a otra entidad sin permiso.
+        self.assertEqual(self.c.post("/api/auth/soporte/entrar", {"entidad_id": str(self.otra.id)}).status_code, 403)
+        self.c.post("/api/auth/soporte/entrar", {"entidad_id": str(self.iccu.id)})
+        # El administrador revoca: pierde el acceso en la siguiente petición.
+        acceso = self.admin.get("/api/equipo/soporte").json()["accesos"][0]
+        self.assertEqual(self.admin.delete(f"/api/equipo/soporte/{acceso['id']}").status_code, 204)
+        self.assertIsNone(self.c.get("/api/auth/yo").json()["entidad"])
+        acciones = {e["accion"] for e in self.admin.get("/api/equipo/auditoria").json()}
+        self.assertTrue({"soporte.acceso_otorgado", "soporte.ingreso", "soporte.acceso_revocado"} <= acciones)
+
+    def test_permiso_vencido(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from cuentas.models import AccesoSoporte
+
+        self.otorgar()
+        self.c.post("/api/auth/soporte/entrar", {"entidad_id": str(self.iccu.id)})
+        AccesoSoporte.objects.update(expira_en=timezone.now() - timedelta(minutes=1))
+        self.assertIsNone(self.c.get("/api/auth/yo").json()["entidad"])
+
+    def test_limites_y_permisos_para_otorgar(self):
+        self.assertEqual(self.otorgar(horas=100).status_code, 400)
+        jefe = Cliente()
+        jefe.entrar("jefe@iccu.gov.co")
+        r = jefe.post("/api/equipo/soporte", {"soporte_id": str(self.soporte.id), "horas": 2, "motivo": "Revisar algo"})
+        self.assertEqual(r.status_code, 403)
+        # Un usuario normal no se puede usar como soporte.
+        r = self.admin.post("/api/equipo/soporte", {"soporte_id": str(self.evaluador.id), "horas": 2, "motivo": "Revisar algo"})
+        self.assertEqual(r.status_code, 400)

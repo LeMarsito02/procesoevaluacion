@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Proponente, ResultadoRequisito } from '../api'
 import { esPendiente, estadoDe, resumenProponente, type Revisiones } from '../estado'
 import { formatDuracion } from '../format'
-import { GRUPOS, REQUISITOS, type GrupoRequisito } from '../requisitos'
+import { GRUPOS, ORDEN_GRUPOS, REQUISITOS, requisitosOrdenados } from '../requisitos'
 import Celda from './Celda'
 import Icono from './Icono'
 
@@ -41,8 +41,6 @@ const TIPO: Record<string, string> = {
   union_temporal: 'Unión temporal',
 }
 
-const ORDEN_GRUPOS: GrupoRequisito[] = ['oferta', 'camara', 'antecedentes']
-const REQS_ORDENADOS = ORDEN_GRUPOS.flatMap((g) => REQUISITOS.filter((r) => r.grupo === g))
 
 function Anillo({ pct }: { pct: number }) {
   const r = 42
@@ -70,6 +68,9 @@ function Anillo({ pct }: { pct: number }) {
 }
 
 export default function PasoEvaluacion(p: Props) {
+  // El catálogo depende de la plantilla de la entidad (se instala al abrir la evaluación).
+  const REQS_ORDENADOS = requisitosOrdenados()
+  const gruposPresentes = ORDEN_GRUPOS.filter((g) => REQUISITOS.some((r) => r.grupo === g))
   const [filtro, setFiltro] = useState<Filtro>('todos')
   const [busqueda, setBusqueda] = useState('')
 
@@ -270,7 +271,7 @@ export default function PasoEvaluacion(p: Props) {
           <thead>
             <tr className="grupo-row">
               <th className="col-prop" />
-              {ORDEN_GRUPOS.map((g) => (
+              {gruposPresentes.map((g) => (
                 <th key={g} colSpan={REQUISITOS.filter((r) => r.grupo === g).length} style={{ borderLeft: '1px solid var(--line)' }}>
                   {GRUPOS[g]}
                 </th>

@@ -6,6 +6,7 @@ from datetime import date
 
 from dateutil.relativedelta import relativedelta
 
+from motor import criterios
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.evaluacion.formato1 import (
     _clave_cache,
@@ -220,6 +221,7 @@ class ResultadoEvaluacionCopnia:
         self.representante_legal = representante_legal
 
 
+# Por defecto 3 meses; cada entidad lo ajusta (parámetro "copnia_meses").
 ANTIGUEDAD_MAXIMA_MESES = 3
 
 
@@ -255,11 +257,11 @@ def evaluar_requisito2(
         motivos.append("el COPNIA no indica que la matrícula profesional se encuentre vigente")
 
     if datos.fecha_expedicion is None:
-        motivos.append("no se pudo leer la fecha de expedición del COPNIA — confirma manualmente que no supere los 3 meses")
-    elif datos.fecha_expedicion < fecha_cierre - relativedelta(months=ANTIGUEDAD_MAXIMA_MESES):
+        motivos.append(f"no se pudo leer la fecha de expedición del COPNIA — confirma manualmente que no supere los {criterios.valor('copnia_meses')} meses")
+    elif datos.fecha_expedicion < fecha_cierre - relativedelta(months=criterios.valor("copnia_meses")):
         motivos.append(
             f"el COPNIA fue expedido el {datos.fecha_expedicion.strftime('%d/%m/%Y')}, hace más de "
-            f"{ANTIGUEDAD_MAXIMA_MESES} meses contados desde la fecha de cierre "
+            f"{criterios.valor('copnia_meses')} meses contados desde la fecha de cierre "
             f"({fecha_cierre.strftime('%d/%m/%Y')})"
         )
 
@@ -313,11 +315,11 @@ def evaluar_requisito3(
         motivos.append("el COPNIA no certifica que el profesional esté libre de antecedentes disciplinarios")
 
     if datos.fecha_expedicion is None:
-        motivos.append("no se pudo leer la fecha de expedición del COPNIA — confirma manualmente que no supere los 3 meses")
-    elif datos.fecha_expedicion < fecha_cierre - relativedelta(months=ANTIGUEDAD_MAXIMA_MESES):
+        motivos.append(f"no se pudo leer la fecha de expedición del COPNIA — confirma manualmente que no supere los {criterios.valor('copnia_meses')} meses")
+    elif datos.fecha_expedicion < fecha_cierre - relativedelta(months=criterios.valor("copnia_meses")):
         motivos.append(
             f"el COPNIA aportado no está en vigencia (expedido el {datos.fecha_expedicion.strftime('%d/%m/%Y')}, "
-            f"hace más de {ANTIGUEDAD_MAXIMA_MESES} meses contados desde la fecha de cierre "
+            f"hace más de {criterios.valor('copnia_meses')} meses contados desde la fecha de cierre "
             f"{fecha_cierre.strftime('%d/%m/%Y')})"
         )
 

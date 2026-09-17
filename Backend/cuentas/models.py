@@ -60,6 +60,8 @@ class Rol(models.TextChoices):
     JEFE_AREA = "jefe_area", "Jefe de área"
     EVALUADOR = "evaluador", "Evaluador"
     CONSULTA = "consulta", "Consulta"
+    # Personal de LeMarTek: sin entidad; solo ve una entidad con permiso temporal de su administrador.
+    SOPORTE = "soporte", "Soporte LeMarTek"
 
 
 class UsuarioManager(BaseUserManager["Usuario"]):
@@ -104,11 +106,11 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         verbose_name_plural = "usuarios"
         ordering = ["nombre_completo"]
         constraints = [
-            # Solo el superadministrador puede no pertenecer a una entidad, y
-            # un superadministrador nunca pertenece a una entidad.
+            # Superadministrador y soporte de LeMarTek no pertenecen a una
+            # entidad; todos los demás roles sí.
             models.CheckConstraint(
-                condition=(Q(rol=Rol.SUPERADMIN) & Q(entidad__isnull=True))
-                | (~Q(rol=Rol.SUPERADMIN) & Q(entidad__isnull=False)),
+                condition=(Q(rol__in=[Rol.SUPERADMIN, Rol.SOPORTE]) & Q(entidad__isnull=True))
+                | (~Q(rol__in=[Rol.SUPERADMIN, Rol.SOPORTE]) & Q(entidad__isnull=False)),
                 name="usuario_entidad_segun_rol",
             ),
         ]
@@ -122,7 +124,11 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     @property
     def requiere_2fa(self) -> bool:
-        return self.es_superadmin
+        return self.rol in (Rol.SUPERADMIN, Rol.SOPORTE)
+
+    @property
+    def es_soporte(self) -> bool:
+        return self.rol == Rol.SOPORTE
 
 
 class Invitacion(models.Model):
@@ -193,3 +199,24 @@ class EventoAuditoria(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValueError("Los eventos de auditoría no se pueden eliminar.")
+
+
+class AccesoSoporte(models.Model):
+    """Permiso temporal que el administrador de una entidad da a una persona de
+    soporte de LeMarTek para ver (solo lectura) los datos de su entidad."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.CASCADE, related_name="accesos_soporte")
+    soporte = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name="accesos_soporte")
+    otorgado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name="+")
+    motivo = models.CharField(max_length=300)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    expira_en = models.DateTimeField()
+    revocado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-creado_en"]
+
+    @property
+    def vigente(self) -> bool:
+        return self.revocado_en is None and self.expira_en > timezone.now()

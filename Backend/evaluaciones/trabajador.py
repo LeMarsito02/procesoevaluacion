@@ -21,6 +21,7 @@ from evaluaciones.servicios import (
     PENDIENTES,
     actualizar_estado,
     avances,
+    definicion_de,
     guardar_resultados,
     proponente_motor,
     reclamar,
@@ -81,6 +82,8 @@ def _cerrar(trabajo: Trabajo, resultados, error: str | None) -> None:
 
 async def _atender(trabajo: Trabajo) -> None:
     documento = ProcesoDocumentoBase.model_validate(trabajo.evaluacion.proceso.documento_base)
+    # Cómo evalúa la entidad (versión guardada en la evaluación).
+    documento.criterios = (await sync_to_async(definicion_de)(trabajo.evaluacion)).model_dump(mode="json")
     inicio = timezone.now()
     try:
         resultados = await evaluar_todos_en_proceso(proponente_motor(trabajo.proponente), documento)

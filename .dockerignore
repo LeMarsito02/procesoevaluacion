@@ -1,0 +1,12 @@
+**/venv
+**/node_modules
+**/__pycache__
+Backend/cache
+Backend/.scratch
+Backend/almacenamiento
+Backend/.env
+Backend/.env.*
+Backend/credentials
+frontend/dist
+Registro_DNDA
+.git

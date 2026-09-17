@@ -1,0 +1,92 @@
+# MiEvaluador en un servidor (VM en LeMarCloud). Uso:
+#   cp despliegue/.env.ejemplo Backend/.env   # y completar
+#   docker compose --env-file Backend/.env -f despliegue/docker-compose.yml up -d --build
+name: mievaluador
+
+x-backend: &backend
+  build:
+    context: ..
+    dockerfile: despliegue/Dockerfile.backend
+  env_file: ../Backend/.env
+  environment:
+    DB_HOST: db
+    DB_PUERTO: "5432"
+    GOOGLE_SERVICE_ACCOUNT_FILE: /run/secrets/google_drive
+    LLM_URL: ${LLM_URL:-http://ollama:11434}
+  secrets: [google_drive]
+  volumes:
+    - cache:/app/cache
+    - almacenamiento:/app/almacenamiento
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:18
+    # DB_USUARIO y DB_CLAVE: rol de la app que crea postgres-inicial.sh.
+    env_file: ../Backend/.env
+    environment:
+      POSTGRES_DB: ${DB_NOMBRE:-mievaluador}
+      # Superusuario de mantenimiento (respaldos, migraciones de roles). La app usa otro rol.
+      POSTGRES_USER: ${DB_ADMIN_USUARIO:-mievaluador}
+      POSTGRES_PASSWORD: ${DB_ADMIN_CLAVE:?Falta DB_ADMIN_CLAVE}
+    volumes:
+      - datos:/var/lib/postgresql
+      - ./postgres-inicial.sh:/docker-entrypoint-initdb.d/10-rol-app.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migraciones:
+    <<: *backend
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+
+  api:
+    <<: *backend
+    depends_on:
+      migraciones:
+        condition: service_completed_successfully
+
+  trabajador:
+    <<: *backend
+    command: ["python", "manage.py", "trabajar_fila", "--capacidad", "${MAX_WORKERS:-4}"]
+    stop_grace_period: 60s
+    depends_on:
+      migraciones:
+        condition: service_completed_successfully
+
+  # Tareas diarias: retención de documentos (30 días) y copia de seguridad.
+  tareas:
+    <<: *backend
+    command: ["sh", "-c", "while true; do python manage.py aplicar_retencion; RESPALDO_DIR=/respaldos DB_HOST=db DB_PUERTO=5432 bash scripts/respaldo.sh; sleep 86400; done"]
+    volumes:
+      - cache:/app/cache
+      - almacenamiento:/app/almacenamiento
+      - respaldos:/respaldos
+    depends_on:
+      migraciones:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ..
+      dockerfile: despliegue/Dockerfile.web
+    ports:
+      - "${PUERTO_WEB:-8080}:80"
+    depends_on: [api]
+    restart: unless-stopped
+
+secrets:
+  google_drive:
+    file: ../Backend/credentials/service_account.json
+
+volumes:
+  datos:
+  cache:
+  almacenamiento:
+  respaldos:

@@ -18,8 +18,8 @@ from ninja.errors import HttpError
 from ninja.security import APIKeyCookie
 from django.conf import settings
 
-from cuentas.aislamiento import SISTEMA, fijar_entidad
-from cuentas.models import EventoAuditoria, IntentoInicioSesion, Rol, Usuario
+from cuentas.aislamiento import NINGUNA, SISTEMA, fijar_entidad
+from cuentas.models import AccesoSoporte, EventoAuditoria, IntentoInicioSesion, Rol, Usuario
 
 # --- Bloqueo de fuerza bruta ---
 VENTANA_BLOQUEO = timedelta(minutes=15)
@@ -37,12 +37,37 @@ class SesionActiva(APIKeyCookie):
         usuario = request.user
         if not usuario.is_authenticated or not usuario.is_active:
             return None
-        if usuario.entidad_id is not None and not usuario.entidad.activa:
-            return None
         if usuario.requiere_2fa and not request.session.get("segundo_factor_ok"):
             return None
-        fijar_entidad(SISTEMA if usuario.es_superadmin else str(usuario.entidad_id))
+        if usuario.es_soporte:
+            _aplicar_acceso_soporte(request, usuario)
+        if usuario.entidad_id is not None and not usuario.entidad.activa:
+            return None
+        if usuario.es_superadmin:
+            fijar_entidad(SISTEMA)
+        else:
+            fijar_entidad(str(usuario.entidad_id) if usuario.entidad_id else NINGUNA)
         return usuario
+
+
+def _aplicar_acceso_soporte(request: HttpRequest, usuario: Usuario) -> None:
+    """Soporte de LeMarTek: trabaja "dentro" de la entidad elegida solo mientras
+    su permiso temporal siga vigente (solo lectura: su rol no pasa ningún
+    permiso de escritura). La entidad se fija en memoria, nunca se guarda."""
+    usuario.acceso_soporte = None
+    entidad_id = request.session.get("soporte_entidad")
+    if entidad_id:
+        acceso = (
+            AccesoSoporte.objects.select_related("entidad")
+            .filter(soporte=usuario, entidad_id=entidad_id, revocado_en__isnull=True, expira_en__gt=timezone.now())
+            .first()
+        )
+        if acceso is not None:
+            usuario.entidad = acceso.entidad
+            usuario.acceso_soporte = acceso
+            return
+        request.session.pop("soporte_entidad", None)
+    usuario.entidad_id = None
 
 
 sesion_activa = SesionActiva()

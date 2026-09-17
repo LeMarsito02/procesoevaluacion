@@ -1,7 +1,7 @@
 /** API de cuentas: sesión, 2FA, invitaciones, equipo y entidades. */
 import { enviarJson, fijarCsrf, pedirJson } from './http'
 
-export type Rol = 'superadmin' | 'admin_entidad' | 'jefe_area' | 'evaluador' | 'consulta'
+export type Rol = 'superadmin' | 'admin_entidad' | 'jefe_area' | 'evaluador' | 'consulta' | 'soporte'
 export type TipoArea = 'juridica' | 'tecnica' | 'financiera'
 
 export interface Area {
@@ -18,6 +18,7 @@ export interface Usuario {
   rol_nombre: string
   entidad: { id: string; nombre: string } | null
   areas: Area[]
+  acceso_soporte_hasta: string | null
 }
 
 export interface Miembro extends Usuario {
@@ -63,7 +64,7 @@ interface LoginOut {
   usuario: Usuario | null
 }
 
-export const ROLES: { id: Exclude<Rol, 'superadmin'>; nombre: string; descripcion: string }[] = [
+export const ROLES: { id: Exclude<Rol, 'superadmin' | 'soporte'>; nombre: string; descripcion: string }[] = [
   { id: 'admin_entidad', nombre: 'Administrador de entidad', descripcion: 'Gestiona usuarios, áreas y criterios de la entidad.' },
   { id: 'jefe_area', nombre: 'Jefe de área', descripcion: 'Crea procesos y asigna evaluaciones a su equipo.' },
   { id: 'evaluador', nombre: 'Evaluador', descripcion: 'Evalúa y revisa los procesos que le asignan.' },
@@ -109,7 +110,45 @@ export const revocarInvitacion = (id: string) => enviarJson<void>(`/api/equipo/i
 export const listarAuditoria = (entidadId?: string | null) => pedirJson<EventoAuditoria[]>(`/api/equipo/auditoria${q(entidadId)}`)
 
 export const listarEntidades = () => pedirJson<Entidad[]>('/api/plataforma/entidades')
-export const crearEntidad = (datos: { nombre: string; nit: string; email_admin: string }) =>
+export const crearEntidad = (datos: {
+  nombre: string
+  nit: string
+  email_admin: string
+  sigla: string
+  base: 'sistema' | 'copiar'
+  copiar_de: string | null
+}) =>
   enviarJson<Entidad>('/api/plataforma/entidades', 'POST', datos)
 export const cambiarEstadoEntidad = (id: string, activa: boolean) =>
   enviarJson<Entidad>(`/api/plataforma/entidades/${id}`, 'PATCH', { activa })
+
+// --- Soporte de LeMarTek ---
+export interface PersonaSoporte {
+  id: string
+  nombre_completo: string
+  email: string
+}
+
+export interface AccesoSoporte {
+  id: string
+  soporte: PersonaSoporte
+  otorgado_por: string | null
+  motivo: string
+  creado_en: string
+  expira_en: string
+  revocado_en: string | null
+  vigente: boolean
+}
+
+export const accesosDisponibles = () =>
+  pedirJson<{ entidad: { id: string; nombre: string }; expira_en: string; motivo: string }[]>('/api/auth/soporte/accesos')
+export const entrarComoSoporte = (entidadId: string) => enviarJson<Usuario>('/api/auth/soporte/entrar', 'POST', { entidad_id: entidadId })
+export const salirDeEntidad = () => enviarJson<Usuario>('/api/auth/soporte/salir', 'POST')
+export const soporteDeLaEntidad = (entidadId?: string | null) =>
+  pedirJson<{ accesos: AccesoSoporte[]; personal: PersonaSoporte[] }>(`/api/equipo/soporte${q(entidadId)}`)
+export const otorgarSoporte = (datos: { soporte_id: string; horas: number; motivo: string }, entidadId?: string | null) =>
+  enviarJson<AccesoSoporte>(`/api/equipo/soporte${q(entidadId)}`, 'POST', datos)
+export const revocarSoporte = (id: string) => enviarJson<void>(`/api/equipo/soporte/${id}`, 'DELETE')
+export const personalDeSoporte = () => pedirJson<PersonaSoporte[]>('/api/plataforma/soporte')
+export const crearCuentaSoporte = (email: string, nombre_completo: string) =>
+  enviarJson<PersonaSoporte>('/api/plataforma/soporte', 'POST', { email, nombre_completo })

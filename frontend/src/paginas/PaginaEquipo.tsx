@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import Icono from '../components/Icono'
 import {
   actualizarUsuario,
+  otorgarSoporte,
+  revocarSoporte,
+  soporteDeLaEntidad,
+  type AccesoSoporte,
+  type PersonaSoporte,
   AREAS,
   invitar,
   listarAuditoria,
@@ -20,7 +25,7 @@ import {
 import { useSesion } from '../sesion'
 import { mensajeDe } from '../http'
 
-type Pestana = 'usuarios' | 'invitaciones' | 'actividad'
+type Pestana = 'usuarios' | 'invitaciones' | 'actividad' | 'soporte'
 
 const fecha = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
@@ -39,6 +44,14 @@ const ACCIONES: Record<string, string> = {
   'entidad.creada': 'Creó la entidad',
   'entidad.suspendida': 'Suspendió la entidad',
   'entidad.activada': 'Reactivó la entidad',
+  'soporte.acceso_otorgado': 'Dio acceso de soporte',
+  'soporte.acceso_revocado': 'Revocó un acceso de soporte',
+  'soporte.ingreso': 'Soporte LeMarTek ingresó',
+  'plantilla_evaluacion.publicada': 'Publicó una versión de la plantilla',
+  'evaluacion.plantilla_actualizada': 'Actualizó la plantilla de una evaluación',
+  'proceso.creado': 'Creó un proceso',
+  'evaluacion.asignada': 'Asignó una evaluación',
+  'evaluacion.aprobada': 'Aprobó una evaluación',
 }
 
 export default function PaginaEquipo() {
@@ -166,6 +179,9 @@ export default function PaginaEquipo() {
             <button type="button" aria-pressed={pestana === 'actividad'} onClick={() => setPestana('actividad')}>
               Actividad
             </button>
+            <button type="button" aria-pressed={pestana === 'soporte'} onClick={() => setPestana('soporte')}>
+              Soporte LeMarTek
+            </button>
           </div>
           {pestana === 'usuarios' && (
             <div className="input-group search" style={{ marginLeft: 'auto' }}>
@@ -278,6 +294,8 @@ export default function PaginaEquipo() {
             </tbody>
           </table>
         </div>
+      ) : pestana === 'soporte' ? (
+        <SoporteEntidad entidadId={idConsulta} onAviso={setAviso} onError={setError} />
       ) : pestana === 'invitaciones' ? (
         <div className="tabla-wrap">
           <table className="tabla">
@@ -494,6 +512,138 @@ function DialogoInvitar({
             </button>
           </div>
         </form>
+      </div>
+    </>
+  )
+}
+
+function SoporteEntidad({
+  entidadId,
+  onAviso,
+  onError,
+}: {
+  entidadId: string | null
+  onAviso: (t: string) => void
+  onError: (t: string) => void
+}) {
+  const [datos, setDatos] = useState<{ accesos: AccesoSoporte[]; personal: PersonaSoporte[] } | null>(null)
+  const [persona, setPersona] = useState('')
+  const [horas, setHoras] = useState(4)
+  const [motivo, setMotivo] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  const [version, setVersion] = useState(0)
+
+  useEffect(() => {
+    soporteDeLaEntidad(entidadId)
+      .then(setDatos)
+      .catch((e: unknown) => onError(mensajeDe(e)))
+  }, [entidadId, version, onError])
+
+  async function otorgar() {
+    setEnviando(true)
+    try {
+      await otorgarSoporte({ soporte_id: persona, horas, motivo }, entidadId)
+      setMotivo('')
+      onAviso('Acceso otorgado. La persona recibe un correo.')
+      setVersion((v) => v + 1)
+    } catch (e) {
+      onError(mensajeDe(e))
+    } finally {
+      setEnviando(false)
+    }
+  }
+
+  if (!datos) return <div className="vacio"><span className="spinner oscuro" /></div>
+
+  return (
+    <>
+      <section className="card" style={{ marginBottom: 16 }}>
+        <div className="card-head">
+          <div>
+            <h2>Dar acceso temporal a soporte</h2>
+            <p>El personal de LeMarTek no ve los datos de la entidad salvo con este permiso: es de solo lectura, vence solo y queda en la actividad.</p>
+          </div>
+          <Icono nombre="escudo" tam={22} />
+        </div>
+        {datos.personal.length === 0 ? (
+          <p className="small muted">No hay personal de soporte registrado.</p>
+        ) : (
+          <div className="grid-soporte">
+            <select className="select" value={persona} onChange={(e) => setPersona(e.target.value)} aria-label="Persona de soporte">
+              <option value="">Persona de soporte…</option>
+              {datos.personal.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre_completo} · {p.email}
+                </option>
+              ))}
+            </select>
+            <select className="select" value={horas} onChange={(e) => setHoras(Number(e.target.value))} aria-label="Duración">
+              {[1, 2, 4, 8, 24, 48, 72].map((h) => (
+                <option key={h} value={h}>
+                  {h} {h === 1 ? 'hora' : 'horas'}
+                </option>
+              ))}
+            </select>
+            <input className="input" placeholder="Motivo (ej. revisar error en el informe)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
+            <button type="button" className="btn btn-primary" disabled={enviando || !persona || motivo.trim().length < 5} onClick={otorgar}>
+              {enviando ? <span className="spinner" /> : 'Dar acceso'}
+            </button>
+          </div>
+        )}
+      </section>
+      <div className="tabla-wrap">
+        <table className="tabla">
+          <thead>
+            <tr>
+              <th>Persona</th>
+              <th>Motivo</th>
+              <th>Otorgado</th>
+              <th>Vence</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {datos.accesos.map((a) => (
+              <tr key={a.id} data-inactivo={!a.vigente}>
+                <td>
+                  <strong>{a.soporte.nombre_completo}</strong>
+                  <div className="small muted">{a.soporte.email}</div>
+                </td>
+                <td className="small">{a.motivo}</td>
+                <td className="small muted">
+                  {fecha(a.creado_en)}
+                  {a.otorgado_por && <div>{a.otorgado_por}</div>}
+                </td>
+                <td className="small nowrap">{a.revocado_en ? `Revocado ${fecha(a.revocado_en)}` : fecha(a.expira_en)}</td>
+                <td style={{ textAlign: 'right' }}>
+                  {a.vigente && (
+                    <button
+                      type="button"
+                      className="btn btn-bad btn-sm"
+                      onClick={() =>
+                        revocarSoporte(a.id)
+                          .then(() => {
+                            onAviso('Acceso revocado')
+                            setVersion((v) => v + 1)
+                          })
+                          .catch((e: unknown) => onError(mensajeDe(e)))
+                      }
+                    >
+                      Revocar
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {datos.accesos.length === 0 && (
+              <tr>
+                <td colSpan={5} className="vacio">
+                  Nunca se ha dado acceso de soporte.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </>
   )
