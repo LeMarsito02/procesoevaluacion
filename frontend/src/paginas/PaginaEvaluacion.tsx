@@ -294,6 +294,34 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const indicePanel = panel ? evaluadosEnOrden.findIndex((pr) => pr.hoja === panel.hoja) : -1
   const onRevisar = soloLectura ? null : revisar
 
+  if (!resumen.tipo_disponible) {
+    return (
+      <>
+        <Topbar codigoProceso={codigo} />
+        <BarraEvaluacion resumen={resumen} esYo={resumen.responsable?.id === sesion.usuario.id} onCambio={setResumen} onAviso={setAviso} />
+        <main className="page page-narrow">
+          <section className="card en-preparacion">
+            <Icono nombre="reloj" tam={36} />
+            <h2>Evaluación {resumen.tipo_nombre.toLowerCase()} en preparación</h2>
+            <p className="muted">
+              La evaluación ya está creada{resumen.responsable ? ` y asignada a ${resumen.responsable.nombre_completo}` : ''}. La
+              evaluación automática de requisitos {resumen.tipo_nombre.toLowerCase()}s se habilitará en cuanto el módulo esté
+              listo; desde ese momento podrá evaluarse aquí mismo sin volver a crear el proceso.
+            </p>
+            <p className="small muted" style={{ marginTop: 12 }}>
+              {proponentes.length} proponentes · cierre {fechaCierre}
+            </p>
+          </section>
+        </main>
+        {aviso && (
+          <div className="toast" role="status">
+            {aviso}
+          </div>
+        )}
+      </>
+    )
+  }
+
   return (
     <>
       <Topbar codigoProceso={codigo} pasos={{ lista: PASOS_EVALUACION, paso, pasosDisponibles: disponibles, onIr: setPaso }} />

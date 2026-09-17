@@ -453,3 +453,15 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 .fila-ev-barra > span { display: block; height: 100%; background: linear-gradient(90deg, var(--brand), var(--brand-bright)); border-radius: 999px; }
 @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fila-ev { grid-template-columns: auto auto 1fr; } .fila-ev-barra, .fila-ev .num { display: none; } }
 .tarjeta-ev-fila { display: flex; align-items: center; gap: 8px; color: var(--brand); font-weight: 600; }
+
+/* ---------- Tipos de evaluación al crear ---------- */
+.tipos-evaluacion { display: flex; flex-direction: column; gap: 10px; }
+.tipo-evaluacion { border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px 14px; }
+.tipo-evaluacion[data-activo='true'] { border-color: var(--brand); background: var(--brand-soft); }
+.tipo-evaluacion-cabeza { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.tipo-evaluacion-cabeza input { margin-top: 4px; width: 18px; height: 18px; accent-color: var(--brand); }
+.tipo-evaluacion-cabeza div { display: flex; flex-direction: column; gap: 2px; }
+.tipo-evaluacion-responsable { margin: 10px 0 0 30px; max-width: 420px; }
+.tag-preparacion { background: var(--warn-soft); color: var(--warn); margin-left: 6px; }
+.en-preparacion { text-align: center; padding: 56px 24px; }
+.en-preparacion h2 { font-family: var(--serif); font-size: 22px; margin: 12px 0 6px; }

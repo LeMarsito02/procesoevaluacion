@@ -3,7 +3,6 @@ fila de evaluación, revisiones, aprobación, informe y documentos."""
 from __future__ import annotations
 
 from datetime import date, datetime
-from pathlib import Path
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
@@ -18,6 +17,7 @@ from cuentas.correo import enviar_asignacion
 from cuentas.models import Entidad, Rol, TipoArea, Usuario
 from cuentas.seguridad import auditar, requiere_rol, sesion_activa
 from evaluaciones import servicios
+from evaluaciones.tipos import MENSAJE_EN_PREPARACION, TIPOS
 from evaluaciones.models import (
     EstadoEvaluacion,
     EstadoTrabajo,
@@ -45,10 +45,6 @@ from motor.procesamiento.zip_utils import extraer_pdfs
 
 router = Router(tags=["evaluaciones"], auth=sesion_activa)
 
-PLANTILLAS = {
-    TipoArea.JURIDICA: Path(__file__).resolve().parent.parent / "motor" / "plantillas" / "plantilla_evaluacion_juridica.xlsx",
-}
-TIPOS_DISPONIBLES = {TipoArea.JURIDICA}
 
 
 # --- Esquemas ---
@@ -95,6 +91,8 @@ class EvaluacionResumenOut(Schema):
     aprobada_en: datetime | None
     puede_trabajar: bool
     puede_gestionar: bool
+    # Hay motor automático para este tipo (técnica y financiera: en preparación).
+    tipo_disponible: bool
     # Solo cuando hay trabajos pendientes en la fila.
     fila: FilaOut | None = None
 
@@ -131,6 +129,8 @@ class CrearProcesoIn(Schema):
     # jefes y administradores dejan la evaluación sin asignar.
     responsable_id: UUID | None = None
     sin_responsable: bool = False
+    # Responsable por tipo (tiene prioridad): {"juridica": id, "tecnica": null = sin asignar}.
+    responsables: dict[str, UUID | None] | None = None
 
 
 class ProponenteOut(Schema):
@@ -212,6 +212,7 @@ def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[Evaluac
             aprobada_en=e.aprobada_en,
             puede_trabajar=puede_trabajar(usuario, e),
             puede_gestionar=puede_gestionar(usuario, e),
+            tipo_disponible=TIPOS[e.tipo].disponible,
         )
         for e in evaluaciones
     ]
@@ -245,6 +246,18 @@ def _responsable_valido(entidad_id: UUID, tipo: str, responsable_id: UUID, actor
     if persona.id != actor.id and persona.rol == Rol.EVALUADOR and not tiene_area(persona, tipo):
         raise HttpError(400, f"{persona.nombre_completo} no pertenece al área {TipoArea(tipo).label.lower()}.")
     return persona
+
+
+class TipoOut(Schema):
+    clave: str
+    nombre: str
+    descripcion: str
+    disponible: bool
+
+
+@router.get("/tipos", response=list[TipoOut])
+def tipos_de_evaluacion(request: HttpRequest) -> list[TipoOut]:
+    return [TipoOut(clave=t.clave, nombre=t.nombre, descripcion=t.descripcion, disponible=t.disponible) for t in TIPOS.values()]
 
 
 # --- Procesos ---
@@ -293,21 +306,27 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
     tipos = list(dict.fromkeys(datos.tipos))
     if not tipos:
         raise HttpError(400, "Elija al menos un tipo de evaluación.")
-    no_disponibles = [t for t in tipos if t not in TIPOS_DISPONIBLES]
-    if no_disponibles:
-        raise HttpError(400, "Por ahora solo está disponible la evaluación jurídica.")
+    desconocidos = [t for t in tipos if t not in TIPOS]
+    if desconocidos:
+        raise HttpError(400, f"Tipo de evaluación no válido: {', '.join(desconocidos)}.")
     if not datos.proponentes:
         raise HttpError(400, "El proceso no tiene proponentes. Revise la carpeta de Drive.")
 
     gestiona = usuario.es_superadmin or usuario.rol in (Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA)
     responsables: dict[str, Usuario | None] = {}
     for tipo in tipos:
-        if datos.sin_responsable:
+        elegido = datos.responsable_id
+        explicito = datos.sin_responsable or datos.responsable_id is not None
+        if datos.responsables is not None and tipo in datos.responsables:
+            elegido, explicito = datos.responsables[tipo], True
+        elif datos.sin_responsable:
+            elegido = None
+        if explicito and elegido is None:
             responsables[tipo] = None
-        elif datos.responsable_id is not None:
-            if datos.responsable_id != usuario.id and not gestiona:
+        elif explicito:
+            if elegido != usuario.id and not gestiona:
                 raise HttpError(403, "Solo el jefe del área o el administrador pueden asignar a otra persona.")
-            responsables[tipo] = _responsable_valido(entidad.id, tipo, datos.responsable_id, usuario)
+            responsables[tipo] = _responsable_valido(entidad.id, tipo, elegido, usuario)
         else:
             # El abogado que crea su propio proceso queda a cargo.
             responsables[tipo] = usuario if usuario.rol == Rol.EVALUADOR else None
@@ -587,8 +606,8 @@ def evaluar(request: HttpRequest, evaluacion_id: UUID, datos: EncolarIn) -> Eval
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
     exigir_trabajo(usuario, evaluacion)
-    if evaluacion.tipo not in TIPOS_DISPONIBLES:
-        raise HttpError(400, "Este tipo de evaluación aún no está disponible.")
+    if not TIPOS[evaluacion.tipo].disponible:
+        raise HttpError(409, MENSAJE_EN_PREPARACION.format(nombre=TIPOS[evaluacion.tipo].nombre.lower()))
     if datos.proponente_ids is not None:
         propios = set(Proponente.objects.filter(proceso_id=evaluacion.proceso_id, id__in=datos.proponente_ids).values_list("id", flat=True))
         if propios != set(datos.proponente_ids):
@@ -706,7 +725,7 @@ def reabrir(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
 def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
-    plantilla = PLANTILLAS.get(evaluacion.tipo)
+    plantilla = TIPOS[evaluacion.tipo].plantilla
     if plantilla is None or not plantilla.exists():
         raise HttpError(400, "Este tipo de evaluación aún no tiene plantilla de informe.")
     proceso = evaluacion.proceso

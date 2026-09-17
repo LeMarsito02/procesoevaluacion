@@ -213,10 +213,39 @@ class CrearYAsignarTests(BaseEvaluaciones):
         self.crear()
         self.crear("abogado@otra.gov.co")
 
-    def test_solo_juridica_disponible(self):
+    def test_tecnica_y_financiera_se_crean_y_asignan_pero_no_evaluan(self):
+        c = Cliente()
+        c.entrar("admin@iccu.gov.co")
+        with self.captureOnCommitCallbacks(execute=True):
+            r = c.post(
+                "/api/evaluaciones/procesos",
+                {
+                    "documento_base": DOCUMENTO_BASE,
+                    "proponentes": PROPONENTES,
+                    "tipos": ["juridica", "tecnica", "financiera"],
+                    "responsables": {"juridica": str(self.evaluador.id), "tecnica": str(self.tecnico.id), "financiera": None},
+                },
+            )
+        self.assertEqual(r.status_code, 201, r.content)
+        por_tipo = {e["tipo"]: e for e in r.json()}
+        self.assertEqual(por_tipo["juridica"]["responsable"]["email"], "abogado@iccu.gov.co")
+        self.assertEqual(por_tipo["tecnica"]["responsable"]["email"], "tecnico@iccu.gov.co")
+        self.assertIsNone(por_tipo["financiera"]["responsable"])
+        self.assertTrue(por_tipo["juridica"]["tipo_disponible"])
+        self.assertFalse(por_tipo["tecnica"]["tipo_disponible"])
+        self.assertEqual({m.to[0] for m in mail.outbox}, {"abogado@iccu.gov.co", "tecnico@iccu.gov.co"})
+        # El técnico no puede ser responsable jurídico (no tiene el área), y la técnica aún no evalúa.
+        r = c.post(f"/api/evaluaciones/{por_tipo['tecnica']['id']}/evaluar", {})
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("en preparación", r.json()["detail"])
+        self.assertEqual(c.get(f"/api/evaluaciones/{por_tipo['tecnica']['id']}/informe").status_code, 400)
+        tipos = {t["clave"]: t["disponible"] for t in c.get("/api/evaluaciones/tipos").json()}
+        self.assertEqual(tipos, {"juridica": True, "tecnica": False, "financiera": False})
+
+    def test_tipo_invalido(self):
         c = Cliente()
         c.entrar("jefe@iccu.gov.co")
-        r = c.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "tipos": ["tecnica"]})
+        r = c.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "tipos": ["ambiental"]})
         self.assertEqual(r.status_code, 400)
 
 

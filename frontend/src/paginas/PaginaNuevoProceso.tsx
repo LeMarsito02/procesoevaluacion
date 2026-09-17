@@ -9,7 +9,8 @@ import { crearProceso } from '../evaluaciones'
 import { mensajeDe } from '../http'
 import { navegar } from '../rutas'
 import { useSesion } from '../sesion'
-import QuienEvalua, { type Eleccion } from './QuienEvalua'
+import QuienEvalua from './QuienEvalua'
+import { SELECCION_INICIAL, type SeleccionTipos } from './seleccionTipos'
 
 /** Asistente: Documento Base y carpeta de Drive → datos del proceso → crear. */
 export default function PaginaNuevoProceso() {
@@ -29,7 +30,8 @@ export default function PaginaNuevoProceso() {
   const { usuario } = useSesion()!
   const esSuper = usuario.rol === 'superadmin'
   const [entidadId, setEntidadId] = useState<string | null>(esSuper ? null : (usuario.entidad?.id ?? null))
-  const [eleccion, setEleccion] = useState<Eleccion>('')
+  const [seleccion, setSeleccion] = useState<SeleccionTipos>(SELECCION_INICIAL)
+  const tiposElegidos = Object.entries(seleccion).filter(([, s]) => s.incluir)
 
   async function analizar() {
     if (!archivo) return
@@ -53,20 +55,25 @@ export default function PaginaNuevoProceso() {
     setCreando(true)
     setErrorCrear(null)
     try {
-      const [evaluacion] = await crearProceso({
+      const creadas = await crearProceso({
         documento_base: datos.construir(codigoProceso, fechaCierre),
         carpeta_drive: carpetaDrive,
         proponentes,
         proponentes_no_reconocidos: noReconocidos,
-        tipos: ['juridica'],
+        tipos: tiposElegidos.map(([clave]) => clave),
         entidad_id: esSuper ? entidadId : null,
+        // El evaluador queda a cargo de lo que crea; los demás eligen por tipo.
         ...(usuario.rol === 'evaluador'
           ? {}
-          : eleccion === ''
-            ? { sin_responsable: true }
-            : { responsable_id: eleccion === 'yo' ? usuario.id : eleccion }),
+          : {
+              responsables: Object.fromEntries(
+                tiposElegidos.map(([clave, s]) => [clave, s.eleccion === '' ? null : s.eleccion === 'yo' ? usuario.id : s.eleccion]),
+              ),
+            }),
       })
-      navegar(`/evaluaciones/${evaluacion.id}`, true)
+      // Se abre la primera evaluación que ya tiene motor automático.
+      const destino = creadas.find((e) => e.tipo_disponible) ?? creadas[0]
+      navegar(`/evaluaciones/${destino.id}`, true)
     } catch (err) {
       setErrorCrear(mensajeDe(err, 'No se pudo crear el proceso.'))
       setCreando(false)
@@ -118,8 +125,8 @@ export default function PaginaNuevoProceso() {
             hayResultados={false}
             textoAccion={`Crear proceso con ${proponentes.length} proponentes`}
             ocupado={creando}
-            deshabilitado={esSuper && !entidadId}
-            antesDeAcciones={<QuienEvalua entidadId={entidadId} eleccion={eleccion} onEntidad={setEntidadId} onEleccion={setEleccion} />}
+            deshabilitado={(esSuper && !entidadId) || tiposElegidos.length === 0}
+            antesDeAcciones={<QuienEvalua entidadId={entidadId} seleccion={seleccion} onEntidad={setEntidadId} onSeleccion={setSeleccion} />}
             onVolver={() => setPaso('nuevo')}
             onEvaluar={crear}
           />

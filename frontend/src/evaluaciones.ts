@@ -47,6 +47,7 @@ export interface EvaluacionResumen {
   aprobada_en: string | null
   puede_trabajar: boolean
   puede_gestionar: boolean
+  tipo_disponible: boolean
   fila: Fila | null
 }
 
@@ -108,6 +109,7 @@ export const crearProceso = (datos: {
   entidad_id?: string | null
   responsable_id?: string | null
   sin_responsable?: boolean
+  responsables?: Record<string, string | null>
 }) => enviarJson<EvaluacionResumen[]>('/api/evaluaciones/procesos', 'POST', datos)
 
 export const guardarDocumentoBase = (id: string, doc: ProcesoDocumentoBase) =>
@@ -163,3 +165,12 @@ export interface EstadoFilaGlobal {
 }
 
 export const estadoDeLaFila = () => pedirJson<EstadoFilaGlobal>('/api/evaluaciones/fila/estado')
+
+export interface TipoEvaluacion {
+  clave: 'juridica' | 'tecnica' | 'financiera'
+  nombre: string
+  descripcion: string
+  disponible: boolean
+}
+
+export const listarTipos = () => pedirJson<TipoEvaluacion[]>('/api/evaluaciones/tipos')
