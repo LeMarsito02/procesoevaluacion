@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import Icono from '../components/Icono'
-import { cambiarClave } from '../cuentas'
+import { cambiarClave, solicitarRecuperacion } from '../cuentas'
 import { useSesion } from '../sesion'
 import CampoClave, { ReglasClave } from './CampoClave'
 import { mensajeDe } from '../http'
@@ -12,6 +12,17 @@ export default function PaginaCuenta() {
   const [confirmacion, setConfirmacion] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [resultado, setResultado] = useState<{ ok: boolean; texto: string } | null>(null)
+  const [olvido, setOlvido] = useState<'inicio' | 'enviando' | 'enviado' | 'error'>('inicio')
+
+  async function enviarEnlace() {
+    setOlvido('enviando')
+    try {
+      await solicitarRecuperacion(usuario.email)
+      setOlvido('enviado')
+    } catch {
+      setOlvido('error')
+    }
+  }
 
   async function guardar() {
     setEnviando(true)
@@ -70,7 +81,9 @@ export default function PaginaCuenta() {
         <div className="card-head">
           <div>
             <h2>Cambiar contraseña</h2>
+            <p>¿Recuerda su contraseña actual? Escríbala y elija una nueva.</p>
           </div>
+          <Icono nombre="escudo" tam={22} />
         </div>
         <div className="field" style={{ marginBottom: 16 }}>
           <label htmlFor="actual">Contraseña actual</label>
@@ -99,6 +112,31 @@ export default function PaginaCuenta() {
           </button>
         </div>
       </form>
+
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2>¿No recuerda su contraseña actual?</h2>
+            <p>
+              Le enviamos a <strong>{usuario.email}</strong> un enlace para crear una nueva, sin necesidad de la actual. El enlace
+              vence en 2 horas.
+            </p>
+          </div>
+        </div>
+        {olvido === 'enviado' ? (
+          <div className="callout callout-ok">
+            <Icono nombre="check" />
+            <div>Listo. Revise su correo (también la carpeta de spam) y siga el enlace.</div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" type="button" onClick={enviarEnlace} disabled={olvido === 'enviando'}>
+              {olvido === 'enviando' ? <span className="spinner oscuro" /> : <Icono nombre="flecha" tam={16} />} Enviarme el enlace
+            </button>
+            {olvido === 'error' && <span className="small" style={{ color: 'var(--bad)' }}>No se pudo enviar. Inténtelo de nuevo en unos minutos.</span>}
+          </div>
+        )}
+      </section>
     </main>
   )
 }

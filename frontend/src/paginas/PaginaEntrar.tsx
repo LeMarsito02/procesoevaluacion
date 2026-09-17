@@ -199,7 +199,7 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
           <div className="label-fila">
             <label htmlFor="clave">Contraseña</label>
             <button type="button" className="enlace" onClick={() => setEtapa('recuperar')}>
-              ¿La olvidó?
+              ¿Olvidó su contraseña?
             </button>
           </div>
           <CampoClave id="clave" valor={clave} onCambiar={setClave} autoComplete="current-password" />

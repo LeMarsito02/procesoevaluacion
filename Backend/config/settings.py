@@ -130,9 +130,16 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+_CORREO_BACKEND = os.environ.get("CORREO_BACKEND", "django.core.mail.backends.console.EmailBackend")
 MAILERS = {
     "default": {
-        "BACKEND": os.environ.get("CORREO_BACKEND", "django.core.mail.backends.console.EmailBackend"),
+        "BACKEND": _CORREO_BACKEND,
+        # Con el backend "filebased" (desarrollo) cada correo queda como archivo en esta carpeta.
+        "OPTIONS": (
+            {"file_path": os.environ.get("CORREO_CARPETA", str(BASE_DIR / ".scratch" / "correos"))}
+            if _CORREO_BACKEND.endswith("filebased.EmailBackend")
+            else {}
+        ),
     },
 }
 

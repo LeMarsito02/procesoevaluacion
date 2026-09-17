@@ -167,7 +167,7 @@ function MenuUsuario() {
             </button>
           )}
           <button type="button" role="menuitem" onClick={() => ir('/cuenta')}>
-            <Icono nombre="lapiz" tam={16} /> Mi cuenta
+            <Icono nombre="lapiz" tam={16} /> Mi cuenta y contraseña
           </button>
           <button type="button" role="menuitem" className="menu-salir" onClick={sesion.salir}>
             <Icono nombre="atras" tam={16} /> Cerrar sesión
