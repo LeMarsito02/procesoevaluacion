@@ -27,7 +27,12 @@ PAGINAS_A_REVISAR = 2
 # vio en un documento real con el espacio entre "SEGURIDAD" y "SOCIAL"
 # comido por la extracción ("SEGURIDADSOCIAL"), así que el espacio es
 # opcional.
-TITULO_FORMATO5_RE = re.compile(r"FORMATO\s*5\b.{0,15}PAGOS?\s+AL\s+SISTEMA\s+DE\s+SEGURIDAD\s*SOCIAL")
+# Variantes reales: "FORMATO 5 - PAGOS DE SEGURIDAD SOCIAL Y APORTES
+# LEGALES" (sin "AL SISTEMA") y "FORMATO NO. 5 – CERTIFICACION DE PAGOS DE
+# SEGURIDAD SOCIAL".
+TITULO_FORMATO5_RE = re.compile(
+    r"FORMATO\s*(?:NO\.?\s*)?5\b.{0,40}?PAGOS?\s+(?:AL\s+SISTEMA\s+)?DE\s+SEGURIDAD\s*SOCIAL"
+)
 PISTAS_FORMATO5 = ("formato 5", "seguridad social", "seg social", "parafiscales")
 
 
@@ -66,6 +71,8 @@ def _nombre_aparece_en_texto(nombre: str, texto_norm: str) -> bool:
 
 
 PAGINAS_MAXIMAS_FORMATO5 = 8
+
+REVISOR_FISCAL_CERTIFICA_RE = re.compile(r"EN (?:MI )?CALIDAD DE REVISOR(?:A)? FISCAL|EN MI CONDICION DE REVISOR(?:A)? FISCAL")
 
 # NIT de la empresa que certifica: "MSING S.A.S. IDENTIFICADA CON NIT
 # 900.574.741-7", "NIT NO. 900.709-306-8", "NIT.NO.901.950.937- 1". Se toman
@@ -230,6 +237,14 @@ def evaluar_requisito12(
 
     if tipo_proponente in ("consorcio", "union_temporal"):
         return _evaluar_formato5_plural(pdfs, codigo_proceso)
+
+    if REVISOR_FISCAL_CERTIFICA_RE.search(texto_norm):
+        # La norma (art. 50 Ley 789 de 2002) pide que certifique el revisor
+        # fiscal cuando la sociedad lo tiene: se confirmó en 5 proponentes
+        # reales firmado así, sin el representante legal.
+        return ResultadoEvaluacionSegSocial(
+            cumple=True, motivo="certificado por el revisor fiscal de la sociedad", archivo=archivo
+        )
 
     representante = _representante_legal_individual(pdfs)
     if representante is None:
