@@ -65,9 +65,44 @@ def _ocr_pagina(page) -> str:
     return salida.stdout.decode("utf-8", errors="ignore")
 
 
+# Texto ya extraído en este worker para el proponente en curso, por
+# (huella del PDF, número de página): los 18 requisitos leen muchas veces
+# las mismas páginas y extract_text es lo más caro. Se vacía al cambiar de
+# proponente (ver `limpiar_memoria_texto`).
+_TEXTO_POR_PAGINA: dict[tuple[str, int], str] = {}
+_HUELLAS: dict[int, tuple[bytes, str]] = {}
+
+
+def limpiar_memoria_texto() -> None:
+    _TEXTO_POR_PAGINA.clear()
+    _HUELLAS.clear()
+
+
+def _huella(contenido: bytes) -> str:
+    # Se guarda también la referencia al objeto: así su id no puede
+    # reutilizarse por otro PDF mientras la entrada exista.
+    guardada = _HUELLAS.get(id(contenido))
+    if guardada is not None and guardada[0] is contenido:
+        return guardada[1]
+    huella = hashlib.md5(contenido).hexdigest()
+    _HUELLAS[id(contenido)] = (contenido, huella)
+    return huella
+
+
 def texto_pagina(page) -> str:
     """Texto de una página de pdfplumber; si la página es escaneada (sin
     texto útil pero con imagen), se obtiene con OCR (tesseract), cacheado."""
+    huella = getattr(page.pdf, "_huella_contenido", None)
+    clave = (huella, page.page_number) if huella else None
+    if clave is not None and clave in _TEXTO_POR_PAGINA:
+        return _TEXTO_POR_PAGINA[clave]
+    texto = _texto_pagina_sin_memoria(page)
+    if clave is not None:
+        _TEXTO_POR_PAGINA[clave] = texto
+    return texto
+
+
+def _texto_pagina_sin_memoria(page) -> str:
     texto = page.extract_text() or ""
     if not OCR_HABILITADO or len(_ESTAMPA_FIRMA_RE.sub("", texto).strip()) >= OCR_MINIMO_CARACTERES:
         return texto
@@ -100,7 +135,7 @@ def abrir_pdf(contenido: bytes) -> Iterator[pdfplumber.PDF]:
         if reparado is None:
             raise
         pdf = pdfplumber.open(io.BytesIO(reparado))
-    pdf._huella_contenido = hashlib.md5(contenido).hexdigest()
+    pdf._huella_contenido = _huella(contenido)
     with pdf:
         yield pdf
 

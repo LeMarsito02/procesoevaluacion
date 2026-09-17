@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -83,7 +84,24 @@ def _metadata_en_cache(file_id: str) -> dict | None:
         return None
 
 
+# Memoria corta en el worker: los 18 requisitos de un proponente consultan
+# los mismos metadatos y leen el mismo zip; no tiene sentido pedirlos a
+# Drive (o leer cientos de MB del disco) 18 veces seguidas.
+_METADATA_MEMORIA: dict[str, tuple[float, dict]] = {}
+_METADATA_TTL_SEGUNDOS = 600
+_ULTIMO_ZIP_LEIDO: tuple[str, str | None, bytes] | None = None
+
+
 def get_file_metadata(file_id: str) -> dict:
+    guardada = _METADATA_MEMORIA.get(file_id)
+    if guardada is not None and time.monotonic() - guardada[0] < _METADATA_TTL_SEGUNDOS:
+        return guardada[1]
+    metadata = _get_file_metadata(file_id)
+    _METADATA_MEMORIA[file_id] = (time.monotonic(), metadata)
+    return metadata
+
+
+def _get_file_metadata(file_id: str) -> dict:
     if _solo_cache():
         cacheada = _metadata_en_cache(file_id)
         if cacheada is not None:
@@ -102,6 +120,19 @@ def download_file_bytes(file_id: str, metadata: dict | None = None) -> bytes:
     """Descarga un archivo de Drive, cacheándolo en disco por checksum
     (md5Checksum) para no volver a bajarlo si no ha cambiado en Drive. Si
     Drive no responde y el archivo ya está en caché, se usa el de caché."""
+    global _ULTIMO_ZIP_LEIDO
+    cache_zip, cache_meta = _cache_paths(file_id)
+
+    md5_pedido = metadata.get("md5Checksum") if metadata else None
+    if _ULTIMO_ZIP_LEIDO is not None and _ULTIMO_ZIP_LEIDO[0] == file_id and _ULTIMO_ZIP_LEIDO[1] == md5_pedido:
+        return _ULTIMO_ZIP_LEIDO[2]
+    _ULTIMO_ZIP_LEIDO = None
+    data = _download_file_bytes(file_id, metadata)
+    _ULTIMO_ZIP_LEIDO = (file_id, md5_pedido, data)
+    return data
+
+
+def _download_file_bytes(file_id: str, metadata: dict | None) -> bytes:
     cache_zip, cache_meta = _cache_paths(file_id)
 
     if metadata is None:

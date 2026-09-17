@@ -14,6 +14,9 @@ interface RequisitoSectionProps {
   onResultadosChange: (resultados: ResultadoRequisito[]) => void
   renderMotivo?: (r: ResultadoRequisito) => React.ReactNode
   renderExtraCumple?: (r: ResultadoRequisito) => React.ReactNode
+  /** Resultados que llegan de "Evaluar todos los requisitos": reemplazan los
+   * de esta sección igual que si se hubiera evaluado desde su botón. */
+  resultadosExternos?: ResultadoRequisito[]
 }
 
 export default function RequisitoSection({
@@ -28,6 +31,7 @@ export default function RequisitoSection({
   onResultadosChange,
   renderMotivo,
   renderExtraCumple,
+  resultadosExternos,
 }: RequisitoSectionProps) {
   const [resultados, setResultados] = useState<ResultadoRequisito[]>([])
   const [evaluando, setEvaluando] = useState(false)
@@ -35,11 +39,23 @@ export default function RequisitoSection({
   const [progreso, setProgreso] = useState<{ completados: number; total: number } | null>(null)
   const [inicioEvaluacion, setInicioEvaluacion] = useState<number | null>(null)
   const [ultimaEstimacion, setUltimaEstimacion] = useState<{ restanteMs: number; timestamp: number } | null>(null)
-  const [ahora, setAhora] = useState(Date.now())
+  const [ahora, setAhora] = useState(() => Date.now())
   const [overrides, setOverrides] = useState<Record<string, boolean>>({})
   const [cargandoDocumento, setCargandoDocumento] = useState<string | null>(null)
   const [errorVisor, setErrorVisor] = useState<string | null>(null)
   const [seleccionArchivo, setSeleccionArchivo] = useState<Record<string, string>>({})
+
+  // Ajuste durante el render (patrón recomendado por React en vez de un
+  // efecto): cuando llegan resultados nuevos de "Evaluar todos", reemplazan
+  // los de la sección.
+  const [externosAplicados, setExternosAplicados] = useState(resultadosExternos)
+  if (resultadosExternos !== externosAplicados) {
+    setExternosAplicados(resultadosExternos)
+    if (resultadosExternos) {
+      setOverrides({})
+      setResultados(resultadosExternos)
+    }
+  }
 
   useEffect(() => {
     if (!evaluando) return

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pdfplumber
 
+from app.procesamiento.memoria_proponente import memo_por_pdfs
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from app.procesamiento.pdf_utils import abrir_pdf, extraer_texto, texto_pagina
@@ -109,6 +110,7 @@ def _orden_busqueda(nombres: list[str]) -> list[str]:
     return sorted(nombres, key=pista)
 
 
+@memo_por_pdfs
 def encontrar_formato1(pdfs: dict[str, bytes]) -> tuple[str, bytes] | None:
     """Busca, entre los PDF de un proponente, el que trae el título
     'Formato 1 - Carta de presentación de la oferta' en sus primeras páginas."""
@@ -344,6 +346,7 @@ TIPO_PROPONENTE_FALLBACK_RE = re.compile(r"REPRESENTANTE LEGAL DEL?(?:\s+LA)?\s+
 _TIPO_PROPONENTE_FALLBACK_MAP = {"CONSORCIO": "consorcio", "UNION TEMPORAL": "union_temporal"}
 
 
+@memo_por_pdfs
 def obtener_tipo_proponente(pdfs: dict[str, bytes]) -> str | None:
     """Encuentra el Formato 1 dentro de los PDF del proponente y determina si
     es persona natural, jurídica, consorcio o unión temporal. Lo usan otros

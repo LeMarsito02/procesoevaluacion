@@ -5,6 +5,7 @@ from datetime import date
 
 from dateutil.relativedelta import relativedelta
 
+from app.procesamiento.memoria_proponente import memo_por_pdfs
 from app.evaluacion.formato1 import (
     _clave_cache,
     _guardar_cache,
@@ -131,6 +132,7 @@ def _orden_busqueda(nombres: list[str], pistas: tuple[str, ...]) -> list[str]:
     return sorted(nombres, key=pista)
 
 
+@memo_por_pdfs
 def encontrar_documentos(pdfs: dict[str, bytes], titulo_re: re.Pattern[str], pistas: tuple[str, ...]) -> list[str]:
     """Devuelve los nombres de TODOS los PDF cuyo título calza — puede haber
     más de uno en un proponente plural (uno por cada integrante persona

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -9,27 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
-from app.evaluacion.antecedentes import (
-    evaluar_proponente_requisito5,
-    evaluar_proponente_requisito14,
-    evaluar_proponente_requisito15,
-    evaluar_proponente_requisito16,
-    evaluar_proponente_requisito17,
-)
-from app.evaluacion.camara_comercio import (
-    evaluar_proponente_requisito6,
-    evaluar_proponente_requisito7,
-    evaluar_proponente_requisito8,
-    evaluar_proponente_requisito9,
-    evaluar_proponente_requisito10,
-    evaluar_proponente_requisito18,
-)
-from app.evaluacion.copnia import evaluar_proponente_requisito2, evaluar_proponente_requisito3
-from app.evaluacion.formato1 import evaluar_proponente
-from app.evaluacion.garantia import evaluar_proponente_requisito11
-from app.evaluacion.proponente_plural import evaluar_proponente_requisito4
-from app.evaluacion.seguridad_social import evaluar_proponente_requisito12
-from app.evaluacion.trivial import evaluar_proponente_requisito13
+from app.evaluacion.todos import EVALUADORES_POR_REQUISITO, EvaluadorProponente, evaluar_proponente_todos
 from app.excel.filler import fill_template
 from app.integrations.drive import DriveAccessError, DriveConfigError, download_file_bytes, list_proponentes
 from app.models.proceso import (
@@ -116,7 +95,6 @@ async def generar_excel(payload: GenerarExcelRequest) -> Response:
     )
 
 
-EvaluadorProponente = Callable[[Proponente, ProcesoDocumentoBase], ResultadoRequisito]
 
 
 async def _evaluar_en_proceso(
@@ -153,32 +131,6 @@ async def _evaluar_en_proceso(
         return ResultadoRequisito(**base, error=f"No se pudo evaluar automáticamente: {exc}")
 
 
-# Un evaluador por requisito: recibe (proponente, proceso) y devuelve su
-# ResultadoRequisito. Añadir un requisito nuevo es agregar una entrada aquí —
-# las rutas /evaluar-requisito-N y /evaluar-requisito-N/proponente se generan
-# solas más abajo, sin duplicar código por cada uno.
-EVALUADORES_POR_REQUISITO: dict[int, EvaluadorProponente] = {
-    1: evaluar_proponente,
-    2: evaluar_proponente_requisito2,
-    3: evaluar_proponente_requisito3,
-    4: evaluar_proponente_requisito4,
-    5: evaluar_proponente_requisito5,
-    6: evaluar_proponente_requisito6,
-    7: evaluar_proponente_requisito7,
-    8: evaluar_proponente_requisito8,
-    9: evaluar_proponente_requisito9,
-    10: evaluar_proponente_requisito10,
-    11: evaluar_proponente_requisito11,
-    12: evaluar_proponente_requisito12,
-    13: evaluar_proponente_requisito13,
-    14: evaluar_proponente_requisito14,
-    15: evaluar_proponente_requisito15,
-    16: evaluar_proponente_requisito16,
-    17: evaluar_proponente_requisito17,
-    18: evaluar_proponente_requisito18,
-}
-
-
 def _registrar_rutas_requisito(numero: int, evaluador: EvaluadorProponente) -> None:
     async def evaluar_batch(payload: EvaluarRequisitosRequest) -> list[ResultadoRequisito]:
         if not payload.proponentes:
@@ -209,6 +161,53 @@ def _registrar_rutas_requisito(numero: int, evaluador: EvaluadorProponente) -> N
 
 for _numero, _evaluador in EVALUADORES_POR_REQUISITO.items():
     _registrar_rutas_requisito(_numero, _evaluador)
+
+
+async def _evaluar_todos_en_proceso(proponente: Proponente, proceso: ProcesoDocumentoBase) -> list[ResultadoRequisito]:
+    """Los 18 requisitos de un proponente en un solo worker (ver
+    app/evaluacion/todos.py). Mismo aislamiento de fallos que
+    `_evaluar_en_proceso`: si el worker muere, se reintenta una vez y si no,
+    cada requisito queda con `error` para revisión manual."""
+    loop = asyncio.get_running_loop()
+
+    def con_error(mensaje: str) -> list[ResultadoRequisito]:
+        return [
+            ResultadoRequisito(
+                hoja=proponente.hoja,
+                numero_orden=proponente.numero_orden,
+                nombre_proponente=proponente.nombre_proponente,
+                requisito=numero,
+                error=mensaje,
+            )
+            for numero in EVALUADORES_POR_REQUISITO
+        ]
+
+    try:
+        return await loop.run_in_executor(obtener_pool(), evaluar_proponente_todos, proponente, proceso)
+    except BrokenProcessPool:
+        try:
+            return await loop.run_in_executor(obtener_pool(), evaluar_proponente_todos, proponente, proceso)
+        except Exception as exc:  # noqa: BLE001
+            return con_error(f"No se pudo evaluar (el proceso murió, posiblemente por falta de memoria): {exc}")
+    except MemoryError:
+        return con_error("No se pudo evaluar: el proponente superó el límite de memoria del servidor. Revísalo manualmente.")
+    except Exception as exc:  # noqa: BLE001
+        return con_error(f"No se pudo evaluar automáticamente: {exc}")
+
+
+@router.post("/evaluar-todos/proponente", response_model=list[ResultadoRequisito])
+async def evaluar_todos_proponente(payload: EvaluarProponenteRequest) -> list[ResultadoRequisito]:
+    return await _evaluar_todos_en_proceso(payload.proponente, payload.documento_base)
+
+
+@router.post("/evaluar-todos", response_model=list[ResultadoRequisito])
+async def evaluar_todos(payload: EvaluarRequisitosRequest) -> list[ResultadoRequisito]:
+    if not payload.proponentes:
+        raise HTTPException(status_code=400, detail="No hay proponentes para evaluar.")
+    por_proponente = await asyncio.gather(
+        *(_evaluar_todos_en_proceso(p, payload.documento_base) for p in payload.proponentes)
+    )
+    return sorted((r for lista in por_proponente for r in lista), key=lambda r: (r.numero_orden, r.requisito))
 
 
 @router.post("/proponentes/documento")

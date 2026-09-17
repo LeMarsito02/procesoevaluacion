@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
+from app.procesamiento.memoria_proponente import memo_por_pdfs
 from app.evaluacion.formato1 import _clave_cache, _guardar_cache, _leer_cache, _norm
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
@@ -98,6 +99,7 @@ def _orden_busqueda(nombres: list[str]) -> list[str]:
     return sorted(nombres, key=pista)
 
 
+@memo_por_pdfs
 def encontrar_poliza(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
     """Busca la póliza de garantía de seriedad de la oferta por su título
     interno, sin importar el nombre del archivo. Devuelve (nombre_archivo,

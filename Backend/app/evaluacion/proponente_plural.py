@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from app.procesamiento.memoria_proponente import memo_por_pdfs
 from app.evaluacion.formato1 import (
     _clave_cache,
     _extraer_nombre_apertura,
@@ -104,6 +105,7 @@ def _orden_busqueda_formato2(nombres: list[str]) -> list[str]:
     return sorted(nombres, key=pista)
 
 
+@memo_por_pdfs
 def encontrar_formato2(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
     """Busca, entre los PDF del proponente, el Formato 2 (Conformación de
     Proponente Plural) por su título interno. Devuelve (nombre_archivo,
@@ -240,6 +242,7 @@ def evaluar_requisito4(pdfs: dict[str, bytes], tipo_proponente: str | None) -> R
     return ResultadoEvaluacionPlural(cumple=cumple, motivo=motivo, datos=datos, archivo_formato2=archivo_formato2)
 
 
+@memo_por_pdfs
 def obtener_personas_a_verificar(pdfs: dict[str, bytes], tipo_proponente: str | None) -> list[tuple[str, str | None]]:
     """Devuelve la lista de personas cuyos antecedentes (REDAM, Contraloría,
     Procuraduría, Policía, RNMC) hay que verificar: el representante legal

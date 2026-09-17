@@ -8,6 +8,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from app.procesamiento.memoria_proponente import PdfsProponente
+from app.procesamiento.pdf_utils import limpiar_memoria_texto
+
 MAX_PROFUNDIDAD = 6
 
 # Algunos proponentes comprimen sus documentos en .rar en vez de .zip.
@@ -81,7 +84,30 @@ def _deduplicar_por_contenido(pdfs: dict[str, bytes]) -> dict[str, bytes]:
     return resultado
 
 
+# Último zip extraído en este worker: los evaluadores de los 18 requisitos
+# de un mismo proponente reciben el mismo PdfsProponente (y comparten su
+# memoria de búsquedas) en vez de descomprimir el zip 18 veces. Solo se
+# guarda uno para no acumular memoria.
+_ULTIMO_ZIP: tuple[bytes, str, PdfsProponente] | None = None
+
+
 def extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> dict[str, bytes]:
+    if _profundidad > 0 or _ruta:
+        return _extraer_pdfs(zip_bytes, _profundidad, _ruta)
+    global _ULTIMO_ZIP
+    if _ULTIMO_ZIP is not None and _ULTIMO_ZIP[0] is zip_bytes:
+        return _ULTIMO_ZIP[2]
+    huella = hashlib.md5(zip_bytes).hexdigest()
+    if _ULTIMO_ZIP is not None and _ULTIMO_ZIP[1] == huella:
+        return _ULTIMO_ZIP[2]
+    _ULTIMO_ZIP = None
+    limpiar_memoria_texto()
+    pdfs = PdfsProponente(_extraer_pdfs(zip_bytes))
+    _ULTIMO_ZIP = (zip_bytes, huella, pdfs)
+    return pdfs
+
+
+def _extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> dict[str, bytes]:
     """Extrae recursivamente todos los PDF de un zip, incluyendo zips y rars
     anidados dentro de él (a cualquier profundidad, mezclados). El resultado
     del nivel superior queda deduplicado por contenido (ver
@@ -106,7 +132,7 @@ def extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> di
                 if lower.endswith(".pdf"):
                     pdfs[ruta_completa] = contenido
                 elif lower.endswith(".zip"):
-                    pdfs.update(extraer_pdfs(contenido, _profundidad + 1, ruta_completa))
+                    pdfs.update(_extraer_pdfs(contenido, _profundidad + 1, ruta_completa))
                 elif lower.endswith(".rar"):
                     pdfs.update(_extraer_rar(contenido, _profundidad + 1, ruta_completa))
     except zipfile.BadZipFile:

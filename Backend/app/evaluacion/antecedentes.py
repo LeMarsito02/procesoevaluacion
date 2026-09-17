@@ -4,6 +4,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from app.procesamiento.memoria_proponente import memo_por_pdfs
 from app.evaluacion.formato1 import (
     _clave_cache,
     _guardar_cache,
@@ -62,6 +63,7 @@ def _configs() -> tuple[AntecedenteConfig, ...]:
     return (CONFIG_REDAM, CONFIG_CONTRALORIA, CONFIG_PROCURADURIA, CONFIG_POLICIA, CONFIG_RNMC)
 
 
+@memo_por_pdfs
 def leer_certificados(pdfs: dict[str, bytes]) -> list[Certificado]:
     """Recorre los PDF del proponente página por página y separa cada
     certificado de antecedentes que encuentre (de cualquier entidad), aunque

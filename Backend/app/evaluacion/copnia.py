@@ -6,6 +6,7 @@ from datetime import date
 
 from dateutil.relativedelta import relativedelta
 
+from app.procesamiento.memoria_proponente import memo_por_pdfs
 from app.evaluacion.formato1 import (
     _clave_cache,
     _extraer_nombre_apertura,
@@ -62,6 +63,7 @@ def _orden_busqueda_copnia(nombres: list[str]) -> list[str]:
     return sorted(nombres, key=pista)
 
 
+@memo_por_pdfs
 def encontrar_copnias(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
     """Devuelve TODOS los certificados COPNIA del proponente, buscándolos por
     su título interno (sin importar el nombre del archivo ni si vienen

@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import {
   analizarDocumentoBase,
+  evaluarTodosLosRequisitos,
   generarExcel,
   type AnalisisResponse,
   type Lote,
@@ -9,7 +10,7 @@ import {
   type Proponente,
   type ResultadoRequisito,
 } from './api'
-import { addMonthsClamped, formatFechaCorta, formatPesos } from './format'
+import { addMonthsClamped, formatDuracion, formatFechaCorta, formatPesos } from './format'
 import RequisitoSection from './RequisitoSection'
 
 type BaseCalculo = 'lote_mayor_valor' | 'presupuesto_total'
@@ -41,6 +42,40 @@ function App() {
 
   function actualizarResultados(numero: number, resultados: ResultadoRequisito[]) {
     setResultadosPorRequisito((prev) => ({ ...prev, [numero]: resultados }))
+  }
+
+  // --- Evaluación de los 18 requisitos de una vez ---
+  const [resultadosGlobales, setResultadosGlobales] = useState<Record<number, ResultadoRequisito[]>>({})
+  const [evaluandoTodo, setEvaluandoTodo] = useState(false)
+  const [progresoTodo, setProgresoTodo] = useState<{ completados: number; total: number } | null>(null)
+  const [inicioTodo, setInicioTodo] = useState<number | null>(null)
+  const [duracionTodo, setDuracionTodo] = useState<number | null>(null)
+  const [ahoraTodo, setAhoraTodo] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!evaluandoTodo) return
+    const id = window.setInterval(() => setAhoraTodo(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [evaluandoTodo])
+
+  async function handleEvaluarTodo() {
+    setEvaluandoTodo(true)
+    setDuracionTodo(null)
+    const inicio = Date.now()
+    setInicioTodo(inicio)
+    setAhoraTodo(inicio)
+    setProgresoTodo({ completados: 0, total: proponentes.length })
+    try {
+      const porRequisito = await evaluarTodosLosRequisitos(construirPayload(), proponentes, (completados, total) =>
+        setProgresoTodo({ completados, total }),
+      )
+      setResultadosGlobales(porRequisito)
+      setDuracionTodo(Date.now() - inicio)
+    } finally {
+      setEvaluandoTodo(false)
+      setProgresoTodo(null)
+      setInicioTodo(null)
+    }
   }
 
   const todosLosResultados = useMemo(() => Object.values(resultadosPorRequisito).flat(), [resultadosPorRequisito])
@@ -431,9 +466,32 @@ function App() {
             )}
           </section>
 
+          <section className="card">
+            <h2>Evaluar todos los requisitos</h2>
+            <p>
+              Evalúa los 18 requisitos jurídicos de los {proponentes.length} proponentes de una sola vez: cada proponente se
+              procesa en una sola pasada. Los resultados aparecen en cada requisito de abajo, donde puedes revisarlos.
+            </p>
+            <button type="button" onClick={handleEvaluarTodo} disabled={evaluandoTodo || proponentes.length === 0}>
+              {evaluandoTodo ? 'Evaluando…' : 'Evaluar los 18 requisitos de todos los proponentes'}
+            </button>
+            {evaluandoTodo && progresoTodo && inicioTodo && (
+              <p>
+                {progresoTodo.completados} de {progresoTodo.total} proponentes · transcurrido{' '}
+                {formatDuracion(ahoraTodo - inicioTodo)}
+                {progresoTodo.completados > 0 &&
+                  ` · restante aprox. ${formatDuracion(
+                    ((ahoraTodo - inicioTodo) / progresoTodo.completados) * (progresoTodo.total - progresoTodo.completados),
+                  )}`}
+              </p>
+            )}
+            {duracionTodo !== null && <p>Evaluación completa en {formatDuracion(duracionTodo)}.</p>}
+          </section>
+
           <RequisitoSection
             numero={5}
             requisito={1}
+            resultadosExternos={resultadosGlobales[1]}
             titulo="Requisito 1: Carta de presentación de la oferta"
             descripcion={`Descarga el zip de cada proponente desde Drive, busca el Formato 1 por su título interno (sin importar el nombre del archivo) y verifica que mencione algún lote del Documento Base, el número del proceso, el objeto, y que tenga una firma del representante legal. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Formato 1 de todos los proponentes"
@@ -446,6 +504,7 @@ function App() {
           <RequisitoSection
             numero={6}
             requisito={2}
+            resultadosExternos={resultadosGlobales[2]}
             titulo="Requisito 2: Propuesta suscrita o avalada por un Ingeniero y/o Arquitecto"
             descripcion={`Busca el certificado COPNIA (Consejo Profesional Nacional de Ingeniería) por su título interno dentro de los documentos de cada proponente, y verifica que el nombre certificado coincida con quien firma la propuesta, que la matrícula esté vigente, y que el certificado no tenga más de 3 meses de expedido. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar COPNIA de todos los proponentes"
@@ -464,6 +523,7 @@ function App() {
           <RequisitoSection
             numero={7}
             requisito={3}
+            resultadosExternos={resultadosGlobales[3]}
             titulo="Requisito 3: Antecedentes disciplinarios del Ingeniero/Arquitecto (COPNIA)"
             descripcion={`Usa el mismo certificado COPNIA del Requisito 2 y verifica que certifique que el profesional está libre de antecedentes disciplinarios, y que no tenga más de 3 meses de expedido. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar antecedentes COPNIA de todos los proponentes"
@@ -482,6 +542,7 @@ function App() {
           <RequisitoSection
             numero={8}
             requisito={4}
+            resultadosExternos={resultadosGlobales[4]}
             titulo="Requisito 4: Conformación de Proponente Plural (Formato 2)"
             descripcion={`N.A. automático si el proponente es persona natural o jurídica individual. Si es Consorcio o Unión Temporal, busca el Formato 2 por su título interno y verifica que los integrantes sumen 100% de participación y que se pueda identificar al representante legal designado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Conformación de Proponente Plural de todos los proponentes"
@@ -495,6 +556,7 @@ function App() {
           <RequisitoSection
             numero={9}
             requisito={5}
+            resultadosExternos={resultadosGlobales[5]}
             titulo="Requisito 5: REDAM (Registro de Deudores Alimentarios Morosos)"
             descripcion={`Busca el certificado REDAM del representante legal (y del suplente, si es Consorcio/UT) por su título interno, y verifica que confirme que no está inscrito como deudor alimentario moroso. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar REDAM de todos los proponentes"
@@ -507,6 +569,7 @@ function App() {
           <RequisitoSection
             numero={10}
             requisito={14}
+            resultadosExternos={resultadosGlobales[14]}
             titulo="Requisito 14: Boletín de Responsables Fiscales - Contraloría"
             descripcion={`Busca el certificado de la Contraloría (Boletín de Responsables Fiscales - SIBOR) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no está reportado como responsable fiscal. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Contraloría de todos los proponentes"
@@ -519,6 +582,7 @@ function App() {
           <RequisitoSection
             numero={11}
             requisito={15}
+            resultadosExternos={resultadosGlobales[15]}
             titulo="Requisito 15: Antecedentes Disciplinarios - Procuraduría"
             descripcion={`Busca el certificado de la Procuraduría (Registro de Sanciones e Inhabilidades - SIRI) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no registra sanciones ni inhabilidades vigentes. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Procuraduría de todos los proponentes"
@@ -531,6 +595,7 @@ function App() {
           <RequisitoSection
             numero={12}
             requisito={16}
+            resultadosExternos={resultadosGlobales[16]}
             titulo="Requisito 16: Antecedentes Judiciales - Policía Nacional"
             descripcion={`Busca el certificado de la Policía Nacional (antecedentes penales y requerimientos judiciales) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no tiene asuntos pendientes con las autoridades judiciales. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Policía Nacional de todos los proponentes"
@@ -543,6 +608,7 @@ function App() {
           <RequisitoSection
             numero={13}
             requisito={17}
+            resultadosExternos={resultadosGlobales[17]}
             titulo="Requisito 17: Multas - RNMC (Código Nacional de Policía)"
             descripcion={`Busca el certificado del Registro Nacional de Medidas Correctivas (RNMC) del representante legal (y del suplente, si es Consorcio/UT), y verifica que confirme que no tiene medidas correctivas pendientes por cumplir. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar RNMC de todos los proponentes"
@@ -555,6 +621,7 @@ function App() {
           <RequisitoSection
             numero={14}
             requisito={6}
+            resultadosExternos={resultadosGlobales[6]}
             titulo="Requisito 6: Certificado de Existencia y Representación Legal"
             descripcion={`N.A. si es persona natural. Busca el Certificado de Existencia y Representación Legal (Cámara de Comercio) por título interno y verifica que su fecha de expedición no sea mayor a 1 mes antes del cierre. Si es Consorcio/UT, evalúa uno por cada integrante persona jurídica encontrado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Certificado de Existencia de todos los proponentes"
@@ -567,6 +634,7 @@ function App() {
           <RequisitoSection
             numero={15}
             requisito={7}
+            resultadosExternos={resultadosGlobales[7]}
             titulo="Requisito 7: Objeto Social acorde con el objeto de la Licitación"
             descripcion={`N.A. si es persona natural. Usa el mismo Certificado de Existencia del Requisito 6 y compara el objeto social de la empresa con el objeto del proceso. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Objeto Social de todos los proponentes"
@@ -579,6 +647,7 @@ function App() {
           <RequisitoSection
             numero={16}
             requisito={8}
+            resultadosExternos={resultadosGlobales[8]}
             titulo="Requisito 8: Facultades del Representante Legal"
             descripcion={`N.A. si es persona natural. Usa el mismo Certificado de Existencia y verifica si indica expresamente que el representante legal no tiene restricción de cuantía para contratar. Cuando no se puede confirmar (o hay un límite mencionado), queda para revisión humana — este requisito casi siempre necesita una mirada del abogado. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Facultades de todos los proponentes"
@@ -591,6 +660,7 @@ function App() {
           <RequisitoSection
             numero={17}
             requisito={9}
+            resultadosExternos={resultadosGlobales[9]}
             titulo="Requisito 9: Registro Único de Proponentes - RUP"
             descripcion={`Busca el RUP (Cámara de Comercio) por título interno y verifica que su fecha de expedición no sea mayor a 1 mes antes del cierre. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar RUP de todos los proponentes"
@@ -603,6 +673,7 @@ function App() {
           <RequisitoSection
             numero={18}
             requisito={10}
+            resultadosExternos={resultadosGlobales[10]}
             titulo="Requisito 10: Sanciones (dentro del RUP)"
             descripcion="El RUP no trae una sección de sanciones/multas identificable automáticamente por texto, así que este requisito siempre queda para revisión humana — solo confirma que el RUP se haya encontrado."
             textoBoton="Evaluar Sanciones (RUP) de todos los proponentes"
@@ -615,6 +686,7 @@ function App() {
           <RequisitoSection
             numero={19}
             requisito={11}
+            resultadosExternos={resultadosGlobales[11]}
             titulo="Requisito 11: Garantía de Seriedad de la Propuesta"
             descripcion={`Busca la póliza de garantía de seriedad por título interno y verifica que el beneficiario sea la entidad (ICCU), que la vigencia cubra al menos hasta la fecha mínima requerida, y que el valor asegurado sea al menos el 10% del lote de mayor valor. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Garantía de Seriedad de todos los proponentes"
@@ -627,6 +699,7 @@ function App() {
           <RequisitoSection
             numero={20}
             requisito={12}
+            resultadosExternos={resultadosGlobales[12]}
             titulo="Requisito 12: Pago de Seguridad Social y Aportes Legales"
             descripcion={`Busca el Formato 5 por título interno y verifica que mencione al representante legal identificado en el Formato 1. Si es Consorcio/UT, cada integrante debe firmar el suyo propio — ese caso siempre queda para revisión humana. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Pago de Seguridad Social de todos los proponentes"
@@ -639,6 +712,7 @@ function App() {
           <RequisitoSection
             numero={21}
             requisito={18}
+            resultadosExternos={resultadosGlobales[18]}
             titulo="Requisito 18: Certificado de Revisor Fiscal"
             descripcion={`N.A. si el proponente no es una Sociedad Anónima (S.A.) — incluye personas naturales, S.A.S., Ltda. y otros tipos societarios. Si es S.A., verifica que el Certificado de Existencia indique si es abierta o cerrada. Con ${proponentes.length} proponentes esto puede tardar varios minutos.`}
             textoBoton="Evaluar Revisor Fiscal de todos los proponentes"
@@ -651,6 +725,7 @@ function App() {
           <RequisitoSection
             numero={22}
             requisito={13}
+            resultadosExternos={resultadosGlobales[13]}
             titulo="Requisito 13: Registro Único Tributario - RUT"
             descripcion="El abogado confirmó que este requisito no se exige actualmente en este proceso — se marca N.A. para todos los proponentes automáticamente, sin necesidad de revisar documentos."
             textoBoton="Marcar RUT como N.A. para todos los proponentes"
