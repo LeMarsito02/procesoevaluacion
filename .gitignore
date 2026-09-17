@@ -21,3 +21,6 @@ frontend/dist/
 
 # Editor / OS
 .DS_Store
+
+# Material para registro de derechos de autor (se genera aparte)
+Registro_DNDA/

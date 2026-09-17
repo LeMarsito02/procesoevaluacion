@@ -39,6 +39,7 @@ export default function PasoNuevo(props: Props) {
     <main className="page page-narrow">
       <div className="page-head">
         <div>
+          <img className="logo-inicio" src="/logo-mievaluador.png" alt="MiEvaluador by LeMarTek" />
           <div className="eyebrow">Nueva evaluación</div>
           <h1>Evalúe los requisitos jurídicos de un proceso</h1>
           <p>

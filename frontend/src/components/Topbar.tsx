@@ -22,12 +22,12 @@ export default function Topbar({ paso, codigoProceso, pasosDisponibles, onIr }: 
     <header className="topbar">
       <div className="topbar-inner">
         <div className="brand">
-          <div className="brand-mark">
-            <Icono nombre="balanza" tam={20} />
-          </div>
+          <img className="brand-mark" src="/icono-mievaluador.png" alt="" />
           <div className="brand-text">
-            <strong>Evaluador Jurídico</strong>
-            <span>{codigoProceso ? `Proceso ${codigoProceso}` : 'Verificación de requisitos habilitantes'}</span>
+            <strong className="wordmark">
+              <span className="mi">Mi</span>Evaluador
+            </strong>
+            <span className="sub">{codigoProceso ? `Proceso ${codigoProceso}` : 'by LeMarTek'}</span>
           </div>
         </div>
         <nav className="stepper" aria-label="Pasos de la evaluación">
