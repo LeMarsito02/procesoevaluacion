@@ -1,4 +1,4 @@
-"""Evaluación de los 18 requisitos de un proponente en una sola pasada.
+"""Evaluación de los requisitos de un proponente en una sola pasada.
 
 Corre dentro de UN worker los 18 evaluadores seguidos sobre el mismo
 proponente: el zip se descomprime una vez y el texto de cada página se
@@ -29,7 +29,6 @@ from app.evaluacion.formato1 import evaluar_proponente
 from app.evaluacion.garantia import evaluar_proponente_requisito11
 from app.evaluacion.proponente_plural import evaluar_proponente_requisito4
 from app.evaluacion.seguridad_social import evaluar_proponente_requisito12
-from app.evaluacion.trivial import evaluar_proponente_requisito13
 from app.integrations import drive
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from app.procesamiento import pdf_utils, zip_utils
@@ -51,7 +50,8 @@ EVALUADORES_POR_REQUISITO: dict[int, EvaluadorProponente] = {
     10: evaluar_proponente_requisito10,
     11: evaluar_proponente_requisito11,
     12: evaluar_proponente_requisito12,
-    13: evaluar_proponente_requisito13,
+    # 13 (RUT): el abogado indicó ignorarlo por completo. Sin resultado, la
+    # fila del Excel queda como viene en la plantilla.
     14: evaluar_proponente_requisito14,
     15: evaluar_proponente_requisito15,
     16: evaluar_proponente_requisito16,

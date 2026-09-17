@@ -26,6 +26,8 @@ RESULTADOS = ".scratch/medicion_resultados.json"
 TIEMPOS = ".scratch/medicion_tiempos.json"
 COMPARACION = ".scratch/medicion_comparacion.json"
 CONCURRENCIA = 2
+# RUT (Requisito 13): el abogado indicó ignorarlo; no se evalúa ni se mide.
+REQUISITOS_IGNORADOS = {13}
 
 
 def _cargar(path, defecto):
@@ -81,6 +83,8 @@ def comparar(resultados, ground_truth, mapeo, nombres):
     for hoja, idx_gt in mapeo.items():
         for item in resultados.get(hoja, []):
             req = item["requisito"]
+            if req in REQUISITOS_IGNORADOS:
+                continue
             gt_req = ground_truth[idx_gt]["requisitos"].get(str(req))
             if gt_req is None:
                 continue
