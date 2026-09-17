@@ -38,6 +38,25 @@ def _cargar(path, defecto):
         return defecto
 
 
+def sesion_medicion() -> requests.Session:
+    """Inicia sesión con la cuenta de medición (MEDICION_EMAIL / MEDICION_CLAVE en .env)."""
+    import os
+
+    from dotenv import load_dotenv
+
+    load_dotenv(".env")
+    http = requests.Session()
+    csrf = http.get(f"{API}/api/auth/csrf").json()["csrf"]
+    resp = http.post(
+        f"{API}/api/auth/login",
+        json={"email": os.environ["MEDICION_EMAIL"], "password": os.environ["MEDICION_CLAVE"]},
+        headers={"X-CSRFToken": csrf, "Referer": API},
+    )
+    resp.raise_for_status()
+    http.headers.update({"X-CSRFToken": resp.json()["csrf"], "Referer": API})
+    return http
+
+
 def evaluar(proceso_json, proponentes, mapeo):
     resultados = _cargar(RESULTADOS, {})
     tiempos = _cargar(TIEMPOS, {})
@@ -47,9 +66,11 @@ def evaluar(proceso_json, proponentes, mapeo):
     ]
     print(f"Proponentes a evaluar: {len(pendientes)} (ya hechos: {len(mapeo) - len(pendientes)})", flush=True)
 
+    http = sesion_medicion()
+
     def uno(p):
         t0 = time.time()
-        resp = requests.post(
+        resp = http.post(
             f"{API}/api/procesos/evaluar-todos/proponente",
             json={"documento_base": proceso_json, "proponente": json.loads(p.model_dump_json())},
             timeout=3600,

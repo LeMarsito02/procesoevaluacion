@@ -17,6 +17,9 @@ from ninja import File, Form, NinjaAPI, Router
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
+from api.auth import router as auth_router
+from api.equipo import equipo, plataforma
+from cuentas.seguridad import sesion_activa
 from motor.esquemas.proceso import (
     AnalisisResponse,
     EvaluarProponenteRequest,
@@ -35,7 +38,8 @@ from motor.procesamiento.zip_utils import extraer_pdfs
 from motor.workers import BrokenProcessPool, detener_pool, obtener_pool, obtener_pool_pesado
 
 api = NinjaAPI(title="MiEvaluador API", version="1.0", urls_namespace="api")
-procesos = Router(tags=["procesos"])
+# Toda la evaluación exige sesión iniciada (y CSRF en las peticiones que modifican).
+procesos = Router(tags=["procesos"], auth=sesion_activa)
 
 PLANTILLA_JURIDICA = Path(__file__).resolve().parent.parent / "motor" / "plantillas" / "plantilla_evaluacion_juridica.xlsx"
 
@@ -244,3 +248,6 @@ async def ver_documento(request: HttpRequest, payload: VerDocumentoRequest) -> H
 
 
 api.add_router("/procesos", procesos)
+api.add_router("/auth", auth_router)
+api.add_router("/equipo", equipo)
+api.add_router("/plataforma", plataforma)

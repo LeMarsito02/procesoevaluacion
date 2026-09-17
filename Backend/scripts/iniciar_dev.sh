@@ -12,6 +12,7 @@ fi
 cd "$BACKEND"
 source venv/bin/activate
 python manage.py migrate --noinput
+python manage.py preparar_desarrollo
 pkill -f "uvicorn config.asgi:application" 2>/dev/null || true
 nohup uvicorn config.asgi:application --host 127.0.0.1 --port 8000 > .scratch/backend_dev.log 2>&1 &
 
@@ -19,4 +20,4 @@ cd "$BACKEND/../frontend"
 if ! curl -s -o /dev/null http://localhost:5173/; then
   nohup npm run dev -- --host 127.0.0.1 --port 5173 > "$BACKEND/.scratch/frontend_dev.log" 2>&1 &
 fi
-echo "PostgreSQL :5433 · API http://localhost:8000/api/docs · Admin http://localhost:8000/admin · App http://localhost:5173"
+echo "PostgreSQL :5433 · API http://localhost:8000/api/docs · App http://localhost:5173"

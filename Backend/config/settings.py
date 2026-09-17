@@ -133,3 +133,13 @@ MAILERS = {
         "BACKEND": os.environ.get("CORREO_BACKEND", "django.core.mail.backends.console.EmailBackend"),
     },
 }
+
+DEFAULT_FROM_EMAIL = os.environ.get("CORREO_REMITENTE", "MiEvaluador <no-responder@lemartek.com>")
+# Enlaces de los correos (invitaciones, recuperación de contraseña).
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+INVITACION_VIGENCIA_DIAS = 7
+# Tiempo de validez del enlace de recuperación de contraseña (segundos).
+PASSWORD_RESET_TIMEOUT = 60 * 60 * 2
+# El panel de Django no pide segundo factor: en producción solo se publica
+# si se habilita explícitamente (y detrás de VPN).
+ADMIN_DJANGO_HABILITADO = DEBUG or os.environ.get("ADMIN_DJANGO", "0") == "1"

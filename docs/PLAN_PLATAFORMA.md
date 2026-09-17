@@ -134,8 +134,9 @@ Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión 
 
 ## 9. Arquitectura técnica
 
-- **PostgreSQL** (datos, fila de trabajos con `SKIP LOCKED`, RLS) + SQLAlchemy 2 + Alembic.
-- **API FastAPI** separada de los **workers** de evaluación.
+- **Django 6 + Django Ninja** (API tipada, ORM, migraciones, sesiones, CSRF y hashing Argon2 integrados) servido con Uvicorn (ASGI).
+- **PostgreSQL** (datos, fila de trabajos con `SKIP LOCKED`, RLS).
+- **Workers** de evaluación separados de la API; el paquete `motor/` (Python puro, sin Django) conserva toda la lógica de evaluación.
 - **Motor común** + **registro de tipos de evaluación** (jurídica como primer tipo).
 - **Correo SMTP** @lemartek.com. Almacenamiento de archivos por entidad (S3 compatible en LeMarCloud).
 - Frontend React con enrutamiento por páginas, misma marca y solo modo claro.
@@ -144,8 +145,8 @@ Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión 
 
 | Fase | Contenido | Resultado verificable |
 |---|---|---|
-| **F0. Base** | PostgreSQL, migraciones, configuración, estructura del motor común y registro de tipos (jurídica migrada sin cambiar su acierto) | La medición jurídica da el mismo 85,5 %. |
-| **F1. Identidad y aislamiento** | Entidades, áreas, usuarios, roles, login (+ botones de próximamente), invitaciones, recuperación, RLS, auditoría, superadmin con 2FA, pruebas de aislamiento | Dos entidades de prueba no se ven entre sí. |
+| **F0. Base** ✅ | Migración de FastAPI a Django + Django Ninja, PostgreSQL, migraciones, configuración, estructura del motor común y registro de tipos (jurídica migrada sin cambiar su acierto) | La medición jurídica da el mismo 85,5 %. |
+| **F1. Identidad y aislamiento** ✅ | Entidades, áreas, usuarios, roles, login (+ botones de próximamente), invitaciones, recuperación, auditoría, superadmin con 2FA, pruebas de aislamiento. La RLS se aplica en F2 sobre las tablas de datos de la entidad (procesos, evaluaciones, documentos) | Dos entidades de prueba no se ven entre sí. |
 | **F2. Procesos, evaluaciones y asignaciones** | Procesos con varias evaluaciones; asignación por jefe; "Mis evaluaciones", "Procesos de la entidad", "Equipo y asignaciones"; revisiones guardadas en el servidor | Un jefe asigna, el evaluador revisa desde otro equipo sin perder nada. |
 | **F3. Fila de trabajos** | Worker separado, reparto justo, barras de progreso y ETA en vivo, pausar/cancelar, recuperación, correos | Varias evaluaciones de distintos usuarios avanzan en orden y avisan por correo. |
 | **F4. Criterios configurables** | Nivel 1 (parámetros) y nivel 2 (plantillas de regla) con prueba contra ofertas reales y versionado | Una entidad crea un requisito nuevo sin programar y lo prueba. |

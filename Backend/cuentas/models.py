@@ -2,7 +2,8 @@
 
 Cada usuario pertenece a una entidad, excepto el superadministrador de la
 plataforma. El aislamiento completo entre entidades (consultas filtradas,
-Row-Level Security) se construye sobre estos modelos en la fase F1.
+Row-Level Security) se aplica sobre las tablas de datos de cada entidad
+(procesos, evaluaciones, documentos) a partir de la fase F2.
 """
 from __future__ import annotations
 
@@ -28,6 +29,29 @@ class Entidad(models.Model):
 
     def __str__(self) -> str:
         return self.nombre
+
+
+class TipoArea(models.TextChoices):
+    JURIDICA = "juridica", "Jurídica"
+    TECNICA = "tecnica", "Técnica"
+    FINANCIERA = "financiera", "Financiera"
+
+
+class Area(models.Model):
+    """Área de evaluación de una entidad (ej. el equipo jurídico del ICCU)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.CASCADE, related_name="areas")
+    tipo = models.CharField(max_length=20, choices=TipoArea.choices)
+
+    class Meta:
+        verbose_name = "área"
+        verbose_name_plural = "áreas"
+        ordering = ["entidad__nombre", "tipo"]
+        constraints = [models.UniqueConstraint(fields=["entidad", "tipo"], name="area_unica_por_entidad")]
+
+    def __str__(self) -> str:
+        return f"{self.get_tipo_display()} · {self.entidad}"
 
 
 class Rol(models.TextChoices):
@@ -61,9 +85,13 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     nombre_completo = models.CharField(max_length=200)
     entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, null=True, blank=True, related_name="usuarios")
     rol = models.CharField(max_length=20, choices=Rol.choices, default=Rol.EVALUADOR)
+    areas = models.ManyToManyField(Area, blank=True, related_name="usuarios")
     is_active = models.BooleanField("activo", default=True)
     is_staff = models.BooleanField("acceso al panel de administración", default=False)
     creado_en = models.DateTimeField(default=timezone.now)
+    # Segundo factor (TOTP). Obligatorio para el superadministrador.
+    totp_secreto = models.CharField(max_length=64, blank=True, editable=False)
+    totp_activo = models.BooleanField("2FA activo", default=False)
 
     objects = UsuarioManager()
 
@@ -91,3 +119,77 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     @property
     def es_superadmin(self) -> bool:
         return self.rol == Rol.SUPERADMIN
+
+    @property
+    def requiere_2fa(self) -> bool:
+        return self.es_superadmin
+
+
+class Invitacion(models.Model):
+    """Invitación a una entidad. Solo se guarda el hash del token: quien lea
+    la base de datos no puede usar las invitaciones pendientes."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.CASCADE, related_name="invitaciones")
+    email = models.EmailField("correo electrónico")
+    rol = models.CharField(max_length=20, choices=[c for c in Rol.choices if c[0] != Rol.SUPERADMIN])
+    areas = models.ManyToManyField(Area, blank=True)
+    token_hash = models.CharField(max_length=64, unique=True)
+    invitada_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name="+")
+    creada_en = models.DateTimeField(auto_now_add=True)
+    expira_en = models.DateTimeField()
+    aceptada_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "invitación"
+        verbose_name_plural = "invitaciones"
+        ordering = ["-creada_en"]
+
+    def __str__(self) -> str:
+        return f"{self.email} → {self.entidad}"
+
+    @property
+    def vigente(self) -> bool:
+        return self.aceptada_en is None and self.expira_en > timezone.now()
+
+
+class IntentoInicioSesion(models.Model):
+    """Registro de intentos de inicio de sesión, para bloquear temporalmente
+    ataques de fuerza bruta por correo y por IP."""
+
+    email = models.EmailField(db_index=True)
+    ip = models.GenericIPAddressField(null=True, db_index=True)
+    exitoso = models.BooleanField(default=False)
+    fecha = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        verbose_name = "intento de inicio de sesión"
+        verbose_name_plural = "intentos de inicio de sesión"
+        ordering = ["-fecha"]
+
+
+class EventoAuditoria(models.Model):
+    """Registro inmutable de acciones relevantes (quién, qué, cuándo, desde dónde)."""
+
+    id = models.BigAutoField(primary_key=True)
+    fecha = models.DateTimeField(default=timezone.now, db_index=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    usuario = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    accion = models.CharField(max_length=80, db_index=True)
+    objeto_tipo = models.CharField(max_length=80, blank=True)
+    objeto_id = models.CharField(max_length=64, blank=True)
+    detalles = models.JSONField(default=dict, blank=True)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "evento de auditoría"
+        verbose_name_plural = "auditoría"
+        ordering = ["-fecha"]
+
+    def save(self, *args, **kwargs):
+        if self._state.adding is False:
+            raise ValueError("Los eventos de auditoría no se pueden modificar.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Los eventos de auditoría no se pueden eliminar.")

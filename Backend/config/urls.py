@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import admin
 from django.urls import path
 
@@ -7,7 +8,6 @@ admin.site.site_header = "MiEvaluador · Administración"
 admin.site.site_title = "MiEvaluador"
 admin.site.index_title = "Panel de administración"
 
-urlpatterns = [
-    path("admin/", admin.site.urls),
-    path("api/", api.urls),
-]
+urlpatterns = [path("api/", api.urls)]
+if settings.ADMIN_DJANGO_HABILITADO:
+    urlpatterns.append(path("admin/", admin.site.urls))

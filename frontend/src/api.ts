@@ -1,3 +1,5 @@
+import { detalleError, pedir } from './http'
+
 export interface Lote {
   numero: string
   objeto: string
@@ -69,7 +71,6 @@ export interface ResultadoRequisito {
   archivos_disponibles: string[]
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 export async function analizarDocumentoBase(
   codigoProceso: string,
@@ -85,7 +86,7 @@ export async function analizarDocumentoBase(
     formData.append('carpeta_drive', carpetaDrive.trim())
   }
 
-  const res = await fetch(`${API_URL}/api/procesos/analizar`, {
+  const res = await pedir(`/api/procesos/analizar`, {
     method: 'POST',
     body: formData,
   })
@@ -103,7 +104,7 @@ export async function generarExcel(
   proponentes: Proponente[],
   resultados: ResultadoRequisito[],
 ): Promise<Blob> {
-  const res = await fetch(`${API_URL}/api/procesos/generar-excel`, {
+  const res = await pedir(`/api/procesos/generar-excel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -122,7 +123,7 @@ export async function generarExcel(
 }
 
 export async function verDocumento(driveFileId: string, archivoEvaluado: string): Promise<Blob> {
-  const res = await fetch(`${API_URL}/api/procesos/proponentes/documento`, {
+  const res = await pedir(`/api/procesos/proponentes/documento`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ drive_file_id: driveFileId, archivo_evaluado: archivoEvaluado }),
@@ -176,7 +177,7 @@ async function evaluarTodosUnProponente(
   signal?: AbortSignal,
 ): Promise<ResultadoRequisito[]> {
   try {
-    const res = await fetch(`${API_URL}/api/procesos/evaluar-todos/proponente`, {
+    const res = await pedir(`/api/procesos/evaluar-todos/proponente`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ documento_base: proceso, proponente }),
@@ -219,12 +220,4 @@ export async function evaluarTodosLosRequisitos(
   await Promise.all(Array.from({ length: Math.min(CONCURRENCIA_EVALUACION, proponentes.length) }, trabajador))
 }
 
-async function extractErrorDetail(res: Response): Promise<string> {
-  try {
-    const data = await res.json()
-    if (typeof data?.detail === 'string') return data.detail
-    return JSON.stringify(data?.detail ?? data)
-  } catch {
-    return `Error ${res.status}: ${res.statusText}`
-  }
-}
+const extractErrorDetail = detalleError

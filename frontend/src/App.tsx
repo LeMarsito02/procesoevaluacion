@@ -344,10 +344,8 @@ export default function App() {
   return (
     <>
       <Topbar
-        paso={paso}
         codigoProceso={paso === 'nuevo' ? null : codigoProceso}
-        pasosDisponibles={pasosDisponibles}
-        onIr={setPaso}
+        pasos={paso === 'nuevo' ? undefined : { paso, pasosDisponibles, onIr: setPaso }}
       />
 
       {paso === 'nuevo' && (
