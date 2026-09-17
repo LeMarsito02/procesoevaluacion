@@ -176,7 +176,7 @@ class CrearYAsignarTests(BaseEvaluaciones):
         for p in detalle["proponentes"]:
             c.http.put(
                 f"/api/evaluaciones/{ev['id']}/revisiones",
-                {"proponente_id": p["id"], "requisito": 2, "cumple": True},
+                {"proponente_id": p["id"], "requisito": 2, "cumple": True, "nota": "Revisado por superadmin"},
                 content_type="application/json",
                 headers={"X-CSRFToken": c.csrf},
             )
@@ -796,12 +796,19 @@ class RetencionTests(BaseEvaluaciones):
                 Evaluacion.objects.filter(pk=otro["id"]).update(
                     estado=EstadoEvaluacion.APROBADA, aprobada_en=timezone.now() - timedelta(days=35)
                 )
+                # Sin expediente permanente generado no se borra nada.
+                self.assertEqual(retencion.aplicar(30).procesos, [])
+                from evaluaciones.models import EstadoExpediente, Expediente
+
+                for eid in (ev["id"], otro["id"]):
+                    e = Evaluacion.objects.get(pk=eid)
+                    Expediente.objects.create(entidad_id=e.entidad_id, evaluacion=e, version=1, estado=EstadoExpediente.LISTO)
                 simulacro = retencion.aplicar(30, simulacro=True)
                 self.assertTrue((ofertas / "a1.zip").exists())
-                self.assertEqual(sorted(simulacro.procesos), ["VIGENTE-001"])
+                self.assertEqual(sorted(simulacro.procesos), ["ICCU-CM-037-2026", "VIGENTE-001"])
                 informe = retencion.aplicar(30)
 
-            self.assertEqual(sorted(informe.procesos), ["VIGENTE-001"])
+            self.assertEqual(sorted(informe.procesos), ["ICCU-CM-037-2026", "VIGENTE-001"])
             self.assertFalse((ofertas / "a1.zip").exists())
             self.assertFalse(viejo.exists())
             self.assertTrue((ocr / "reciente.txt").exists())
@@ -811,3 +818,150 @@ class RetencionTests(BaseEvaluaciones):
         r = jefe.get(f"/api/evaluaciones/{otro['id']}/proponentes/{prop}/documento?archivo=x.pdf")
         self.assertEqual(r.status_code, 410)
         self.assertEqual(jefe.get(f"/api/evaluaciones/{otro['id']}").status_code, 200)
+
+
+
+def pdf_minimo(texto: str = "certificado") -> bytes:
+    return b"%PDF-1.4\n1 0 obj<<>>endobj\n% " + texto.encode() + b"\n%%EOF"
+
+
+class HistoricoTests(BaseEvaluaciones):
+    def setUp(self):
+        import tempfile
+
+        from django.test import override_settings
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self._override = override_settings(MEDIA_ROOT=self._tmp.name)
+        self._override.enable()
+        self.jefe, self.ev = self.crear()
+        self.jefe.post(f"/api/evaluaciones/{self.ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)})
+        self.abogado = Cliente()
+        self.abogado.entrar("abogado@iccu.gov.co")
+        self.detalle = self.evaluar_todo(self.abogado, self.ev["id"])
+        self.p1 = self.detalle["proponentes"][0]["id"]
+
+    def tearDown(self):
+        self._override.disable()
+        self._tmp.cleanup()
+
+    def revisar(self, c, prop, req, cumple, nota):
+        return c.http.put(
+            f"/api/evaluaciones/{self.ev['id']}/revisiones",
+            {"proponente_id": prop, "requisito": req, "cumple": cumple, "nota": nota},
+            content_type="application/json",
+            headers={"X-CSRFToken": c.csrf},
+        )
+
+    def aportar(self, c, prop, requisito, persona_id=None, contenido=None, nombre="redam.pdf"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        datos = {"requisito": requisito, "fecha_expedicion": "2026-08-10", "observacion": "Consultado en la página oficial", "archivo": SimpleUploadedFile(nombre, contenido or pdf_minimo())}
+        if persona_id:
+            datos["persona_id"] = persona_id
+        return c.http.post(f"/api/evaluaciones/{self.ev['id']}/proponentes/{prop}/aportados", datos, headers={"X-CSRFToken": c.csrf})
+
+    def test_justificacion_obligatoria(self):
+        self.assertEqual(self.revisar(self.abogado, self.p1, 2, True, "").status_code, 400)
+        self.assertEqual(self.revisar(self.abogado, self.p1, 2, True, "Se verificó el COPNIA en físico").status_code, 200)
+
+    def test_personas_y_certificados_aportados(self):
+        url = f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/personas"
+        empresa = self.abogado.post(url, {"rol": "integrante", "tipo": "juridica", "nombre": "Vías del Norte SAS", "documento": "900.123.456-7"}).json()
+        self.assertEqual(empresa["documento"], "900123456-7")
+        rep = self.abogado.post(url, {"rol": "representante_legal", "tipo": "natural", "nombre": "Pedro Pérez", "documento": "1.020.304", "fecha_expedicion_documento": "2005-03-01", "de_id": empresa["id"]})
+        self.assertEqual(rep.status_code, 201, rep.content)
+        # El representante debe ser persona natural y solo una jurídica tiene representantes.
+        self.assertEqual(self.abogado.post(url, {"rol": "suplente", "tipo": "juridica", "nombre": "Otra SAS", "documento": "8001"}).status_code, 400)
+        self.assertEqual(self.abogado.post(url, {"rol": "suplente", "tipo": "natural", "nombre": "Ana Ruiz", "documento": "5566", "de_id": rep.json()["id"]}).status_code, 400)
+
+        r = self.aportar(self.abogado, self.p1, 2, rep.json()["id"])
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(self.aportar(self.abogado, self.p1, 2, contenido=b"no es pdf").status_code, 400)
+        self.assertEqual(self.aportar(self.abogado, self.p1, 99).status_code, 400)
+        datos = self.abogado.get(f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/antecedentes").json()
+        self.assertEqual(len(datos["personas"]), 2)
+        self.assertEqual(len(datos["aportados"]), 1)
+        archivo = self.abogado.get(f"/api/evaluaciones/{self.ev['id']}/aportados/{r.json()['id']}/archivo")
+        self.assertEqual(b"".join(archivo.streaming_content)[:5], b"%PDF-")
+        # No se quita una persona con certificados; consulta y otra entidad no modifican ni ven.
+        self.assertEqual(self.abogado.delete(f"/api/evaluaciones/{self.ev['id']}/personas/{empresa['id']}").status_code, 409)
+        consulta = Cliente()
+        consulta.entrar("control@iccu.gov.co")
+        self.assertEqual(self.aportar(consulta, self.p1, 2).status_code, 403)
+        otra = Cliente()
+        otra.entrar("admin@otra.gov.co")
+        self.assertEqual(otra.get(f"/api/evaluaciones/{self.ev['id']}/aportados/{r.json()['id']}/archivo").status_code, 404)
+
+    def test_reporte_word_y_expediente(self):
+        import io
+        import zipfile
+
+        from docx import Document
+
+        from evaluaciones.expediente import atender_pendientes
+
+        for p in self.detalle["proponentes"]:
+            self.assertEqual(self.revisar(self.abogado, p["id"], 2, True, "COPNIA verificado en la página del Consejo").status_code, 200)
+        persona = self.abogado.post(
+            f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/personas",
+            {"rol": "representante_legal", "tipo": "natural", "nombre": "Juan Pérez", "documento": "1020304"},
+        ).json()
+        self.aportar(self.abogado, self.p1, 1, persona["id"])
+
+        r = self.abogado.get(f"/api/evaluaciones/{self.ev['id']}/reporte")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("BORRADOR", r["Content-Disposition"])
+        texto = "\n".join(c.text for t in Document(io.BytesIO(r.content)).tables for fila in t.rows for c in fila.cells)
+        self.assertIn("Aprobado automáticamente por MiEvaluador", texto)
+        self.assertIn("Validado manualmente por Abogado Uno", texto)
+        self.assertIn("COPNIA verificado en la página del Consejo", texto)
+        self.assertIn("Certificado consultado y aportado por Abogado Uno", texto)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(self.jefe.post(f"/api/evaluaciones/{self.ev['id']}/aprobar").status_code, 200)
+        exp = self.jefe.get(f"/api/evaluaciones/{self.ev['id']}/expedientes").json()
+        self.assertEqual([(e["version"], e["estado"]) for e in exp], [(1, "pendiente")])
+
+        oferta = io.BytesIO()
+        with zipfile.ZipFile(oferta, "w") as z:
+            z.writestr("CARTA/carta.pdf", pdf_minimo("carta"))
+        from motor.esquemas.proceso import ResultadoRequisito
+
+        Resultado = __import__("evaluaciones.models", fromlist=["Resultado"]).Resultado
+        for res in Resultado.objects.filter(evaluacion_id=self.ev["id"], requisito=1):
+            datos = ResultadoRequisito.model_validate(res.datos).model_copy(update={"archivo_evaluado": "CARTA/carta.pdf"})
+            res.datos = datos.model_dump(mode="json")
+            res.save()
+        with mock.patch("evaluaciones.expediente.download_file_bytes", return_value=oferta.getvalue()):
+            self.assertEqual(atender_pendientes(), 1)
+        exp = self.jefe.get(f"/api/evaluaciones/{self.ev['id']}/expedientes").json()[0]
+        self.assertEqual(exp["estado"], "listo", exp["avisos"])
+        r = self.jefe.get(f"/api/evaluaciones/{self.ev['id']}/expedientes/{exp['id']}/archivo")
+        zbytes = b"".join(r.streaming_content)
+        with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
+            nombres = z.namelist()
+            self.assertIn("registro.json", nombres)
+            self.assertIn("MANIFIESTO.txt", nombres)
+            self.assertTrue(any(n.startswith("informe/") and n.endswith(".docx") for n in nombres))
+            self.assertTrue(any(n.startswith("informe/") and n.endswith(".xlsx") for n in nombres))
+            self.assertTrue(any("documentos evaluados" in n for n in nombres))
+            self.assertTrue(any("antecedentes aportados" in n for n in nombres))
+            self.assertNotIn("BORRADOR", " ".join(nombres))
+        # Si el expediente se anula mientras se arma, no revive al terminar.
+        from evaluaciones.expediente import construir, solicitar
+        from evaluaciones.models import EstadoExpediente, Expediente
+
+        anulado = solicitar(Evaluacion.objects.get(pk=self.ev["id"]), None)
+        Expediente.objects.filter(pk=anulado.pk).update(estado=EstadoExpediente.GENERANDO)
+        anulado.estado = EstadoExpediente.GENERANDO
+        Expediente.objects.filter(pk=anulado.pk).delete()
+        with mock.patch("evaluaciones.expediente.download_file_bytes", return_value=oferta.getvalue()):
+            construir(anulado)
+        self.assertFalse(Expediente.objects.filter(pk=anulado.pk).exists())
+
+        # Otra entidad no descarga el expediente; regenerar crea la versión 2.
+        otra = Cliente()
+        otra.entrar("admin@otra.gov.co")
+        self.assertEqual(otra.get(f"/api/evaluaciones/{self.ev['id']}/expedientes/{exp['id']}/archivo").status_code, 404)
+        self.assertEqual(self.jefe.post(f"/api/evaluaciones/{self.ev['id']}/expedientes").json()["version"], 2)

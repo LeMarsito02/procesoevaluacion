@@ -233,3 +233,101 @@ class PlantillaEvaluacion(models.Model):
                 fields=["entidad", "tipo"], condition=models.Q(activa=True), name="plantilla_evaluacion_activa_unica"
             ),
         ]
+
+
+class TipoPersona(models.TextChoices):
+    NATURAL = "natural", "Persona natural"
+    JURIDICA = "juridica", "Persona jurídica"
+
+
+class RolPersona(models.TextChoices):
+    PROPONENTE = "proponente", "Proponente"
+    REPRESENTANTE = "representante_legal", "Representante legal"
+    SUPLENTE = "suplente", "Representante legal suplente"
+    INTEGRANTE = "integrante", "Integrante del consorcio o unión temporal"
+
+
+class PersonaVerificada(models.Model):
+    """Persona (natural o jurídica) cuyos antecedentes se verifican para un proponente.
+
+    - Persona natural: nombre, cédula y fecha de expedición de la cédula.
+    - Persona jurídica: razón social y NIT, con su representante legal (y suplente si lo tiene)
+      registrados como personas hijas (`de`).
+    - Consorcio / unión temporal: cada integrante es una persona con rol "integrante" y, si es
+      jurídica, sus representantes cuelgan de ella.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="personas")
+    proponente = models.ForeignKey(Proponente, on_delete=models.CASCADE, related_name="personas")
+    de = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="representantes")
+    rol = models.CharField(max_length=30, choices=RolPersona.choices)
+    tipo = models.CharField(max_length=10, choices=TipoPersona.choices)
+    nombre = models.CharField(max_length=300)
+    # Cédula (persona natural) o NIT (persona jurídica).
+    documento = models.CharField(max_length=30)
+    fecha_expedicion_documento = models.DateField(null=True, blank=True)
+    creada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    creada_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["creada_en"]
+
+
+def _ruta_aportado(instancia: "DocumentoAportado", nombre: str) -> str:
+    return f"entidades/{instancia.entidad_id}/evaluaciones/{instancia.evaluacion_id}/aportados/{uuid.uuid4().hex}.pdf"
+
+
+class DocumentoAportado(models.Model):
+    """Certificado que el evaluador consultó y subió porque el proponente no lo aportó."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="documentos_aportados")
+    proponente = models.ForeignKey(Proponente, on_delete=models.CASCADE, related_name="documentos_aportados")
+    persona = models.ForeignKey(PersonaVerificada, on_delete=models.PROTECT, null=True, blank=True, related_name="documentos")
+    requisito = models.PositiveSmallIntegerField()
+    fecha_expedicion = models.DateField()
+    nombre_original = models.CharField(max_length=255)
+    archivo = models.FileField(upload_to=_ruta_aportado, max_length=300)
+    observacion = models.TextField(blank=True)
+    subido_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    subido_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["subido_en"]
+
+
+class EstadoExpediente(models.TextChoices):
+    PENDIENTE = "pendiente", "Pendiente"
+    GENERANDO = "generando", "Generando"
+    LISTO = "listo", "Listo"
+    ERROR = "error", "Error"
+
+
+def _ruta_expediente(instancia: "Expediente", nombre: str) -> str:
+    return f"entidades/{instancia.entidad_id}/expedientes/{instancia.evaluacion_id}/v{instancia.version}.zip"
+
+
+class Expediente(models.Model):
+    """Archivo final permanente de una evaluación aprobada: documentos evaluados,
+    certificados aportados, informe Excel, reporte Word y registro de resultados.
+    No lo borra la retención; cada reaprobación crea una versión nueva."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.PROTECT, related_name="expedientes")
+    version = models.PositiveIntegerField()
+    estado = models.CharField(max_length=20, choices=EstadoExpediente.choices, default=EstadoExpediente.PENDIENTE)
+    archivo = models.FileField(upload_to=_ruta_expediente, max_length=300, blank=True)
+    tamano = models.BigIntegerField(null=True, blank=True)
+    sha256 = models.CharField(max_length=64, blank=True)
+    error = models.TextField(blank=True)
+    solicitado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    creado_en = models.DateTimeField(auto_now_add=True)
+    terminado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [models.UniqueConstraint(fields=["evaluacion", "version"], name="expediente_version_unica")]

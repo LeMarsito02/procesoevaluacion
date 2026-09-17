@@ -123,11 +123,12 @@ export const asignarEvaluacion = (id: string, responsableId: string | null) =>
   enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/asignar`, 'POST', { responsable_id: responsableId })
 export const aprobarEvaluacion = (id: string) => enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/aprobar`, 'POST')
 export const reabrirEvaluacion = (id: string) => enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/reabrir`, 'POST')
-export const guardarRevision = (id: string, proponenteId: string, requisito: number, cumple: boolean | null) =>
+export const guardarRevision = (id: string, proponenteId: string, requisito: number, cumple: boolean | null, nota = '') =>
   enviarJson<RevisionGuardada | null>(`/api/evaluaciones/${id}/revisiones`, 'PUT', {
     proponente_id: proponenteId,
     requisito,
     cumple,
+    nota,
   })
 
 export const encolarEvaluacion = (id: string, proponenteIds?: string[]) =>

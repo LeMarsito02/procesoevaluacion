@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from pathlib import Path
 from uuid import UUID
 
 from asgiref.sync import sync_to_async
@@ -91,17 +90,6 @@ def _plantilla(usuario: Usuario, plantilla_id: UUID) -> PlantillaInforme:
     if not usuario.es_superadmin and plantilla.entidad_id != usuario.entidad_id:
         raise HttpError(404, "No encontrado.")
     return plantilla
-
-
-def plantilla_para_informe(entidad_id: UUID, tipo: str) -> tuple[Path, MapeoPlantilla] | None:
-    """Plantilla activa de la entidad o, si no tiene, la de ejemplo del sistema."""
-    propia = PlantillaInforme.objects.filter(entidad_id=entidad_id, tipo=tipo, activa=True).first()
-    if propia is not None:
-        return Path(propia.archivo.path), MapeoPlantilla.model_validate(propia.mapeo)
-    del_sistema = TIPOS[tipo].plantilla
-    if del_sistema is not None and del_sistema.exists():
-        return del_sistema, MAPEO_POR_DEFECTO
-    return None
 
 
 @router.get("/plantillas", response=list[PlantillasTipoOut])

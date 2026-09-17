@@ -12,6 +12,8 @@ interface Props {
   generando: boolean
   error: string | null
   onGenerar: () => void
+  /** Reporte Word y expediente permanente. */
+  extra?: React.ReactNode
   onVolver: () => void
   onRevisarPendientes: () => void
   onNuevaEvaluacion: () => void
@@ -114,6 +116,8 @@ export default function PasoInforme(p: Props) {
           )}
         </button>
       </section>
+
+      {p.extra}
 
       <div className="acciones-pie">
         <button className="btn btn-ghost" type="button" onClick={p.onVolver}>

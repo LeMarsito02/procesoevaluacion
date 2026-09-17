@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from api.ejecucion import evaluar_todos_en_proceso
 from cuentas.correo import enviar_evaluacion_terminada
+from evaluaciones.expediente import atender_pendientes
 from evaluaciones.models import EstadoTrabajo, Trabajador, Trabajo
 from evaluaciones.servicios import (
     PENDIENTES,
@@ -129,12 +130,24 @@ async def trabajar(capacidad: int, una_vez: bool = False) -> None:
                 continue
             await _atender(trabajo)
 
+    async def expedientes():
+        # Hilo propio (conexión propia): armar un expediente puede tardar minutos.
+        while not detener.is_set():
+            await sync_to_async(atender_pendientes, thread_sensitive=False)()
+            try:
+                await asyncio.wait_for(detener.wait(), 10)
+            except TimeoutError:
+                pass
+
     tarea_latidos = asyncio.create_task(latidos())
+    tarea_expedientes = asyncio.create_task(expedientes()) if not una_vez else None
     try:
         await asyncio.gather(*(cupo() for _ in range(capacidad)))
     finally:
         detener.set()
         await tarea_latidos
+        if tarea_expedientes is not None:
+            await tarea_expedientes
         await sync_to_async(_retirar)(trabajador_id)
         detener_pool()
         log.info("Trabajador %s detenido", trabajador_id)

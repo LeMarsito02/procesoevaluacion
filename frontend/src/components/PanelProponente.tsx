@@ -24,6 +24,8 @@ interface Props {
   onAnterior: (() => void) | null
   onSiguiente: (() => void) | null
   onSiguientePendiente: (() => void) | null
+  /** Contenido adicional al final (personas verificadas y antecedentes aportados). */
+  extra?: React.ReactNode
 }
 
 function nombreArchivo(ruta: string): string {
@@ -220,6 +222,7 @@ export default function PanelProponente(p: Props) {
               })}
             </div>
           ))}
+          {p.extra}
         </div>
 
         <div className="drawer-foot">

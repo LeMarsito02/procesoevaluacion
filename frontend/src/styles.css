@@ -500,3 +500,13 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 @media (max-width: 760px) { .grid-req { grid-template-columns: 1fr; } .grid-req .field { grid-column: auto !important; } }
 .aviso-soporte { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 16px; background: var(--ai-soft); color: #3b2fa0; font-size: 13.5px; flex-wrap: wrap; }
 .grid-soporte { display: grid; grid-template-columns: 1.4fr 140px 2fr auto; gap: 10px; } @media (max-width: 900px) { .grid-soporte { grid-template-columns: 1fr; } }
+
+/* ---------- Antecedentes, justificación y expediente ---------- */
+.antecedentes { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.tabla-antecedentes th, .tabla-antecedentes td { padding: 8px 10px; font-size: 13px; }
+.celda-antecedente { text-align: center; white-space: nowrap; }
+.aportado { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); }
+.aportado .enlace { font-size: 12px; }
+.formulario-inline { margin-top: 10px; padding: 12px; border: 1px solid var(--brand); border-radius: 12px; background: var(--brand-soft); display: flex; flex-direction: column; gap: 10px; }
+.grid-persona { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.lista-expedientes { display: flex; flex-direction: column; gap: 8px; }

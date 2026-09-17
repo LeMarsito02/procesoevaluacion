@@ -13,11 +13,10 @@ from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
-from api.configuracion import plantilla_para_informe
 from cuentas.correo import enviar_asignacion
 from cuentas.models import Entidad, Rol, TipoArea, Usuario
 from cuentas.seguridad import auditar, requiere_rol, sesion_activa
-from evaluaciones import servicios
+from evaluaciones import expediente, servicios
 from evaluaciones.tipos import MENSAJE_EN_PREPARACION, TIPOS
 from evaluaciones.models import (
     EstadoEvaluacion,
@@ -41,7 +40,6 @@ from evaluaciones.permisos import (
     tiene_area,
 )
 from motor.esquemas.proceso import ProcesoDocumentoBase
-from motor.excel.filler import fill_template
 from motor.integrations.drive import download_file_bytes
 from motor.procesamiento.zip_utils import extraer_pdfs
 
@@ -701,6 +699,8 @@ def revisar(request: HttpRequest, evaluacion_id: UUID, datos: RevisarIn):
     evaluacion = _evaluacion(usuario, evaluacion_id)
     exigir_trabajo(usuario, evaluacion)
     proponente = get_object_or_404(Proponente, pk=datos.proponente_id, proceso_id=evaluacion.proceso_id)
+    if datos.cumple is not None and len(datos.nota.strip()) < 5:
+        raise HttpError(400, "Escriba la justificación de su decisión: queda en el reporte formal de evaluación.")
     with transaction.atomic():
         anterior = Revision.objects.filter(evaluacion=evaluacion, proponente=proponente, requisito=datos.requisito).first()
         if datos.cumple is None:
@@ -744,11 +744,14 @@ def aprobar(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
         raise HttpError(409, f"Faltan {avance.proponentes - avance.evaluados} proponentes por evaluar.")
     if avance.pendientes:
         raise HttpError(409, f"Quedan {avance.pendientes} requisitos por revisar.")
-    evaluacion.estado = EstadoEvaluacion.APROBADA
-    evaluacion.aprobada_por = usuario
-    evaluacion.aprobada_en = timezone.now()
-    evaluacion.save()
-    auditar(request, "evaluacion.aprobada", objeto=evaluacion, proceso=evaluacion.proceso.codigo)
+    with transaction.atomic():
+        evaluacion.estado = EstadoEvaluacion.APROBADA
+        evaluacion.aprobada_por = usuario
+        evaluacion.aprobada_en = timezone.now()
+        evaluacion.save()
+        # Expediente permanente (lo arma el trabajador en segundo plano).
+        expediente.solicitar(evaluacion, usuario)
+        auditar(request, "evaluacion.aprobada", objeto=evaluacion, proceso=evaluacion.proceso.codigo)
     return _resumenes(usuario, [evaluacion])[0]
 
 
@@ -772,32 +775,12 @@ def reabrir(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
 def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
-    elegida = plantilla_para_informe(evaluacion.entidad_id, evaluacion.tipo)
-    if elegida is None:
-        raise HttpError(400, "Este tipo de evaluación aún no tiene plantilla de informe. El administrador puede subirla en Configuración.")
-    plantilla, mapeo = elegida
-    # Filas del Excel definidas en la plantilla de evaluación (si las trae).
-    filas = {r.numero: r.fila_excel for r in servicios.definicion_de(evaluacion).requisitos if r.fila_excel}
-    if filas:
-        mapeo = mapeo.model_copy(update={"filas_por_requisito": {**mapeo.filas_por_requisito, **filas}})
+    try:
+        contenido, nombre = servicios.generar_informe_excel(evaluacion)
+    except servicios.SinPlantillaInforme as exc:
+        raise HttpError(400, "Este tipo de evaluación aún no tiene plantilla de informe. El administrador puede subirla en Configuración.") from exc
     proceso = evaluacion.proceso
-    proponentes = list(proceso.proponentes.all())
-    revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion)}
-    resultados = [
-        servicios.aplicar_revision(r.datos, revisiones.get((r.proponente_id, r.requisito)))
-        for r in Resultado.objects.filter(evaluacion=evaluacion)
-    ]
-    contenido = fill_template(
-        str(plantilla),
-        ProcesoDocumentoBase.model_validate(proceso.documento_base),
-        [servicios.proponente_motor(p) for p in proponentes],
-        resultados,
-        mapeo=mapeo,
-        tipo=evaluacion.get_tipo_display(),
-    )
-    borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
-    # Mismo nombre que usa la plantilla oficial ("INFORME EVALUACION JURIDICA …"), sin tildes.
-    nombre = f"INFORME EVALUACION {evaluacion.tipo.upper()} {proceso.codigo}{borrador}.xlsx"
+    borrador = evaluacion.estado != EstadoEvaluacion.APROBADA
     auditar(request, "informe.descargado", objeto=evaluacion, proceso=proceso.codigo, borrador=bool(borrador))
     respuesta = HttpResponse(contenido, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'

@@ -1,8 +1,9 @@
 """Retención de documentos de proponentes.
 
-- Procesos cuyas evaluaciones están todas aprobadas hace más de RETENCION_DIAS:
-  se borran las copias de las ofertas descargadas de Drive (se conservan
-  resultados, decisiones e informes) y se marca el proceso.
+- Procesos cuyas evaluaciones están todas aprobadas hace más de RETENCION_DIAS
+  y ya tienen su expediente permanente: se borran las copias completas de las
+  ofertas descargadas de Drive y se marca el proceso. El expediente (documentos
+  evaluados, certificados aportados, Excel, Word y registro) nunca se borra.
 - Cachés derivadas de los documentos (texto OCR, respuestas de la IA,
   resultados por requisito): se borran las que no se han usado en
   RETENCION_DIAS, sean del proceso que sean.
@@ -19,7 +20,7 @@ from django.conf import settings
 from django.db.models import Count, Max, Q
 from django.utils import timezone
 
-from evaluaciones.models import EstadoEvaluacion, Proceso, Proponente
+from evaluaciones.models import EstadoEvaluacion, EstadoExpediente, Proceso, Proponente
 
 log = logging.getLogger("mievaluador.retencion")
 
@@ -63,7 +64,13 @@ def aplicar(dias: int | None = None, simulacro: bool = False) -> Informe:
     dias = dias if dias is not None else settings.RETENCION_DIAS
     informe = Informe()
 
-    vencidos = [p for p in procesos_vencidos(dias) if p.aprobadas == p.total]
+    # Solo si cada evaluación ya tiene su expediente permanente generado.
+    vencidos = [
+        p
+        for p in procesos_vencidos(dias)
+        if p.aprobadas == p.total
+        and not p.evaluaciones.exclude(expedientes__estado=EstadoExpediente.LISTO).exists()
+    ]
     en_uso = set(
         Proponente.objects.filter(proceso__documentos_eliminados_en__isnull=True)
         .exclude(proceso__in=vencidos)

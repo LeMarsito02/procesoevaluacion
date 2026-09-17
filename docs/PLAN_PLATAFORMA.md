@@ -156,7 +156,7 @@ Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión 
 ## 11. Pendiente por definir
 
 1. **Ejemplos para técnica y financiera**: informes reales, plantillas Excel y criterios del ingeniero y del contador (para F5).
-2. **Retención**: al eliminar documentos a los 30 días, ¿se conservan resultados, decisiones e informes? (propuesta: sí).
+2. **Retención**: resuelto — a los 30 días se borran las copias completas de las ofertas, pero solo cuando el proceso ya tiene su **expediente permanente** (.zip con los documentos con los que se verificó cada requisito, los certificados aportados por el evaluador, el informe Excel, el reporte Word y el registro con huellas SHA-256).
 3. **Asignación**: ¿un jefe asigna la evaluación completa a una persona, o también puede repartir proponentes de un mismo proceso entre varios evaluadores? (propuesta: ambas).
 4. **Aprobación**: ¿el informe debe aprobarlo el jefe antes de descargarlo como definitivo? (propuesta: sí, con borrador descargable antes).
 
@@ -166,4 +166,5 @@ Sin asignar ─▶ Asignada ─▶ En fila ─▶ Evaluando ─▶ En revisión 
 - **Tipos de evaluación**: registro en `Backend/evaluaciones/tipos.py`. Técnica y financiera se crean, asignan y tienen plantilla (requisitos con bloques y Excel), pero su motor automático está "en preparación". Para habilitarlas: agregar sus verificaciones a `motor/criterios.py` (`VERIFICACIONES`) y marcarlas `disponible=True`.
 - **Plantilla de evaluación** (`PlantillaEvaluacion`, versionada): definición en `motor/criterios.py` (`DefinicionEvaluacion`); cada evaluación guarda la versión con la que se hizo y puede actualizarse a la vigente.
 - **Retención**: `manage.py aplicar_retencion` (diario). **Respaldo**: `scripts/respaldo.sh` (restauración verificada). **Límites** de peticiones por usuario/IP. **Despliegue**: `despliegue/` y `docs/DESPLIEGUE.md`.
-- **Pendiente**: permisos temporales de soporte para personal de LeMarTek (decisión #2); módulos técnico y financiero (F5, con ejemplos reales).
+- **Expediente e histórico**: `evaluaciones/expediente.py` (se genera al aprobar, lo arma el trabajador), reporte formal en Word (`evaluaciones/reporte.py`), personas verificadas y certificados aportados por el evaluador (`api/historico.py`).
+- **Pendiente**: módulos técnico y financiero (F5, con ejemplos reales).

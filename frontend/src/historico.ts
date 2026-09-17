@@ -1,0 +1,98 @@
+/** Personas verificadas, certificados aportados, reporte Word y expedientes. */
+import { detalleError, enviarJson, ErrorApi, pedir, pedirJson } from './http'
+
+export type RolPersona = 'proponente' | 'representante_legal' | 'suplente' | 'integrante'
+
+export interface PersonaVerificada {
+  id: string
+  rol: RolPersona
+  rol_nombre: string
+  tipo: 'natural' | 'juridica'
+  nombre: string
+  documento: string
+  fecha_expedicion_documento: string | null
+  de_id: string | null
+}
+
+export interface DocumentoAportado {
+  id: string
+  requisito: number
+  persona_id: string | null
+  fecha_expedicion: string
+  nombre_original: string
+  observacion: string
+  subido_por: string | null
+  subido_en: string
+}
+
+export interface Antecedentes {
+  tipo_proponente: string | null
+  representante_legal: string | null
+  requisitos: { numero: number; corto: string; titulo: string }[]
+  personas: PersonaVerificada[]
+  aportados: DocumentoAportado[]
+  encontrados: Record<string, string | null>
+}
+
+export interface ExpedienteInfo {
+  id: string
+  version: number
+  estado: 'pendiente' | 'generando' | 'listo' | 'error'
+  tamano: number | null
+  sha256: string
+  avisos: string
+  creado_en: string
+  terminado_en: string | null
+}
+
+const base = (ev: string) => `/api/evaluaciones/${ev}`
+
+export const obtenerAntecedentes = (ev: string, prop: string) => pedirJson<Antecedentes>(`${base(ev)}/proponentes/${prop}/antecedentes`)
+export const agregarPersona = (
+  ev: string,
+  prop: string,
+  datos: { rol: RolPersona; tipo: 'natural' | 'juridica'; nombre: string; documento: string; fecha_expedicion_documento: string | null; de_id: string | null },
+) => enviarJson<PersonaVerificada>(`${base(ev)}/proponentes/${prop}/personas`, 'POST', datos)
+export const quitarPersona = (ev: string, id: string) => enviarJson<void>(`${base(ev)}/personas/${id}`, 'DELETE')
+
+export async function aportarDocumento(
+  ev: string,
+  prop: string,
+  datos: { requisito: number; persona_id: string | null; fecha_expedicion: string; observacion: string; archivo: File },
+): Promise<DocumentoAportado> {
+  const cuerpo = new FormData()
+  cuerpo.append('requisito', String(datos.requisito))
+  if (datos.persona_id) cuerpo.append('persona_id', datos.persona_id)
+  cuerpo.append('fecha_expedicion', datos.fecha_expedicion)
+  cuerpo.append('observacion', datos.observacion)
+  cuerpo.append('archivo', datos.archivo)
+  const res = await pedir(`${base(ev)}/proponentes/${prop}/aportados`, { method: 'POST', body: cuerpo })
+  if (!res.ok) throw new ErrorApi(res.status, await detalleError(res))
+  return res.json()
+}
+
+export const quitarAportado = (ev: string, id: string) => enviarJson<void>(`${base(ev)}/aportados/${id}`, 'DELETE')
+
+async function blob(ruta: string): Promise<{ blob: Blob; nombre: string | null }> {
+  const res = await pedir(ruta)
+  if (!res.ok) throw new ErrorApi(res.status, await detalleError(res))
+  const nombre = /filename="?([^";]+)"?/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? null
+  return { blob: await res.blob(), nombre }
+}
+
+export const archivoAportado = (ev: string, id: string) => blob(`${base(ev)}/aportados/${id}/archivo`)
+export const descargarReporteWord = (ev: string) => blob(`${base(ev)}/reporte`)
+export const listarExpedientes = (ev: string) => pedirJson<ExpedienteInfo[]>(`${base(ev)}/expedientes`)
+export const regenerarExpediente = (ev: string) => enviarJson<ExpedienteInfo>(`${base(ev)}/expedientes`, 'POST')
+export const descargarExpediente = (ev: string, id: string) => blob(`${base(ev)}/expedientes/${id}/archivo`)
+
+export function guardarArchivo(b: Blob, nombre: string) {
+  const url = URL.createObjectURL(b)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = nombre
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}

@@ -348,3 +348,59 @@ def definicion_base_para(tipo: str, sigla: str, nombre_entidad: str) -> criterio
             "beneficiario_claves": [sigla.strip().upper(), nombre_entidad.strip().upper()],
         }
     return criterios.DefinicionEvaluacion.model_validate(definicion.model_dump())
+
+
+# --- Informe Excel ---
+class SinPlantillaInforme(Exception):
+    pass
+
+
+def plantilla_para_informe(entidad_id: UUID, tipo: str):
+    """Plantilla activa de la entidad o, si no tiene, la de ejemplo del sistema."""
+    from pathlib import Path
+
+    from evaluaciones.models import PlantillaInforme
+    from evaluaciones.tipos import TIPOS
+    from motor.excel.filler import MAPEO_POR_DEFECTO, MapeoPlantilla
+
+    propia = PlantillaInforme.objects.filter(entidad_id=entidad_id, tipo=tipo, activa=True).first()
+    if propia is not None:
+        return Path(propia.archivo.path), MapeoPlantilla.model_validate(propia.mapeo)
+    del_sistema = TIPOS[tipo].plantilla
+    if del_sistema is not None and del_sistema.exists():
+        return del_sistema, MAPEO_POR_DEFECTO
+    return None
+
+
+def resultados_con_decisiones(evaluacion: Evaluacion) -> list[ResultadoRequisito]:
+    revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion)}
+    return [
+        aplicar_revision(r.datos, revisiones.get((r.proponente_id, r.requisito)))
+        for r in Resultado.objects.filter(evaluacion=evaluacion)
+    ]
+
+
+def generar_informe_excel(evaluacion: Evaluacion) -> tuple[bytes, str]:
+    from motor.esquemas.proceso import ProcesoDocumentoBase
+    from motor.excel.filler import fill_template
+
+    elegida = plantilla_para_informe(evaluacion.entidad_id, evaluacion.tipo)
+    if elegida is None:
+        raise SinPlantillaInforme()
+    plantilla, mapeo = elegida
+    # Filas del Excel definidas en la plantilla de evaluación (si las trae).
+    filas = {r.numero: r.fila_excel for r in definicion_de(evaluacion).requisitos if r.fila_excel}
+    if filas:
+        mapeo = mapeo.model_copy(update={"filas_por_requisito": {**mapeo.filas_por_requisito, **filas}})
+    proceso = evaluacion.proceso
+    contenido = fill_template(
+        str(plantilla),
+        ProcesoDocumentoBase.model_validate(proceso.documento_base),
+        [proponente_motor(p) for p in proceso.proponentes.all()],
+        resultados_con_decisiones(evaluacion),
+        mapeo=mapeo,
+        tipo=evaluacion.get_tipo_display(),
+    )
+    borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
+    # Mismo nombre que usa la plantilla oficial ("INFORME EVALUACION JURIDICA …"), sin tildes.
+    return contenido, f"INFORME EVALUACION {evaluacion.tipo.upper()} {proceso.codigo}{borrador}.xlsx"

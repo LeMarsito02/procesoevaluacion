@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ResultadoRequisito } from '../api'
 import Icono from '../components/Icono'
+import AntecedentesProponente from '../components/AntecedentesProponente'
+import DocumentosFinales from '../components/DocumentosFinales'
 import PanelProponente from '../components/PanelProponente'
 import PasoDatos from '../components/PasoDatos'
 import PasoEvaluacion from '../components/PasoEvaluacion'
@@ -207,7 +209,15 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     }
   }
 
-  async function revisar(hoja: string, requisito: number, cumple: boolean | undefined) {
+  const [justificando, setJustificando] = useState<{ hoja: string; requisito: number; cumple: boolean } | null>(null)
+
+  // Cada decisión manual lleva su justificación: queda en el reporte formal.
+  function pedirJustificacion(hoja: string, requisito: number, cumple: boolean | undefined) {
+    if (cumple === undefined) void revisar(hoja, requisito, undefined, '')
+    else setJustificando({ hoja, requisito, cumple })
+  }
+
+  async function revisar(hoja: string, requisito: number, cumple: boolean | undefined, nota: string) {
     const pr = proponentes.find((p) => p.hoja === hoja)
     if (!pr) return
     const clave = claveRevision(hoja, requisito)
@@ -219,7 +229,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
       return nuevo
     })
     try {
-      await guardarRevision(id, pr.id, requisito, cumple ?? null)
+      await guardarRevision(id, pr.id, requisito, cumple ?? null, nota)
       if (cumple !== undefined) setAviso(cumple ? 'Marcado como cumple' : 'Marcado como no cumple')
     } catch (err) {
       setRevisiones((prev) => {
@@ -294,7 +304,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   }
   const panelProponente = panel ? proponentes.find((pr) => pr.hoja === panel.hoja) : null
   const indicePanel = panel ? evaluadosEnOrden.findIndex((pr) => pr.hoja === panel.hoja) : -1
-  const onRevisar = soloLectura ? null : revisar
+  const onRevisar = soloLectura ? null : pedirJustificacion
 
   if (!resumen.tipo_disponible) {
     return (
@@ -395,6 +405,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           onVolver={() => setPaso('evaluacion')}
           onRevisarPendientes={() => irSiguientePendiente(null)}
           onNuevaEvaluacion={() => navegar('/procesos/nuevo')}
+          extra={<DocumentosFinales resumen={resumen} />}
         />
       )}
 
@@ -416,6 +427,15 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
               : null
           }
           onSiguientePendiente={siguientePendiente(panel.hoja) ? () => irSiguientePendiente(panel.hoja) : null}
+          extra={
+            <AntecedentesProponente
+              key={panelProponente.id}
+              evaluacionId={id}
+              proponenteId={panelProponente.id}
+              soloLectura={soloLectura}
+              onVerPdf={(blob) => window.open(URL.createObjectURL(blob), '_blank', 'noopener')}
+            />
+          }
         />
       )}
 
@@ -433,11 +453,82 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
         />
       )}
 
+      {justificando && (
+        <DialogoJustificacion
+          titulo={`${REQUISITOS.find((r) => r.numero === justificando.requisito)?.titulo ?? `Requisito ${justificando.requisito}`} · ${justificando.hoja}`}
+          cumple={justificando.cumple}
+          onCerrar={() => setJustificando(null)}
+          onConfirmar={(nota) => {
+            const { hoja, requisito, cumple } = justificando
+            setJustificando(null)
+            void revisar(hoja, requisito, cumple, nota)
+          }}
+        />
+      )}
+
       {aviso && (
         <div className="toast" role="status">
           {aviso}
         </div>
       )}
+    </>
+  )
+}
+
+function DialogoJustificacion({
+  titulo,
+  cumple,
+  onCerrar,
+  onConfirmar,
+}: {
+  titulo: string
+  cumple: boolean
+  onCerrar: () => void
+  onConfirmar: (nota: string) => void
+}) {
+  const [nota, setNota] = useState('')
+  return (
+    <>
+      <div className="overlay" style={{ zIndex: 60 }} onClick={onCerrar} />
+      <div className="dialogo" style={{ zIndex: 61 }} role="dialog" aria-modal="true" aria-labelledby="titulo-justificacion">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (nota.trim().length >= 5) onConfirmar(nota.trim())
+          }}
+        >
+          <div className="card-head">
+            <div>
+              <h2 id="titulo-justificacion">{cumple ? 'Marcar como cumple' : 'Marcar como no cumple'}</h2>
+              <p>{titulo}</p>
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor="nota">¿Por qué? (aparece en el reporte formal con su nombre y la fecha)</label>
+            <textarea
+              id="nota"
+              className="textarea"
+              rows={4}
+              autoFocus
+              value={nota}
+              placeholder={
+                cumple
+                  ? 'Ej.: Se revisó el certificado en la página 3 del RUP; fue expedido el 15/08/2026, dentro de la vigencia.'
+                  : 'Ej.: El certificado aportado fue expedido el 10/03/2026, supera los 3 meses exigidos al cierre.'
+              }
+              onChange={(e) => setNota(e.target.value)}
+            />
+          </div>
+          <div className="dialogo-pie">
+            <button type="button" className="btn btn-ghost" onClick={onCerrar}>
+              Cancelar
+            </button>
+            <button type="submit" className={`btn ${cumple ? 'btn-ok' : 'btn-bad'}`} disabled={nota.trim().length < 5}>
+              {cumple ? 'Confirmar: cumple' : 'Confirmar: no cumple'}
+            </button>
+          </div>
+        </form>
+      </div>
     </>
   )
 }

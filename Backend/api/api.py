@@ -192,5 +192,7 @@ api.add_router("/procesos", procesos)
 api.add_router("/auth", auth_router)
 api.add_router("/equipo", equipo)
 api.add_router("/plataforma", plataforma)
+from api import historico as _historico  # noqa: E402,F401  (registra sus rutas en el router de evaluaciones)
+
 api.add_router("/evaluaciones", evaluaciones_router)
 api.add_router("/configuracion", configuracion_router)
