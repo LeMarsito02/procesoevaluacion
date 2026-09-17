@@ -15,7 +15,10 @@ from app.evaluacion.formato1 import (
 )
 from app.integrations.drive import download_file_bytes, get_file_metadata
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from app.procesamiento.pdf_utils import extraer_texto
+from app.evaluacion.proponente_plural import datos_formato2, encontrar_formato2
+from app.llm.cliente import solo_digitos
+from app.procesamiento.memoria_proponente import memo_por_pdfs
+from app.procesamiento.pdf_utils import abrir_pdf, extraer_texto, texto_pagina
 from app.procesamiento.zip_utils import extraer_pdfs
 
 PAGINAS_A_REVISAR = 2
@@ -62,6 +65,124 @@ def _nombre_aparece_en_texto(nombre: str, texto_norm: str) -> bool:
     return encontrados >= minimo
 
 
+PAGINAS_MAXIMAS_FORMATO5 = 8
+
+# NIT de la empresa que certifica: "MSING S.A.S. IDENTIFICADA CON NIT
+# 900.574.741-7", "NIT NO. 900.709-306-8", "NIT.NO.901.950.937- 1". Se toman
+# los 9 dígitos sin el de verificación.
+NIT_RE = re.compile(r"\bNIT\.?\s*(?:NO\.?\s*)?:?\s*(\d{3})[.\s-]?(\d{3})[.\s-]?(\d{3})")
+# Quién firma: el representante legal o el revisor fiscal de la sociedad, o
+# la propia persona natural integrante (variante "(PERSONAS NATURALES)").
+FIRMANTE_VALIDO_RE = re.compile(r"REPRESENTANTE LEGAL|REVISOR(?:A)? FISCAL|\(PERSONAS NATURALES\)")
+# A qué integrante corresponde: "...REPRESENTANTE LEGAL DE MSING S.A.S.
+# IDENTIFICADA CON NIT...", "...REVISOR FISCAL DE ESAO SAS IDENTIFICADA...",
+# o la persona natural "...YO, MARTA EUGENIA GARCIA BETANCUR IDENTIFICADA CON
+# CC...". Hay Formatos 2 que listan a los integrantes solo por nombre, sin NIT.
+EMPRESA_CERTIFICA_RE = re.compile(
+    r"(?:REPRESENTANTE LEGAL|REVISOR(?:A)? FISCAL(?: SUPLENTE)?|CONTADOR(?:A)?)\s+DE\s+(?:LA\s+(?:SOCIEDAD|EMPRESA)\s+)?"
+    r"([A-Z0-9Ñ&][A-Z0-9Ñ&.,\s-]{2,80}?),?\s+(?:\(|IDENTIFICAD|CON\s+NIT|NIT\b)"
+)
+PERSONA_NATURAL_RE = re.compile(r"\bYO,?\s+([A-ZÑ][A-ZÑ\s]{5,60}?),?\s+IDENTIFICAD[OA]\s+CON\s+(?:CC|C\.\s*C\.|CEDULA)")
+_PALABRAS_SOCIETARIAS = {"SAS", "S", "A", "LTDA", "SA", "E", "Y", "DE", "LA", "EL", "CIA", "SOCIEDAD"}
+
+
+@memo_por_pdfs
+def certificados_formato5(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
+    """Todos los Formato 5 del proponente como (archivo, texto), separados
+    por página aunque vengan varios en un mismo PDF (un proponente plural
+    aporta uno por integrante, a veces juntos). Una página sin título se
+    toma como continuación del Formato 5 anterior."""
+    certificados: list[tuple[str, str]] = []
+    for nombre in _orden_busqueda(list(pdfs.keys())):
+        try:
+            with abrir_pdf(pdfs[nombre]) as pdf:
+                actual: list[str] | None = None
+                for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_FORMATO5]):
+                    texto = texto_pagina(page)
+                    page.flush_cache()
+                    if TITULO_FORMATO5_RE.search(_norm(texto)):
+                        if actual is not None:
+                            certificados.append((nombre, "\n".join(actual)))
+                        actual = [texto]
+                    elif actual is not None and len(actual) == 1:
+                        actual.append(texto)
+                    elif actual is None and indice >= PAGINAS_A_REVISAR:
+                        break
+                if actual is not None:
+                    certificados.append((nombre, "\n".join(actual)))
+        except Exception:  # noqa: BLE001
+            continue
+    return certificados
+
+
+def _nit(texto_norm: str) -> str | None:
+    match = NIT_RE.search(texto_norm)
+    return "".join(match.groups()) if match else None
+
+
+def _integrante_del_formato5(texto_norm: str, texto_formato2_norm: str) -> str | None:
+    """Clave del integrante al que corresponde un Formato 5 (su NIT o su
+    nombre), solo si ese integrante aparece en el Formato 2; None si no se
+    puede relacionar."""
+    nit = _nit(texto_norm)
+    if nit and nit in solo_digitos(texto_formato2_norm):
+        return nit
+    candidatos = [m.group(1) for m in EMPRESA_CERTIFICA_RE.finditer(texto_norm)]
+    persona = PERSONA_NATURAL_RE.search(texto_norm)
+    if persona:
+        candidatos.append(persona.group(1))
+    for nombre in candidatos:
+        palabras = [p for p in re.findall(r"[A-Z0-9Ñ&]+", nombre) if p not in _PALABRAS_SOCIETARIAS]
+        if palabras and all(re.search(rf"\b{re.escape(p)}\b", texto_formato2_norm) for p in palabras):
+            return " ".join(palabras)
+    return None
+
+
+def _evaluar_formato5_plural(pdfs: dict[str, bytes], codigo_proceso: str | None) -> ResultadoEvaluacionSegSocial:
+    """Plural: cada integrante debe aportar su propio Formato 5 firmado por
+    su representante legal o revisor fiscal. Se cruza el NIT de cada Formato 5
+    con el documento de conformación (Formato 2) y se exige uno por cada
+    integrante; lo que no se pueda confirmar queda para revisión humana."""
+    certificados = certificados_formato5(pdfs)
+    archivo = certificados[0][0] if certificados else None
+    formato2 = datos_formato2(pdfs, codigo_proceso)
+    if formato2 is None or not formato2[1].porcentajes:
+        return ResultadoEvaluacionSegSocial(
+            cumple=False,
+            motivo=(
+                f"Es un proponente plural con {len(certificados)} Formato(s) 5, pero no se pudo leer cuántos integrantes "
+                "tiene en el Formato 2 — confirma manualmente que cada integrante aporte el suyo firmado."
+            ),
+            archivo=archivo,
+        )
+    _, datos, _ = formato2
+    texto_formato2_norm = _norm(encontrar_formato2(pdfs, codigo_proceso)[1])
+    integrantes = len(datos.porcentajes)
+
+    nits_validos: set[str] = set()
+    problemas: list[str] = []
+    for nombre_archivo, texto in certificados:
+        texto_norm = _norm(texto)
+        integrante = _integrante_del_formato5(texto_norm, texto_formato2_norm)
+        if integrante is None:
+            problemas.append(f"no se pudo relacionar '{nombre_archivo}' con un integrante del Formato 2")
+            continue
+        if not FIRMANTE_VALIDO_RE.search(texto_norm):
+            problemas.append(f"'{nombre_archivo}' no indica que lo firme el representante legal o el revisor fiscal")
+            continue
+        nits_validos.add(integrante)
+
+    if len(nits_validos) >= integrantes:
+        return ResultadoEvaluacionSegSocial(cumple=True, motivo=None, archivo=archivo)
+    motivo = (
+        f"el consorcio/unión temporal tiene {integrantes} integrantes pero solo se confirmó el Formato 5 de "
+        f"{len(nits_validos)}"
+    )
+    if problemas:
+        motivo += " (" + "; ".join(problemas) + ")"
+    return ResultadoEvaluacionSegSocial(cumple=False, motivo=motivo + " — revisa manualmente", archivo=archivo)
+
+
 class ResultadoEvaluacionSegSocial:
     def __init__(self, cumple: bool, motivo: str | None, archivo: str | None) -> None:
         self.cumple = cumple
@@ -78,7 +199,9 @@ def _representante_legal_individual(pdfs: dict[str, bytes]) -> str | None:
     return _extraer_representante_legal(texto_norm) or _extraer_nombre_apertura(texto_norm)
 
 
-def evaluar_requisito12(pdfs: dict[str, bytes], tipo_proponente: str | None) -> ResultadoEvaluacionSegSocial:
+def evaluar_requisito12(
+    pdfs: dict[str, bytes], tipo_proponente: str | None, codigo_proceso: str | None = None
+) -> ResultadoEvaluacionSegSocial:
     """Requisito 12: Formato de pago de seguridad social y aportes legales.
     El abogado indicó que debe ir firmado por el representante legal (y por
     el revisor fiscal, si el certificado de existencia indica que la
@@ -91,9 +214,9 @@ def evaluar_requisito12(pdfs: dict[str, bytes], tipo_proponente: str | None) -> 
     confirmación automática sin base real: (1) no se verifica la firma del
     revisor fiscal — requeriría cruzar con el Requisito 6 si el certificado
     de existencia menciona uno, y esa extracción no está implementada; (2)
-    para proponentes plurales no se determina el representante legal propio
-    de cada integrante, así que el caso plural siempre se deja para
-    revisión humana."""
+    en plurales se exige un Formato 5 por integrante (cruzado por NIT con el
+    Formato 2), firmado por representante legal o revisor fiscal, sin
+    verificar el nombre exacto de quien firma."""
     encontrado = encontrar_formato5(pdfs)
     if encontrado is None:
         return ResultadoEvaluacionSegSocial(
@@ -106,14 +229,7 @@ def evaluar_requisito12(pdfs: dict[str, bytes], tipo_proponente: str | None) -> 
     texto_norm = _norm(texto)
 
     if tipo_proponente in ("consorcio", "union_temporal"):
-        return ResultadoEvaluacionSegSocial(
-            cumple=False,
-            motivo=(
-                "Es un proponente plural: cada integrante debe aportar su propio Formato 5 firmado por su propio "
-                "representante legal — confirma manualmente que estén completos y correctamente firmados."
-            ),
-            archivo=archivo,
-        )
+        return _evaluar_formato5_plural(pdfs, codigo_proceso)
 
     representante = _representante_legal_individual(pdfs)
     if representante is None:
@@ -175,7 +291,7 @@ def evaluar_proponente_requisito12(proponente: Proponente, proceso: ProcesoDocum
         )
 
     tipo_proponente = obtener_tipo_proponente(pdfs)
-    resultado = evaluar_requisito12(pdfs, tipo_proponente)
+    resultado = evaluar_requisito12(pdfs, tipo_proponente, proceso.codigo_proceso)
 
     return finalizar(
         ResultadoRequisito(
