@@ -104,14 +104,21 @@ def main():
     rango = [solo_requisito] if solo_requisito else range(1, 19)
 
     for requisito in rango:
-        if requisito in requisitos_ya_hechos:
+        # Se reanuda por proponente: solo se evalúan los que no tienen
+        # resultado o quedaron con error (ej. un corte de red).
+        pendientes_json = [
+            pj for pj in proponentes_json
+            if not resultados_todos[pj["hoja"]].get(requisito)
+            or resultados_todos[pj["hoja"]][requisito].get("error")
+        ]
+        if not pendientes_json:
             print(f"--- Requisito {requisito} ya estaba hecho, se salta ---", flush=True)
             continue
-        print(f"--- Evaluando Requisito {requisito} ({len(proponentes_a_evaluar)} proponentes) ---", flush=True)
+        print(f"--- Evaluando Requisito {requisito} ({len(pendientes_json)} proponentes pendientes) ---", flush=True)
         try:
             resp = requests.post(
                 f"{API}/api/procesos/evaluar-requisito-{requisito}",
-                json={"documento_base": proceso_json, "proponentes": proponentes_json},
+                json={"documento_base": proceso_json, "proponentes": pendientes_json},
                 timeout=7200,
             )
         except Exception as exc:  # noqa: BLE001
