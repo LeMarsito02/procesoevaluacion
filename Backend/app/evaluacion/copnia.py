@@ -25,7 +25,16 @@ from app.procesamiento.zip_utils import extraer_pdfs
 
 # El certificado COPNIA (Consejo Profesional Nacional de Ingeniería) siempre
 # trae este título, sin importar el nombre del archivo.
-TITULO_COPNIA_RE = re.compile(r"CONSEJO PROFESIONAL NACIONAL DE INGENIER[IÍ]A")
+# Se exige el encabezado del CERTIFICADO ("CERTIFICADO DE VIGENCIA Y
+# ANTECEDENTES DISCIPLINARIOS ... EL DIRECTOR GENERAL CERTIFICA"), no la
+# sola mención del Consejo: la tarjeta profesional escaneada y el texto del
+# aval dentro de la carta también la nombran, y tomarlos como certificado
+# impedía encontrar el certificado real (confirmado en proponentes reales).
+TITULO_COPNIA_RE = re.compile(
+    r"VIGENCIA Y ANTECEDENTES DISCIPLINARIOS"
+    r"|CONSEJO PROFESIONAL NACIONAL DE INGENIER[IÍ]A.{0,60}?CERTIFICA\b",
+    re.DOTALL,
+)
 
 PISTAS_NOMBRE_COPNIA = ("copnia",)
 
