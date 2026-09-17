@@ -18,8 +18,8 @@ from datetime import date
 import requests
 
 sys.path.insert(0, ".")
-from app.integrations.drive import list_proponentes
-from app.parsers.documento_base import build_proceso
+from motor.integrations.drive import list_proponentes
+from motor.parsers.documento_base import build_proceso
 from scratch_comparar import API, DOC_BASE, DRIVE_FOLDER, emparejar_proponentes, nuestro_veredicto
 
 RESULTADOS = ".scratch/medicion_resultados.json"

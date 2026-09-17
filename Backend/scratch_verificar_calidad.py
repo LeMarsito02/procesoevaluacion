@@ -13,8 +13,8 @@ from datetime import date
 import requests
 
 sys.path.insert(0, ".")
-from app.integrations.drive import list_proponentes
-from app.parsers.documento_base import build_proceso
+from motor.integrations.drive import list_proponentes
+from motor.parsers.documento_base import build_proceso
 
 API = "http://localhost:8000"
 DRIVE_FOLDER = "https://drive.google.com/drive/folders/1OyXkYjPr5IKLnSVvB7BHheYziKtLGTeb"
