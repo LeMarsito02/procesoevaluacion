@@ -1,7 +1,7 @@
-# Requisitos jurídicos — ICCU-CM-037-2026
+# Requisitos jurídicos — proceso de referencia
 
 Tabla de referencia de los 18 requisitos de la evaluación jurídica, según la
-plantilla real (`MODELO`/`P-XX`) y las explicaciones del abogado Nicolás.
+plantilla real (`MODELO`/`P-XX`) y las explicaciones del abogado asesor.
 `Fila` es la fila en cada hoja `P-XX` del Excel. `Estado` indica si ya está
 automatizado.
 
@@ -17,7 +17,7 @@ automatizado.
 | 8 | 57 | Facultades Representante Legal | El mismo Certificado de Existencia y Rep. Legal | No debe haber restricción para contratar por cuantía/razón. Si el certificado indica un límite (ej. requiere autorización de Asamblea para montos > 500 SMMLV) y el proceso supera ese límite, debe existir un acta de autorización aparte | 🔲 Por construir — el caso del límite probablemente requiera marcarlo siempre para revisión humana, no es automatizable con certeza |
 | 9 | 61 | Registro Único de Proponentes – RUP | RUP (Cámara de Comercio) | Vigencia ≤ 1 mes antes de la fecha de cierre | 🔲 Por construir |
 | 10 | 65 | Sanciones | El mismo RUP | El RUP no debe registrar sanciones/multas vigentes; si las hay, se debe especificar cuál | 🔲 Por construir — depende del mismo documento del Requisito 9 |
-| 11 | 69 | Garantía de Seriedad de la Propuesta conforme solicitado | Póliza / Garantía de seriedad del proponente | Beneficiario = entidad (ICCU), menciona el proceso y el lote correspondiente, vigencia ≥ 3 meses desde el cierre, valor ≥ 10% del lote de mayor valor ofertado — **estos valores objetivo ya se calculan automáticamente en la Fase 1** (`garantia_seriedad` del Documento Base); falta cruzarlos contra la póliza real del proponente | 🔲 Por construir — reutiliza directamente los valores ya calculados en Fase 1 |
+| 11 | 69 | Garantía de Seriedad de la Propuesta conforme solicitado | Póliza / Garantía de seriedad del proponente | Beneficiario = entidad (la entidad), menciona el proceso y el lote correspondiente, vigencia ≥ 3 meses desde el cierre, valor ≥ 10% del lote de mayor valor ofertado — **estos valores objetivo ya se calculan automáticamente en la Fase 1** (`garantia_seriedad` del Documento Base); falta cruzarlos contra la póliza real del proponente | 🔲 Por construir — reutiliza directamente los valores ya calculados en Fase 1 |
 | 12 | 73 | Pago de seguridad social y aportes legales | Formato de pago de seguridad social (nombre varía: "Formato 5", "Formato 6", etc.) | Documento firmado por el representante legal (y por el revisor fiscal si el certificado de existencia indica que la sociedad tiene uno). Uno por cada integrante si es plural | 🔲 Por construir |
 | 13 | 77 | Registro Único Tributario - RUT | — | **N.A. siempre** — el abogado indicó que actualmente no se exige/valida este requisito | 🔲 Trivial: marcar siempre N.A. |
 | 14 | 81 | Boletín de Responsables de la Contraloría General de la República | Certificado de Contraloría (antecedente estándar) | Se aporta el antecedente del representante legal (y suplente si aplica); no debe figurar como responsable fiscal | 🔲 Por construir — mismo patrón que REDAM/Procuraduría/Policía/RNMC |

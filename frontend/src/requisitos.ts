@@ -4,7 +4,7 @@
  * Cada entidad define sus propios requisitos (plantilla de evaluación), así que
  * el catálogo lo manda el servidor con cada evaluación y se instala con
  * `establecerCatalogo`. Los valores de abajo son la base del sistema (jurídica
- * del ICCU, sin RUT) y sirven mientras no haya otro. */
+ * de referencia, sin RUT) y sirven mientras no haya otro. */
 
 export type GrupoRequisito = 'oferta' | 'camara' | 'antecedentes' | 'adicionales'
 
@@ -60,7 +60,7 @@ export const REQUISITOS: InfoRequisito[] = [
     numero: 11,
     corto: 'Póliza',
     titulo: 'Garantía de seriedad de la oferta',
-    verifica: 'Beneficiario ICCU, vigencia hasta la fecha mínima y valor asegurado de al menos el 10% del lote más caro al que se presenta.',
+    verifica: 'Beneficiario la entidad, vigencia hasta la fecha mínima y valor asegurado de al menos el porcentaje exigido del lote más caro al que se presenta.',
     grupo: 'oferta',
   },
   {

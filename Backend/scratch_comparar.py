@@ -6,6 +6,11 @@ la lógica sin verificar antes contra los documentos fuente reales."""
 from __future__ import annotations
 
 import json
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv(".env")
 import re
 import sys
 import time
@@ -17,14 +22,23 @@ sys.path.insert(0, ".")
 from motor.integrations.drive import list_proponentes
 from motor.parsers.documento_base import build_proceso
 
+# Fecha de cierre del proceso de referencia (formato AAAA-MM-DD en .env).
+FECHA_CIERRE = date.fromisoformat(os.environ.get("MEDICION_FECHA_CIERRE", "2026-01-01"))
+
 API = "http://localhost:8000"
-DRIVE_FOLDER = "https://drive.google.com/drive/folders/1OyXkYjPr5IKLnSVvB7BHheYziKtLGTeb"
-DOC_BASE = "/home/lemarsito/Documents/NICOLASPENA/ProcesoEvaluacion/Documento Base v3 - definitivos apertura.pdf"
+# Datos del proceso con el que se mide el acierto (se configuran en .env;
+# no se guardan en el repositorio porque son de una entidad real).
+DRIVE_FOLDER = os.environ.get("MEDICION_DRIVE_FOLDER", "")
+DOC_BASE = os.environ.get("MEDICION_DOCUMENTO_BASE", "")
+
+
+# Palabras que no distinguen a un proponente (formas societarias y la sigla de la entidad).
+IGNORADAS = {"SAS", "LTDA", *(x.strip().upper() for x in os.environ.get("PARAMETRO_PREFIJO_CODIGO", "").split(",") if x.strip())}
 
 
 def _norm_tokens(s: str) -> set[str]:
     s = re.sub(r"[^A-Za-zÑÁÉÍÓÚñáéíóú0-9\s]", " ", s.upper())
-    return {t for t in s.split() if len(t) > 2 and t not in ("SAS", "LTDA", "ICCU")}
+    return {t for t in s.split() if len(t) > 2 and t not in IGNORADAS}
 
 
 def emparejar_proponentes(proponentes, ground_truth):
@@ -60,7 +74,7 @@ def nuestro_veredicto(resultado: dict) -> str:
 def main():
     with open(DOC_BASE, "rb") as f:
         pdf_bytes = f.read()
-    proceso = build_proceso("CM-037-2026", date(2026, 7, 23), pdf_bytes)
+    proceso = build_proceso(os.environ.get("MEDICION_CODIGO_PROCESO", ""), FECHA_CIERRE, pdf_bytes)
     proceso_json = json.loads(proceso.model_dump_json())
     del pdf_bytes
 

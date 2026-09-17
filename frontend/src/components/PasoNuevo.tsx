@@ -60,7 +60,7 @@ export default function PasoNuevo(props: Props) {
               <input
                 id="codigo"
                 className="input"
-                placeholder="ICCU-CM-037-2026"
+                placeholder="ENT-CM-037-2026"
                 value={codigoProceso}
                 onChange={(e) => props.onCambiar({ codigoProceso: e.target.value })}
                 required

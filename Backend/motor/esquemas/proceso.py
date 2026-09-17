@@ -48,7 +48,7 @@ class ProcesoDocumentoBase(BaseModel):
         description="Mensajes sobre datos que no se pudieron extraer con certeza y deben revisarse manualmente",
     )
     # Definición de evaluación de la entidad (motor.criterios.DefinicionEvaluacion
-    # serializada). None = evaluación jurídica base del sistema (ICCU).
+    # serializada). None = evaluación jurídica base del sistema.
     criterios: dict | None = Field(default=None, exclude=True)
 
 

@@ -14,7 +14,7 @@ from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRe
 DATOS_SHEET_NAME = "DATOS PROCESO"
 
 # Fila (en cada hoja P-XX) donde va la columna L (SI/NO/REVISAR) y N (archivo/
-# motivo) de cada requisito, según la plantilla jurídica del ICCU.
+# motivo) de cada requisito, según la plantilla jurídica de ejemplo.
 FILA_POR_REQUISITO: dict[int, int] = {
     1: 29,
     2: 33,
@@ -40,9 +40,9 @@ FILA_POR_REQUISITO: dict[int, int] = {
 class MapeoPlantilla(BaseModel):
     """Dónde escribe el informe dentro de una plantilla de Excel. Cada entidad
     sube su propia plantilla y ajusta este mapeo; los valores por defecto son
-    los de la plantilla jurídica del ICCU."""
+    los de la plantilla jurídica de ejemplo."""
 
-    prefijo_codigo: str = Field("ICCU", description="Sigla de la entidad antepuesta al código del proceso")
+    prefijo_codigo: str = Field("", description="Sigla de la entidad antepuesta al código del proceso")
     titulo: str = Field("EVALUACIÓN {tipo} - PROCESO {codigo}{de_anio}", description="Título de cada hoja de proponente")
     hoja_proponente_patron: str = Field(r"^P-\d+$", description="Expresión regular del nombre de las hojas por proponente")
     hoja_modelo: str | None = "MODELO"
@@ -70,7 +70,7 @@ def _codigo_y_anio(codigo_proceso: str) -> tuple[str, str]:
     return codigo_proceso.strip(), ""
 
 
-def _codigo_completo(codigo_proceso: str, prefijo: str = "ICCU") -> str:
+def _codigo_completo(codigo_proceso: str, prefijo: str = "") -> str:
     codigo_sin_anio, _ = _codigo_y_anio(codigo_proceso)
     return f"{prefijo}-{codigo_sin_anio}" if prefijo else codigo_sin_anio
 
@@ -100,7 +100,7 @@ def _formato_pesos(valor: float) -> str:
 
 
 def _write_datos_proceso_sheet(
-    wb: openpyxl.Workbook, proceso: ProcesoDocumentoBase, proponentes: list[Proponente], prefijo: str = "ICCU"
+    wb: openpyxl.Workbook, proceso: ProcesoDocumentoBase, proponentes: list[Proponente], prefijo: str = ""
 ) -> None:
     if DATOS_SHEET_NAME in wb.sheetnames:
         del wb[DATOS_SHEET_NAME]

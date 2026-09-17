@@ -151,7 +151,7 @@ SEPARADORES_RE = r"[\s\-‐-―]*"
 
 def _codigo_regex(codigo: str) -> re.Pattern[str]:
     """Construye un patrón tolerante a espacios y distintos tipos de guion
-    (ej. 'ICCU-CM-037-2026' también encuentra 'ICCU-CM-037 – 2026')."""
+    (ej. 'ENT-CM-037-2026' también encuentra 'ENT-CM-037 – 2026')."""
     partes = [p for p in re.split(r"[\s\-]+", codigo.strip()) if p]
     partes_escapadas = [re.escape(_norm(p)) for p in partes]
     return re.compile(SEPARADORES_RE.join(partes_escapadas))
@@ -355,7 +355,7 @@ def _extraer_tipo_proponente(pdf: pdfplumber.PDF) -> str | None:
 # La declaración de apertura de la carta ya dice explícitamente "en mi
 # calidad de representante legal DEL CONSORCIO ..." o "DE LA UNIÓN TEMPORAL
 # ...", y se usa como señal PRIORITARIA sobre la casilla "El Proponente es:"
-# para detectar proponente plural: se encontró un caso real (Consorcio AJ
+# para detectar proponente plural: se encontró un caso real (Consorcio de ejemplo
 # 037) donde el proponente dejó marcada por error "Persona jurídica
 # nacional" en la casilla, siendo evidentemente un Consorcio según su propia
 # carta y su Formato 2 de conformación. Confiar en una casilla mal

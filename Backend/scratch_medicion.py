@@ -9,6 +9,7 @@ Reanudable: los proponentes ya evaluados sin error no se repiten."""
 from __future__ import annotations
 
 import collections
+import os
 import json
 import sys
 import time
@@ -20,6 +21,9 @@ import requests
 sys.path.insert(0, ".")
 from motor.integrations.drive import list_proponentes
 from motor.parsers.documento_base import build_proceso
+
+# Fecha de cierre del proceso de referencia (formato AAAA-MM-DD en .env).
+FECHA_CIERRE = date.fromisoformat(os.environ.get("MEDICION_FECHA_CIERRE", "2026-01-01"))
 from scratch_comparar import API, DOC_BASE, DRIVE_FOLDER, emparejar_proponentes, nuestro_veredicto
 
 RESULTADOS = ".scratch/medicion_resultados.json"
@@ -154,7 +158,7 @@ def resumen(comparacion, tiempos):
 
 def main():
     with open(DOC_BASE, "rb") as f:
-        proceso = build_proceso("CM-037-2026", date(2026, 7, 23), f.read())
+        proceso = build_proceso(os.environ.get("MEDICION_CODIGO_PROCESO", ""), FECHA_CIERRE, f.read())
     proceso_json = json.loads(proceso.model_dump_json())
     r = list_proponentes(DRIVE_FOLDER)
     with open(".scratch/ground_truth.json") as f:

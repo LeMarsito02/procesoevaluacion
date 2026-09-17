@@ -38,7 +38,7 @@ class TipoArea(models.TextChoices):
 
 
 class Area(models.Model):
-    """Área de evaluación de una entidad (ej. el equipo jurídico del ICCU)."""
+    """Área de evaluación de una entidad (ej. su equipo jurídico)."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entidad = models.ForeignKey(Entidad, on_delete=models.CASCADE, related_name="areas")

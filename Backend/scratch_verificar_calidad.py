@@ -7,6 +7,11 @@ queda demostrado que la optimización solo quitó trabajo desperdiciado."""
 from __future__ import annotations
 
 import json
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv(".env")
 import sys
 from datetime import date
 
@@ -16,9 +21,12 @@ sys.path.insert(0, ".")
 from motor.integrations.drive import list_proponentes
 from motor.parsers.documento_base import build_proceso
 
+# Fecha de cierre del proceso de referencia (formato AAAA-MM-DD en .env).
+FECHA_CIERRE = date.fromisoformat(os.environ.get("MEDICION_FECHA_CIERRE", "2026-01-01"))
+
 API = "http://localhost:8000"
 DRIVE_FOLDER = "https://drive.google.com/drive/folders/1OyXkYjPr5IKLnSVvB7BHheYziKtLGTeb"
-DOC_BASE = "/home/lemarsito/Documents/NICOLASPENA/ProcesoEvaluacion/Documento Base v3 - definitivos apertura.pdf"
+DOC_BASE = os.environ.get("MEDICION_DOCUMENTO_BASE", "")
 
 # Muestra representativa: individuales, consorcios chicos y el consorcio más
 # pesado del proceso, para cubrir los casos donde la deduplicación y el
@@ -29,7 +37,7 @@ REQUISITOS = [1, 2, 3, 4, 5, 6, 7, 8]
 
 def main():
     with open(DOC_BASE, "rb") as f:
-        proceso = build_proceso("CM-037-2026", date(2026, 7, 23), f.read())
+        proceso = build_proceso(os.environ.get("MEDICION_CODIGO_PROCESO", ""), FECHA_CIERRE, f.read())
     proceso_json = json.loads(proceso.model_dump_json())
 
     with open(".scratch/nuestros_resultados.json") as f:

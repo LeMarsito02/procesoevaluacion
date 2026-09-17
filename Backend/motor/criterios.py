@@ -3,8 +3,10 @@
 Una *definición de evaluación* dice qué requisitos se piden, con qué número y
 nombre, con qué verificación del motor (o con qué bloques, si es un requisito
 nuevo) y con qué parámetros (vigencias, beneficiario, sigla…). Los valores por
-defecto reproducen exactamente la evaluación jurídica del ICCU con la que se
-midió el acierto del programa.
+defecto son los de la evaluación jurídica base; cada entidad los ajusta desde
+su plantilla. Los que dependen de la entidad (su sigla y el beneficiario de la
+póliza) se pueden fijar además por variables de entorno, para el entorno de
+pruebas.
 
 Los evaluadores leen los parámetros con `valor(...)`; el orquestador los fija
 con `usar(...)` antes de evaluar cada proponente (cada worker evalúa uno a la
@@ -20,6 +22,16 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+import os
+
+
+def _texto_env(variable: str, defecto: str = "") -> str:
+    return os.environ.get(variable, defecto)
+
+
+def _lista_env(variable: str) -> list[str]:
+    return [x.strip() for x in os.environ.get(variable, "").split(",") if x.strip()]
 
 
 # --- Parámetros ---
@@ -109,16 +121,17 @@ PARAMETROS: dict[str, Parametro] = {
         Parametro(
             "prefijo_codigo",
             "Sigla de la entidad en el código del proceso",
-            "Se acepta el código con o sin esta sigla (ej. ICCU-CM-037-2026 o CM-037-2026).",
-            "ICCU",
+            "Se acepta el código con o sin esta sigla (ej. ENT-CM-037-2026 o CM-037-2026).",
+            _texto_env("PARAMETRO_PREFIJO_CODIGO"),
             "texto",
             requisitos=("juridica.carta",),
         ),
         Parametro(
             "beneficiario_claves",
             "Beneficiario de la póliza",
-            "Siglas o nombres de la entidad que deben aparecer como beneficiario de la garantía.",
-            ["ICCU", "INSTITUTO DE CAMINOS"],
+            "Siglas o nombres de la entidad que deben aparecer como beneficiario de la garantía. "
+            "Sin valor, el beneficiario no se puede confirmar y el requisito queda para revisión.",
+            _lista_env("PARAMETRO_BENEFICIARIO_CLAVES"),
             "lista_texto",
             requisitos=("juridica.garantia",),
         ),
@@ -146,7 +159,7 @@ def usar(parametros: dict[str, Any] | None) -> Iterator[None]:
 
 def huella_parametros() -> str | None:
     """Para la clave de caché: None si todo está en su valor por defecto (así
-    los resultados ya calculados con los criterios del ICCU siguen sirviendo)."""
+    los resultados ya calculados con esos criterios siguen sirviendo)."""
     distintos = {k: v for k, v in _ACTUALES.items() if v != PARAMETROS[k].defecto}
     if not distintos:
         return None
@@ -332,8 +345,8 @@ class DefinicionEvaluacion(BaseModel):
 
 
 def definicion_sistema(tipo: str) -> DefinicionEvaluacion:
-    """Definición base del sistema: la evaluación jurídica del ICCU (sin RUT),
-    con el mismo orden y numeración de su plantilla de Excel."""
+    """Definición base del sistema: la evaluación jurídica de referencia, con la
+    numeración de la plantilla de Excel de ejemplo."""
     if tipo != "juridica":
         return DefinicionEvaluacion()
     requisitos = [

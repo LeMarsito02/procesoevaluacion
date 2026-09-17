@@ -31,7 +31,7 @@ def _solo_cache() -> bool:
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
-# "p1 JJAB SAS", "P-2 SIMO SAS", "p 3 - INGESCOR S.A.S." (extensión ya removida)
+# "p1 EMPRESA UNO SAS", "P-2 EMPRESA DOS SAS", "p 3 - EMPRESA TRES S.A.S." (extensión ya removida)
 PROPONENTE_NAME_RE = re.compile(r"^[Pp]\s*-?\s*(\d+)\s*[-–.]?\s+(.+)$")
 
 

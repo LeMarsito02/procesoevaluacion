@@ -613,7 +613,7 @@ def evaluar_proponente_requisito10(proponente: Proponente, proceso: ProcesoDocum
 
 # "ORGANIZACION JURIDICA: SOCIEDAD POR ACCIONES SIMPLIFICADA CATEGORIA :
 # PERSONA JURIDICA PRINCIPAL NIT :..." — confirmado con un Certificado de
-# Existencia real (SIMO SAS). "SOCIEDAD ANONIMA" y "SOCIEDAD POR ACCIONES
+# Existencia real (EMPRESA DOS SAS). "SOCIEDAD ANONIMA" y "SOCIEDAD POR ACCIONES
 # SIMPLIFICADA" (S.A.S.) son frases completamente distintas en español, así
 # que basta buscar la primera literalmente sin riesgo de confundirla con
 # S.A.S. No se encontró en los documentos reales revisados un proponente

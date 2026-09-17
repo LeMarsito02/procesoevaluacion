@@ -4,13 +4,15 @@ extraer, por cada proponente y cada uno de los 18 requisitos, el veredicto
 programa -- nunca para construir la lógica de evaluación."""
 from __future__ import annotations
 
+import os
+
 import json
 import re
 import sys
 
 import pdfplumber
 
-PATH = "/home/lemarsito/Documents/NICOLASPENA/ProcesoEvaluacion/SEGUNDO INFORME DE EVALUACION JURIDICA ICCU-CM-037 de 2026 (1).pdf"
+PATH = os.environ.get("MEDICION_INFORME_REFERENCIA", "")
 
 REQUISITO_ANCLA = {
     1: "Carta de presentación de la propuesta",

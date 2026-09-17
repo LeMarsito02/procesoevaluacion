@@ -58,17 +58,18 @@ def _fecha_en_texto(fecha_ddmmaaaa: str, texto: str) -> bool:
     abreviado = next((k for k, v in _MESES_ABREVIADOS.items() if v == int(mes)), None)
     return abreviado is not None and re.search(rf"\b{int(dia):02d}[-/ ]{abreviado}[A-Z]*[-/ ]{anio}\b", _norm(texto)) is not None
 
-# "BENEFICIARIO INSTITUTO DE CAMINOS Y CONSTRUCCIONES DE CUNDINAMARCA - ICCU
-# NO. DOC. IDENTIDAD ..." — se exige la sigla de la entidad cerca de la
-# palabra "BENEFICIARIO", sin depender del nombre completo (que podría venir
-# con leves variaciones de redacción).
-BENEFICIARIO_RE = re.compile(r"BENEFICIARIO.{0,150}ICCU")
+# "BENEFICIARIO <NOMBRE DE LA ENTIDAD> - <SIGLA> NO. DOC. IDENTIDAD ..." — se
+# exige la sigla (o el nombre) de la entidad cerca de la palabra
+# "BENEFICIARIO", sin depender del nombre completo, que suele venir con leves
+# variaciones de redacción. Las claves las define cada entidad en su plantilla
+# (parámetro "beneficiario_claves").
 
 
-def _beneficiario_re() -> re.Pattern[str]:
-    """Beneficiario según la entidad (parámetro "beneficiario_claves")."""
+def _beneficiario_re() -> re.Pattern[str] | None:
+    """Beneficiario según la entidad (parámetro "beneficiario_claves"). Sin
+    claves configuradas no se puede confirmar: el requisito va a revisión."""
     claves = [re.escape(_norm(c)) for c in criterios.valor("beneficiario_claves") if c.strip()]
-    return re.compile(r"BENEFICIARIO.{0,150}(?:" + "|".join(claves) + ")") if claves else BENEFICIARIO_RE
+    return re.compile(r"BENEFICIARIO.{0,150}(?:" + "|".join(claves) + ")") if claves else None
 
 # Fila del amparo específico de seriedad de la oferta, con sus propias fechas
 # de vigencia y la suma asegurada. Formatos confirmados:
@@ -254,7 +255,7 @@ def valor_asegurado_exigido(proceso: ProcesoDocumentoBase, lotes: set[str]) -> t
 
 def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -> ResultadoEvaluacionGarantia:
     """Requisito 11: la garantía de seriedad de la oferta debe tener como
-    beneficiario a la entidad (ICCU), cubrir al menos hasta la fecha de
+    beneficiario a la entidad, cubrir al menos hasta la fecha de
     vencimiento ya calculada en el Documento Base (fecha_cierre +
     vigencia_meses) y asegurar al menos el valor ya calculado (10% del
     lote de mayor valor, o del presupuesto total)."""
@@ -275,7 +276,8 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
 
     motivos = []
 
-    beneficiario_ok = bool(_beneficiario_re().search(texto_norm))
+    patron_beneficiario = _beneficiario_re()
+    beneficiario_ok = bool(patron_beneficiario.search(texto_norm)) if patron_beneficiario else False
     fecha_hasta_texto, valor_texto = _leer_vigencia_y_valor(texto_norm)
     if valor_texto is not None:
         valor_leido = _parsear_valor_pesos(valor_texto)
@@ -298,8 +300,11 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
             datos_con_ia = True
 
     if not beneficiario_ok:
+        claves = criterios.valor("beneficiario_claves")
         motivos.append(
-            f"no se pudo confirmar que el beneficiario de la póliza sea la entidad ({criterios.valor('beneficiario_claves')[0]})"
+            f"no se pudo confirmar que el beneficiario de la póliza sea la entidad ({claves[0]})"
+            if claves
+            else "no está configurado el beneficiario de la póliza de la entidad: confírmalo manualmente"
         )
 
     if fecha_hasta_texto is None or valor_texto is None:

@@ -39,5 +39,5 @@
 ## Capacidad
 
 Cada proponente usa hasta ~4 GB de RAM en el peor caso (RUP y pólizas escaneadas) y el carril pesado 7 GB.
-Regla práctica: `MAX_WORKERS` ≈ (RAM de la VM − 6 GB) / 4. Con la medición del ICCU (81 proponentes),
+Regla práctica: `MAX_WORKERS` ≈ (RAM de la VM − 6 GB) / 4. Con la medición de referencia (81 proponentes de un proceso real),
 2 procesos en paralelo tardan ~60 min en frío; 8 procesos (≈ 38 GB) lo bajan a ~15 min.

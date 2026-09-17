@@ -20,7 +20,7 @@ from evaluaciones.trabajador import trabajar
 from motor.esquemas.proceso import ResultadoRequisito
 
 DOCUMENTO_BASE = {
-    "codigo_proceso": "ICCU-CM-037-2026",
+    "codigo_proceso": "ENT-CM-037-2026",
     "fecha_cierre": "2026-08-20",
     "objeto_general": "Mantenimiento de vías",
     "lotes": [{"numero": "LOTE 1", "objeto": "Vías", "plazo_meses": 4, "valor_presupuesto": 1000000, "lugar_ejecucion": None}],
@@ -68,13 +68,13 @@ class BaseEvaluaciones(BaseCuentas):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.consulta = Usuario.objects.create_user("control@iccu.gov.co", CLAVE, nombre_completo="Control Interno", entidad=cls.iccu, rol=Rol.CONSULTA)
-        cls.abogado2 = Usuario.objects.create_user("abogado2@iccu.gov.co", CLAVE, nombre_completo="Abogado Dos", entidad=cls.iccu, rol=Rol.EVALUADOR)
-        cls.abogado2.areas.set(cls.iccu.areas.filter(tipo=TipoArea.JURIDICA))
-        cls.eval_otra = Usuario.objects.create_user("abogado@otra.gov.co", CLAVE, nombre_completo="Abogado Otra", entidad=cls.otra, rol=Rol.EVALUADOR)
+        cls.consulta = Usuario.objects.create_user("control@entidad.gov.co", CLAVE, nombre_completo="Control Interno", entidad=cls.entidad1, rol=Rol.CONSULTA)
+        cls.abogado2 = Usuario.objects.create_user("abogado2@entidad.gov.co", CLAVE, nombre_completo="Abogado Dos", entidad=cls.entidad1, rol=Rol.EVALUADOR)
+        cls.abogado2.areas.set(cls.entidad1.areas.filter(tipo=TipoArea.JURIDICA))
+        cls.eval_otra = Usuario.objects.create_user("abogado@otraentidad.gov.co", CLAVE, nombre_completo="Abogado Otra", entidad=cls.otra, rol=Rol.EVALUADOR)
         cls.eval_otra.areas.set(cls.otra.areas.filter(tipo=TipoArea.JURIDICA))
 
-    def crear(self, email="jefe@iccu.gov.co", codigo="ICCU-CM-037-2026"):
+    def crear(self, email="jefe@entidad.gov.co", codigo="ENT-CM-037-2026"):
         c = Cliente()
         c.entrar(email)
         doc = {**DOCUMENTO_BASE, "codigo_proceso": codigo}
@@ -105,31 +105,31 @@ class CrearYAsignarTests(BaseEvaluaciones):
             r = jefe.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)})
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.json()["estado"], EstadoEvaluacion.ASIGNADA)
-        self.assertEqual(mail.outbox[-1].to, ["abogado@iccu.gov.co"])
+        self.assertEqual(mail.outbox[-1].to, ["abogado@entidad.gov.co"])
         # Aparece en "mis evaluaciones" del abogado y no en la del otro abogado.
         a1 = Cliente()
-        a1.entrar("abogado@iccu.gov.co")
+        a1.entrar("abogado@entidad.gov.co")
         self.assertEqual([e["id"] for e in a1.get("/api/evaluaciones/mias").json()], [ev["id"]])
         a2 = Cliente()
-        a2.entrar("abogado2@iccu.gov.co")
+        a2.entrar("abogado2@entidad.gov.co")
         self.assertEqual(a2.get("/api/evaluaciones/mias").json(), [])
 
     def test_evaluador_que_crea_queda_responsable(self):
-        _, ev = self.crear("abogado@iccu.gov.co")
+        _, ev = self.crear("abogado@entidad.gov.co")
         self.assertEqual(ev["estado"], EstadoEvaluacion.ASIGNADA)
-        self.assertEqual(ev["responsable"]["email"], "abogado@iccu.gov.co")
+        self.assertEqual(ev["responsable"]["email"], "abogado@entidad.gov.co")
 
     def test_abogado_crea_su_propio_proceso_aunque_no_tenga_el_area(self):
-        _, ev = self.crear("tecnico@iccu.gov.co")
+        _, ev = self.crear("tecnico@entidad.gov.co")
         self.assertEqual(ev["estado"], EstadoEvaluacion.ASIGNADA)
-        self.assertEqual(ev["responsable"]["email"], "tecnico@iccu.gov.co")
+        self.assertEqual(ev["responsable"]["email"], "tecnico@entidad.gov.co")
         c = Cliente()
-        c.entrar("tecnico@iccu.gov.co")
+        c.entrar("tecnico@entidad.gov.co")
         self.assertTrue(c.get(f"/api/evaluaciones/{ev['id']}").json()["evaluacion"]["puede_trabajar"])
 
     def test_abogado_no_asigna_a_otro_al_crear(self):
         c = Cliente()
-        c.entrar("abogado@iccu.gov.co")
+        c.entrar("abogado@entidad.gov.co")
         r = c.post(
             "/api/evaluaciones/procesos",
             {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "responsable_id": str(self.abogado2.id)},
@@ -138,15 +138,15 @@ class CrearYAsignarTests(BaseEvaluaciones):
 
     def test_jefe_asigna_al_crear(self):
         c = Cliente()
-        c.entrar("jefe@iccu.gov.co")
+        c.entrar("jefe@entidad.gov.co")
         with self.captureOnCommitCallbacks(execute=True):
             r = c.post(
                 "/api/evaluaciones/procesos",
                 {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "responsable_id": str(self.abogado2.id)},
             )
         self.assertEqual(r.status_code, 201, r.content)
-        self.assertEqual(r.json()[0]["responsable"]["email"], "abogado2@iccu.gov.co")
-        self.assertEqual(mail.outbox[-1].to, ["abogado2@iccu.gov.co"])
+        self.assertEqual(r.json()[0]["responsable"]["email"], "abogado2@entidad.gov.co")
+        self.assertEqual(mail.outbox[-1].to, ["abogado2@entidad.gov.co"])
 
     def test_superadmin_crea_asigna_y_ve_equipo_de_cualquier_entidad(self):
         import pyotp
@@ -164,15 +164,15 @@ class CrearYAsignarTests(BaseEvaluaciones):
         )
         self.assertEqual(r.status_code, 201, r.content)
         ev = r.json()[0]
-        self.assertEqual(ev["entidad_nombre"], "Gobernación de Prueba")
+        self.assertEqual(ev["entidad_nombre"], "Otra Entidad")
         self.assertEqual(ev["estado"], EstadoEvaluacion.ASIGNADA)
         # No puede asignar a alguien de otra entidad.
         self.assertEqual(c.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)}).status_code, 400)
         # Reasigna, ve el equipo de esa entidad, evalúa y aprueba.
         self.assertEqual(c.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": None}).status_code, 200)
         equipo = {m["email"] for m in c.get(f"/api/evaluaciones/equipo?entidad_id={self.otra.id}").json()}
-        self.assertIn("abogado@otra.gov.co", equipo)
-        self.assertNotIn("abogado@iccu.gov.co", equipo)
+        self.assertIn("abogado@otraentidad.gov.co", equipo)
+        self.assertNotIn("abogado@entidad.gov.co", equipo)
         detalle = self.evaluar_todo(c, ev["id"])
         for p in detalle["proponentes"]:
             c.http.put(
@@ -191,7 +191,7 @@ class CrearYAsignarTests(BaseEvaluaciones):
 
     def test_evaluador_y_consulta_no_asignan(self):
         _, ev = self.crear()
-        for email in ("abogado@iccu.gov.co", "control@iccu.gov.co"):
+        for email in ("abogado@entidad.gov.co", "control@entidad.gov.co"):
             c = Cliente()
             c.entrar(email)
             r = c.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)})
@@ -199,24 +199,24 @@ class CrearYAsignarTests(BaseEvaluaciones):
 
     def test_consulta_no_crea_procesos(self):
         c = Cliente()
-        c.entrar("control@iccu.gov.co")
+        c.entrar("control@entidad.gov.co")
         r = c.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES})
         self.assertEqual(r.status_code, 403)
 
     def test_codigo_repetido_en_la_misma_entidad(self):
         self.crear()
         c = Cliente()
-        c.entrar("jefe@iccu.gov.co")
+        c.entrar("jefe@entidad.gov.co")
         r = c.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES})
         self.assertEqual(r.status_code, 409)
 
     def test_mismo_codigo_en_otra_entidad_si_se_permite(self):
         self.crear()
-        self.crear("abogado@otra.gov.co")
+        self.crear("abogado@otraentidad.gov.co")
 
     def test_tecnica_y_financiera_se_crean_y_asignan_pero_no_evaluan(self):
         c = Cliente()
-        c.entrar("admin@iccu.gov.co")
+        c.entrar("admin@entidad.gov.co")
         with self.captureOnCommitCallbacks(execute=True):
             r = c.post(
                 "/api/evaluaciones/procesos",
@@ -229,12 +229,12 @@ class CrearYAsignarTests(BaseEvaluaciones):
             )
         self.assertEqual(r.status_code, 201, r.content)
         por_tipo = {e["tipo"]: e for e in r.json()}
-        self.assertEqual(por_tipo["juridica"]["responsable"]["email"], "abogado@iccu.gov.co")
-        self.assertEqual(por_tipo["tecnica"]["responsable"]["email"], "tecnico@iccu.gov.co")
+        self.assertEqual(por_tipo["juridica"]["responsable"]["email"], "abogado@entidad.gov.co")
+        self.assertEqual(por_tipo["tecnica"]["responsable"]["email"], "tecnico@entidad.gov.co")
         self.assertIsNone(por_tipo["financiera"]["responsable"])
         self.assertTrue(por_tipo["juridica"]["tipo_disponible"])
         self.assertFalse(por_tipo["tecnica"]["tipo_disponible"])
-        self.assertEqual({m.to[0] for m in mail.outbox}, {"abogado@iccu.gov.co", "tecnico@iccu.gov.co"})
+        self.assertEqual({m.to[0] for m in mail.outbox}, {"abogado@entidad.gov.co", "tecnico@entidad.gov.co"})
         # El técnico no puede ser responsable jurídico (no tiene el área), y la técnica aún no evalúa.
         r = c.post(f"/api/evaluaciones/{por_tipo['tecnica']['id']}/evaluar", {})
         self.assertEqual(r.status_code, 409)
@@ -245,7 +245,7 @@ class CrearYAsignarTests(BaseEvaluaciones):
 
     def test_tipo_invalido(self):
         c = Cliente()
-        c.entrar("jefe@iccu.gov.co")
+        c.entrar("jefe@entidad.gov.co")
         r = c.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "tipos": ["ambiental"]})
         self.assertEqual(r.status_code, 400)
 
@@ -255,7 +255,7 @@ class TrabajoTests(BaseEvaluaciones):
         self.jefe, self.ev = self.crear()
         self.jefe.post(f"/api/evaluaciones/{self.ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)})
         self.abogado = Cliente()
-        self.abogado.entrar("abogado@iccu.gov.co")
+        self.abogado.entrar("abogado@entidad.gov.co")
 
     def test_flujo_completo(self):
         eid = self.ev["id"]
@@ -302,7 +302,7 @@ class TrabajoTests(BaseEvaluaciones):
     def test_otro_evaluador_y_consulta_no_trabajan(self):
         eid = self.ev["id"]
         prop = self.abogado.get(f"/api/evaluaciones/{eid}").json()["proponentes"][0]["id"]
-        for email in ("abogado2@iccu.gov.co", "control@iccu.gov.co"):
+        for email in ("abogado2@entidad.gov.co", "control@entidad.gov.co"):
             c = Cliente()
             c.entrar(email)
             # Pueden consultar…
@@ -327,7 +327,7 @@ class AislamientoEvaluacionesTests(BaseEvaluaciones):
         eid = ev["id"]
         prop = jefe.get(f"/api/evaluaciones/{eid}").json()["proponentes"][0]["id"]
         c = Cliente()
-        c.entrar("admin@otra.gov.co")
+        c.entrar("admin@otraentidad.gov.co")
         self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
         self.assertEqual(c.get("/api/evaluaciones/mias").json(), [])
         self.assertEqual(c.get(f"/api/evaluaciones/{eid}").status_code, 404)
@@ -338,7 +338,7 @@ class AislamientoEvaluacionesTests(BaseEvaluaciones):
 
     def test_rls_filtra_aunque_la_consulta_no_filtre(self):
         self.crear()
-        self.crear("abogado@otra.gov.co", codigo="OTRA-001")
+        self.crear("abogado@otraentidad.gov.co", codigo="OTRA-001")
         try:
             fijar_entidad(str(self.otra.id))
             self.assertEqual(list(Proceso.objects.values_list("codigo", flat=True)), ["OTRA-001"])
@@ -349,7 +349,7 @@ class AislamientoEvaluacionesTests(BaseEvaluaciones):
             fijar_entidad(str(self.otra.id))
             with self.assertRaises(ProgrammingError), transaction.atomic():
                 Proceso.objects.create(
-                    entidad=self.iccu, codigo="X", fecha_cierre="2026-01-01", documento_base={}, creado_por=self.admin_otra
+                    entidad=self.entidad1, codigo="X", fecha_cierre="2026-01-01", documento_base={}, creado_por=self.admin_otra
                 )
         finally:
             fijar_entidad(SISTEMA)
@@ -359,7 +359,7 @@ class AislamientoEvaluacionesTests(BaseEvaluaciones):
         import pyotp
 
         self.crear()
-        self.crear("abogado@otra.gov.co", codigo="OTRA-001")
+        self.crear("abogado@otraentidad.gov.co", codigo="OTRA-001")
         c = Cliente()
         c.entrar("santiagopebe01@lemartek.com")
         secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
@@ -371,7 +371,7 @@ class EntidadNueva(BaseEvaluaciones):
     def test_entidad_sin_procesos(self):
         crear_entidad("Vacía", "123")
         c = Cliente()
-        c.entrar("admin@iccu.gov.co")
+        c.entrar("admin@entidad.gov.co")
         self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
 
 
@@ -415,7 +415,7 @@ class FilaTests(BaseEvaluaciones):
         self.assertEqual(resumen["estado"], EstadoEvaluacion.EN_REVISION)
         self.assertEqual(resumen["avance"]["evaluados"], 2)
         self.assertIsNone(resumen["fila"])
-        self.assertEqual(mail.outbox[-1].to, ["abogado@iccu.gov.co"])
+        self.assertEqual(mail.outbox[-1].to, ["abogado@entidad.gov.co"])
         self.assertIn("Evaluación terminada", mail.outbox[-1].subject)
         self.assertFalse(Trabajador.objects.exists())
         # Novedades desde antes de evaluar trae los resultados guardados.
@@ -452,33 +452,33 @@ class FilaTests(BaseEvaluaciones):
 
     def test_consulta_no_encola_ni_pausa(self):
         c = Cliente()
-        c.entrar("control@iccu.gov.co")
+        c.entrar("control@entidad.gov.co")
         self.assertEqual(c.post(f"/api/evaluaciones/{self.eid}/evaluar", {}).status_code, 403)
         self.assertEqual(c.post(f"/api/evaluaciones/{self.eid}/pausar").status_code, 403)
 
     def test_otra_entidad_no_ve_novedades(self):
         c = Cliente()
-        c.entrar("admin@otra.gov.co")
+        c.entrar("admin@otraentidad.gov.co")
         self.assertEqual(c.get(f"/api/evaluaciones/{self.eid}/novedades").status_code, 404)
 
     def test_estado_de_la_fila_por_rol(self):
         self.jefe.post(f"/api/evaluaciones/{self.eid}/evaluar", {})
         c = Cliente()
-        c.entrar("admin@iccu.gov.co")
+        c.entrar("admin@entidad.gov.co")
         r = c.get("/api/evaluaciones/fila/estado").json()
         self.assertEqual(r["total_en_fila"], 2)
         self.assertEqual([e["id"] for e in r["evaluaciones"]], [self.eid])
         self.assertEqual(r["trabajadores"], [])
         otra = Cliente()
-        otra.entrar("admin@otra.gov.co")
+        otra.entrar("admin@otraentidad.gov.co")
         self.assertEqual(otra.get("/api/evaluaciones/fila/estado").json()["evaluaciones"], [])
         self.assertEqual(self.jefe.get("/api/evaluaciones/fila/estado").status_code, 403)
 
 
-PLANTILLA_ICCU = "motor/plantillas/plantilla_evaluacion_juridica.xlsx"
+PLANTILLA_EJEMPLO = "motor/plantillas/plantilla_evaluacion_juridica.xlsx"
 
 
-def subir(c: "Cliente", tipo="juridica", ruta=PLANTILLA_ICCU, nombre="plantilla.xlsx", entidad_id=None):
+def subir(c: "Cliente", tipo="juridica", ruta=PLANTILLA_EJEMPLO, nombre="plantilla.xlsx", entidad_id=None):
     from django.core.files.uploadedfile import SimpleUploadedFile
 
     with open(ruta, "rb") as f:
@@ -497,21 +497,21 @@ class PlantillasTests(BaseEvaluaciones):
         self._override = override_settings(MEDIA_ROOT=self._tmp.name)
         self._override.enable()
         self.admin = Cliente()
-        self.admin.entrar("admin@iccu.gov.co")
+        self.admin.entrar("admin@entidad.gov.co")
 
     def tearDown(self):
         self._override.disable()
         self._tmp.cleanup()
 
     def test_subir_ajustar_mapeo_y_usar_en_el_informe(self):
-        r = subir(self.admin, nombre="Plantilla ICCU 2026.xlsx")
+        r = subir(self.admin, nombre="Plantilla de la entidad 2026.xlsx")
         self.assertEqual(r.status_code, 201, r.content)
         plantilla = r.json()
         self.assertTrue(plantilla["inspeccion"]["valida"])
         self.assertGreater(plantilla["inspeccion"]["hojas_proponente"], 0)
         self.assertIn("1", plantilla["inspeccion"]["filas"])
 
-        mapeo = {**plantilla["mapeo"], "prefijo_codigo": "IDU"}
+        mapeo = {**plantilla["mapeo"], "prefijo_codigo": "ENT3"}
         r = self.admin.http.put(
             f"/api/configuracion/plantillas/{plantilla['id']}/mapeo",
             {"mapeo": mapeo},
@@ -535,7 +535,7 @@ class PlantillasTests(BaseEvaluaciones):
         r = jefe.get(f"/api/evaluaciones/{ev['id']}/informe")
         self.assertEqual(r.status_code, 200)
         wb = openpyxl.load_workbook(io.BytesIO(r.content))
-        self.assertIn("IDU-ICCU-CM-037", wb["P-01"]["F3"].value)
+        self.assertIn("ENT3-ENT-CM-037", wb["P-01"]["F3"].value)
 
     def test_nueva_plantilla_reemplaza_la_activa_y_se_puede_volver(self):
         primera = subir(self.admin).json()
@@ -563,12 +563,12 @@ class PlantillasTests(BaseEvaluaciones):
     def test_permisos_y_aislamiento(self):
         plantilla = subir(self.admin).json()
         otra = Cliente()
-        otra.entrar("admin@otra.gov.co")
+        otra.entrar("admin@otraentidad.gov.co")
         self.assertEqual(otra.get(f"/api/configuracion/plantillas/{plantilla['id']}/archivo").status_code, 404)
         self.assertEqual(otra.delete(f"/api/configuracion/plantillas/{plantilla['id']}").status_code, 404)
         self.assertEqual(otra.get("/api/configuracion/plantillas").json()[0]["activa"], None)
         jefe = Cliente()
-        jefe.entrar("jefe@iccu.gov.co")
+        jefe.entrar("jefe@entidad.gov.co")
         self.assertEqual(jefe.get("/api/configuracion/plantillas").status_code, 403)
         self.assertEqual(subir(jefe).status_code, 403)
         self.assertEqual(self.admin.get(f"/api/configuracion/plantillas/{plantilla['id']}/archivo").status_code, 200)
@@ -583,12 +583,12 @@ class PlantillasTests(BaseEvaluaciones):
         self.assertEqual(subir(c).status_code, 400)  # debe indicar la entidad
         self.assertEqual(subir(c, entidad_id=self.otra.id).status_code, 201)
         otra = Cliente()
-        otra.entrar("admin@otra.gov.co")
+        otra.entrar("admin@otraentidad.gov.co")
         self.assertIsNotNone(otra.get("/api/configuracion/plantillas").json()[0]["activa"])
 
 
 def definicion_propia():
-    """ICCU sin sanciones del RUP, con numeración propia y un requisito nuevo por bloques."""
+    """Base del sistema sin sanciones del RUP, con numeración propia y un requisito nuevo por bloques."""
     from motor.criterios import definicion_sistema
 
     base = definicion_sistema("juridica").model_dump(mode="json")
@@ -611,9 +611,9 @@ def definicion_propia():
 class PlantillaEvaluacionTests(BaseEvaluaciones):
     def setUp(self):
         self.admin = Cliente()
-        self.admin.entrar("admin@iccu.gov.co")
+        self.admin.entrar("admin@entidad.gov.co")
 
-    def publicar(self, c=None, definicion=None, nombre="Jurídica ICCU 2026", entidad_id=None):
+    def publicar(self, c=None, definicion=None, nombre="Jurídica Entidad 2026", entidad_id=None):
         c = c or self.admin
         url = "/api/configuracion/evaluaciones" + (f"?entidad_id={entidad_id}" if entidad_id else "")
         return c.post(url, {"tipo": "juridica", "nombre": nombre, "definicion": definicion or definicion_propia()})
@@ -690,11 +690,11 @@ class PlantillaEvaluacionTests(BaseEvaluaciones):
     def test_permisos_y_aislamiento(self):
         v = self.publicar().json()
         otra = Cliente()
-        otra.entrar("admin@otra.gov.co")
+        otra.entrar("admin@otraentidad.gov.co")
         self.assertIsNone(otra.get("/api/configuracion/evaluaciones").json()[0]["activa"])
         self.assertEqual(otra.post(f"/api/configuracion/evaluaciones/{v['id']}/activar").status_code, 404)
         jefe = Cliente()
-        jefe.entrar("jefe@iccu.gov.co")
+        jefe.entrar("jefe@entidad.gov.co")
         self.assertEqual(self.publicar(c=jefe).status_code, 403)
 
     def test_superadmin_crea_entidad_con_base_o_copia(self):
@@ -705,21 +705,21 @@ class PlantillaEvaluacionTests(BaseEvaluaciones):
         c.entrar("santiagopebe01@lemartek.com")
         secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
         c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
-        r = c.post("/api/plataforma/entidades", {"nombre": "Instituto de Desarrollo Urbano", "nit": "899999081", "email_admin": "a@idu.gov.co", "sigla": "idu"})
+        r = c.post("/api/plataforma/entidades", {"nombre": "Tercera Entidad", "nit": "899000003", "email_admin": "admin@tercera.gov.co", "sigla": "ent3"})
         self.assertEqual(r.status_code, 201, r.content)
-        idu = r.json()["id"]
-        juridica = c.get(f"/api/configuracion/evaluaciones?entidad_id={idu}").json()[0]
+        tercera = r.json()["id"]
+        juridica = c.get(f"/api/configuracion/evaluaciones?entidad_id={tercera}").json()[0]
         self.assertEqual(juridica["activa"]["version"], 1)
-        self.assertEqual(juridica["definicion"]["parametros"]["prefijo_codigo"], "IDU")
-        self.assertIn("IDU", juridica["definicion"]["parametros"]["beneficiario_claves"])
+        self.assertEqual(juridica["definicion"]["parametros"]["prefijo_codigo"], "ENT3")
+        self.assertIn("ENT3", juridica["definicion"]["parametros"]["beneficiario_claves"])
 
         r = c.post(
             "/api/plataforma/entidades",
-            {"nombre": "Copia ICCU", "nit": "123", "email_admin": "a@copia.gov.co", "base": "copiar", "copiar_de": str(self.iccu.id)},
+            {"nombre": "Entidad Copiada", "nit": "123", "email_admin": "a@copia.gov.co", "base": "copiar", "copiar_de": str(self.entidad1.id)},
         )
         self.assertEqual(r.status_code, 201, r.content)
         copia = c.get(f"/api/configuracion/evaluaciones?entidad_id={r.json()['id']}").json()[0]
-        self.assertEqual(copia["activa"]["nombre"], "Jurídica ICCU 2026")
+        self.assertEqual(copia["activa"]["nombre"], "Jurídica Entidad 2026")
         self.assertEqual(len(copia["definicion"]["requisitos"]), 17)
 
     def test_probar_requisito_contra_ofertas(self):
@@ -739,7 +739,7 @@ class PlantillaEvaluacionTests(BaseEvaluaciones):
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(sorted((x["hoja"], x["cumple"]) for x in r.json()), [("P-01", True), ("P-02", False)])
         otra = Cliente()
-        otra.entrar("admin@otra.gov.co")
+        otra.entrar("admin@otraentidad.gov.co")
         r = otra.post("/api/configuracion/requisitos/probar", {"evaluacion_id": ev["id"], "requisito": requisito, "proponente_ids": [props[0]["id"]]})
         self.assertEqual(r.status_code, 404)
 
@@ -806,10 +806,10 @@ class RetencionTests(BaseEvaluaciones):
                     Expediente.objects.create(entidad_id=e.entidad_id, evaluacion=e, version=1, estado=EstadoExpediente.LISTO)
                 simulacro = retencion.aplicar(30, simulacro=True)
                 self.assertTrue((ofertas / "a1.zip").exists())
-                self.assertEqual(sorted(simulacro.procesos), ["ICCU-CM-037-2026", "VIGENTE-001"])
+                self.assertEqual(sorted(simulacro.procesos), ["ENT-CM-037-2026", "VIGENTE-001"])
                 informe = retencion.aplicar(30)
 
-            self.assertEqual(sorted(informe.procesos), ["ICCU-CM-037-2026", "VIGENTE-001"])
+            self.assertEqual(sorted(informe.procesos), ["ENT-CM-037-2026", "VIGENTE-001"])
             self.assertFalse((ofertas / "a1.zip").exists())
             self.assertFalse(viejo.exists())
             self.assertTrue((ocr / "reciente.txt").exists())
@@ -838,7 +838,7 @@ class HistoricoTests(BaseEvaluaciones):
         self.jefe, self.ev = self.crear()
         self.jefe.post(f"/api/evaluaciones/{self.ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)})
         self.abogado = Cliente()
-        self.abogado.entrar("abogado@iccu.gov.co")
+        self.abogado.entrar("abogado@entidad.gov.co")
         self.detalle = self.evaluar_todo(self.abogado, self.ev["id"])
         self.p1 = self.detalle["proponentes"][0]["id"]
 
@@ -888,10 +888,10 @@ class HistoricoTests(BaseEvaluaciones):
         # No se quita una persona con certificados; consulta y otra entidad no modifican ni ven.
         self.assertEqual(self.abogado.delete(f"/api/evaluaciones/{self.ev['id']}/personas/{empresa['id']}").status_code, 409)
         consulta = Cliente()
-        consulta.entrar("control@iccu.gov.co")
+        consulta.entrar("control@entidad.gov.co")
         self.assertEqual(self.aportar(consulta, self.p1, 2).status_code, 403)
         otra = Cliente()
-        otra.entrar("admin@otra.gov.co")
+        otra.entrar("admin@otraentidad.gov.co")
         self.assertEqual(otra.get(f"/api/evaluaciones/{self.ev['id']}/aportados/{r.json()['id']}/archivo").status_code, 404)
 
     def test_reporte_word_y_expediente(self):
@@ -963,7 +963,7 @@ class HistoricoTests(BaseEvaluaciones):
 
         # Otra entidad no descarga el expediente; regenerar crea la versión 2.
         otra = Cliente()
-        otra.entrar("admin@otra.gov.co")
+        otra.entrar("admin@otraentidad.gov.co")
         self.assertEqual(otra.get(f"/api/evaluaciones/{self.ev['id']}/expedientes/{exp['id']}/archivo").status_code, 404)
         self.assertEqual(self.jefe.post(f"/api/evaluaciones/{self.ev['id']}/expedientes").json()["version"], 2)
 

@@ -67,7 +67,7 @@ class EntidadIn(Schema):
     nombre: str
     nit: str
     email_admin: str
-    # Sigla con la que aparece en códigos de proceso y pólizas (ej. ICCU, IDU).
+    # Sigla con la que aparece en códigos de proceso y pólizas (ej. IDU, ANI).
     sigla: str = ""
     # Cómo evaluará: "sistema" = base del sistema adaptada a su sigla;
     # "copiar" = plantillas (evaluación y Excel) de otra entidad.

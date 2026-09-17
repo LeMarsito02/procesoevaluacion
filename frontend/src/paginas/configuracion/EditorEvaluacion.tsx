@@ -99,7 +99,7 @@ export default function EditorEvaluacion({ plantilla, catalogo, entidadId, esSup
             <p>
               {plantilla.activa
                 ? `v${plantilla.activa.version} · «${plantilla.activa.nombre}» · publicada el ${fecha(plantilla.activa.creada_en)}${plantilla.activa.creada_por ? ` por ${plantilla.activa.creada_por}` : ''}`
-                : 'La entidad usa la base del sistema (evaluación jurídica del ICCU). Publique una versión para adaptarla.'}
+                : 'La entidad usa la base del sistema (evaluación jurídica estándar). Publique una versión para adaptarla.'}
             </p>
           </div>
           {!plantilla.motor_disponible && <span className="tag tag-preparacion">Motor en preparación</span>}

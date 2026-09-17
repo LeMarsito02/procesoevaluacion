@@ -298,7 +298,7 @@ function TarjetaPlantilla({
 }
 
 const CAMPOS_TEXTO: { clave: keyof MapeoPlantilla; nombre: string; ayuda?: string }[] = [
-  { clave: 'prefijo_codigo', nombre: 'Sigla de la entidad', ayuda: 'Se antepone al código del proceso (ej. ICCU).' },
+  { clave: 'prefijo_codigo', nombre: 'Sigla de la entidad', ayuda: 'Se antepone al código del proceso (ej. IDU).' },
   { clave: 'hoja_proponente_patron', nombre: 'Nombre de las hojas por proponente', ayuda: 'Expresión regular; ^P-\\d+$ = P-01, P-02…' },
   { clave: 'celda_titulo', nombre: 'Celda del título' },
   { clave: 'celda_objeto', nombre: 'Celda del objeto del proceso' },
