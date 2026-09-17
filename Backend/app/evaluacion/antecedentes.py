@@ -32,6 +32,10 @@ from app.procesamiento.zip_utils import extraer_pdfs
 FORMULARIO_SECOP_RE = re.compile(r"THIS QUESTION REQUIRES|ESTA PREGUNTA REQUIERE ANEXAR|SOBRE UNICO")
 
 PAGINAS_MINIMAS = 4
+# Paquetes de antecedentes con portada, índice y cédula antes del primer
+# certificado (se vio uno real de 22 páginas con Contraloría en la página 6):
+# si el archivo o sus primeras páginas hablan de antecedentes, se sigue leyendo.
+PISTA_PAQUETE_ANTECEDENTES_RE = re.compile(r"ANTECEDENTE|CONTRALOR|PROCURADUR|POLICIA|JUDICIAL|RNMC|REDAM")
 PAGINAS_MAXIMAS_FUSIONADOS = 20
 
 
@@ -81,12 +85,15 @@ def leer_certificados(pdfs: dict[str, bytes]) -> list[Certificado]:
             with abrir_pdf(contenido) as pdf:
                 actual: tuple[frozenset[int], list[str]] | None = None
                 encontro_alguno = False
+                es_paquete_antecedentes = bool(PISTA_PAQUETE_ANTECEDENTES_RE.search(_norm(nombre.rsplit("/", 1)[-1])))
                 for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_FUSIONADOS]):
-                    if indice >= PAGINAS_MINIMAS and not encontro_alguno:
+                    if indice >= PAGINAS_MINIMAS and not encontro_alguno and not es_paquete_antecedentes:
                         break
                     texto = texto_pagina(page)
                     page.flush_cache()
                     texto_norm = _norm(texto)
+                    if indice < PAGINAS_MINIMAS and PISTA_PAQUETE_ANTECEDENTES_RE.search(texto_norm):
+                        es_paquete_antecedentes = True
                     requisitos = frozenset(c.requisito for c in _configs() if c.titulo_re.search(texto_norm))
                     if requisitos and FORMULARIO_SECOP_RE.search(texto_norm):
                         # El formulario de preguntas del SECOP cita los
@@ -337,7 +344,7 @@ CONFIG_PROCURADURIA = AntecedenteConfig(
 # AUTORIDADES JUDICIALES". En escaneados el OCR cambia "Nº" por "N*" u otro
 # signo, así que se acepta cualquier signo corto después de la N.
 _POLICIA_JUDICIAL_RE = re.compile(
-    r"CEDULA DE CIUDADAN[IÍ]A N[^\d\s]{0,3}\s*(\d[\d.]*)\s*APELLIDOS Y NOMBRES:?\s*([A-ZÑ][A-ZÑ .]+?)\s+NO TIENE"
+    r"CEDULA DE CIUDADAN[IÍ]A N(?:[^\d\s]{0,3}|9\.)\s*(\d[\d.]*)\s*APELLIDOS Y NOMBRES:?\s*([A-ZÑ][A-ZÑ .]+?)\s+NO TIENE"
 )
 
 
@@ -365,7 +372,7 @@ CONFIG_POLICIA = AntecedenteConfig(
 # dice "...para - NIT, sin digito de verificación: N. ...", que este patrón
 # ignora a propósito al exigir "CEDULA DE CIUDADANIA".
 _RNMC_PERSONA_RE = re.compile(
-    r"CIUDADANO CON C[EÉ]DULA DE CIUDADAN[IÍ]A N[^\d\s]{0,3}\s*(\d[\d.]*)\s*"
+    r"CIUDADANO CON C[EÉ]DULA DE CIUDADAN[IÍ]A N(?:[^\d\s]{0,3}|9\.)\s*(\d[\d.]*)\s*"
     r"(?:Y NOMBRE:?\s*([A-ZÑ][A-ZÑ .]+?)\.|([A-ZÑ][A-ZÑ .]+?)\.\s*NO TIENE)"
 )
 
