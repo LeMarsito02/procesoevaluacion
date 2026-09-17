@@ -18,6 +18,15 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 DEFAULT_CREDENTIALS_PATH = Path(__file__).resolve().parent.parent.parent / "credentials" / "service_account.json"
 CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "drive_files"
+CACHE_LISTADOS_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "drive_listados"
+
+# Con DRIVE_SOLO_CACHE=1 no se consulta Drive en absoluto: se usa lo que ya
+# está en disco (zips, metadatos y listado de la carpeta). Pensado para
+# re-evaluar un proceso cuyos archivos ya no cambian (ej. las pruebas de
+# confiabilidad) sin depender de la red. Sin esta variable igual se cae a
+# la caché cuando Drive no responde (sin internet, DNS caído).
+def _solo_cache() -> bool:
+    return os.environ.get("DRIVE_SOLO_CACHE", "0") == "1"
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
@@ -64,29 +73,51 @@ def _cache_paths(file_id: str) -> tuple[Path, Path]:
     return CACHE_DIR / f"{file_id}.zip", CACHE_DIR / f"{file_id}.meta.json"
 
 
+def _metadata_en_cache(file_id: str) -> dict | None:
+    cache_zip, cache_meta = _cache_paths(file_id)
+    if not (cache_zip.exists() and cache_meta.exists()):
+        return None
+    try:
+        return json.loads(cache_meta.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def get_file_metadata(file_id: str) -> dict:
-    service = get_drive_service()
-    return service.files().get(fileId=file_id, fields="md5Checksum,size,name", supportsAllDrives=True).execute()
+    if _solo_cache():
+        cacheada = _metadata_en_cache(file_id)
+        if cacheada is not None:
+            return cacheada
+    try:
+        service = get_drive_service()
+        return service.files().get(fileId=file_id, fields="md5Checksum,size,name", supportsAllDrives=True).execute()
+    except Exception:
+        cacheada = _metadata_en_cache(file_id)
+        if cacheada is not None:
+            return cacheada
+        raise
 
 
 def download_file_bytes(file_id: str, metadata: dict | None = None) -> bytes:
     """Descarga un archivo de Drive, cacheándolo en disco por checksum
-    (md5Checksum) para no volver a bajarlo si no ha cambiado en Drive."""
+    (md5Checksum) para no volver a bajarlo si no ha cambiado en Drive. Si
+    Drive no responde y el archivo ya está en caché, se usa el de caché."""
     cache_zip, cache_meta = _cache_paths(file_id)
 
     if metadata is None:
         try:
             metadata = get_file_metadata(file_id)
-        except HttpError:
+        except Exception:
             metadata = None
 
     md5 = metadata.get("md5Checksum") if metadata else None
-    if md5 and cache_zip.exists() and cache_meta.exists():
+    cacheada = _metadata_en_cache(file_id)
+    if cacheada is not None and (md5 is None or cacheada.get("md5Checksum") == md5):
+        # md5 None = no se pudo consultar Drive: la copia local es lo mejor
+        # disponible (antes esto terminaba en error de descarga).
         try:
-            cached = json.loads(cache_meta.read_text())
-            if cached.get("md5Checksum") == md5:
-                return cache_zip.read_bytes()
-        except (json.JSONDecodeError, OSError):
+            return cache_zip.read_bytes()
+        except OSError:
             pass
 
     service = get_drive_service()
@@ -187,18 +218,34 @@ def _listar_archivos_recursivo(service, folder_id: str, _profundidad: int = 0) -
 
 def list_proponentes(carpeta_drive: str) -> ProponentesResult:
     folder_id = extract_folder_id(carpeta_drive)
-    service = get_drive_service()
+    cache_listado = CACHE_LISTADOS_DIR / f"{folder_id}.json"
 
-    try:
-        archivos = _listar_archivos_recursivo(service, folder_id)
-    except HttpError as exc:
-        email = service_account_email()
-        pista = f" Verifica que la carpeta esté compartida con {email}." if email else ""
-        if exc.resp.status == 404:
-            raise DriveAccessError(f"No se encontró la carpeta de Drive.{pista}") from exc
-        if exc.resp.status == 403:
-            raise DriveAccessError(f"Sin permiso para leer la carpeta de Drive.{pista}") from exc
-        raise DriveAccessError(f"Error consultando Google Drive: {exc}") from exc
+    archivos = None
+    if _solo_cache() and cache_listado.exists():
+        archivos = json.loads(cache_listado.read_text())
+    if archivos is None:
+        try:
+            service = get_drive_service()
+            archivos = _listar_archivos_recursivo(service, folder_id)
+            try:
+                CACHE_LISTADOS_DIR.mkdir(parents=True, exist_ok=True)
+                cache_listado.write_text(json.dumps(archivos))
+            except OSError:
+                pass
+        except HttpError as exc:
+            email = service_account_email()
+            pista = f" Verifica que la carpeta esté compartida con {email}." if email else ""
+            if exc.resp.status == 404:
+                raise DriveAccessError(f"No se encontró la carpeta de Drive.{pista}") from exc
+            if exc.resp.status == 403:
+                raise DriveAccessError(f"Sin permiso para leer la carpeta de Drive.{pista}") from exc
+            raise DriveAccessError(f"Error consultando Google Drive: {exc}") from exc
+        except DriveConfigError:
+            raise
+        except Exception as exc:
+            if not cache_listado.exists():
+                raise DriveAccessError(f"No se pudo consultar Google Drive y no hay copia local: {exc}") from exc
+            archivos = json.loads(cache_listado.read_text())
 
     result = ProponentesResult()
     for archivo in archivos:
