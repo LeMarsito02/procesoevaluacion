@@ -47,15 +47,25 @@ MAX_TAREAS_POR_WORKER = int(os.environ.get("MAX_TAREAS_POR_WORKER", "3"))
 # de 16GB aguanta sin tocar al resto del escritorio.
 MEMORIA_MAX_WORKER_MB = int(os.environ.get("MEMORIA_MAX_WORKER_MB", "4096"))
 
+# Carril aparte para reintentar, de a uno y con más margen de memoria, los
+# proponentes que murieron o quedaron con errores en el pool normal (ej. un
+# consorcio con RUP de cientos de páginas y documentos escaneados).
+MEMORIA_MAX_WORKER_PESADO_MB = int(os.environ.get("MEMORIA_MAX_WORKER_PESADO_MB", "7168"))
+
 _pool: ProcessPoolExecutor | None = None
+_pool_pesado: ProcessPoolExecutor | None = None
 
 
-def _preparar_worker() -> None:
+def _preparar_worker_pesado() -> None:
+    _preparar_worker(MEMORIA_MAX_WORKER_PESADO_MB)
+
+
+def _preparar_worker(memoria_mb: int = MEMORIA_MAX_WORKER_MB) -> None:
     """Se ejecuta una vez dentro de cada worker (incluidos los que reemplazan
     a los reciclados): le pone el tope de memoria e importa de una vez las
     librerías pesadas, para no pagar ese costo en la primera evaluación
     real."""
-    limite_bytes = MEMORIA_MAX_WORKER_MB * 1024 * 1024
+    limite_bytes = memoria_mb * 1024 * 1024
     try:
         _, tope_duro = resource.getrlimit(resource.RLIMIT_AS)
         if tope_duro == resource.RLIM_INFINITY or tope_duro > limite_bytes:
@@ -91,10 +101,13 @@ def iniciar_pool() -> None:
 
 
 def detener_pool() -> None:
-    global _pool
+    global _pool, _pool_pesado
     if _pool is not None:
         _pool.shutdown(wait=False, cancel_futures=True)
         _pool = None
+    if _pool_pesado is not None:
+        _pool_pesado.shutdown(wait=False, cancel_futures=True)
+        _pool_pesado = None
 
 
 def obtener_pool() -> ProcessPoolExecutor:
@@ -112,4 +125,15 @@ def obtener_pool() -> ProcessPoolExecutor:
     return _pool
 
 
-__all__ = ["iniciar_pool", "detener_pool", "obtener_pool", "BrokenProcessPool", "MAX_WORKERS"]
+def obtener_pool_pesado() -> ProcessPoolExecutor:
+    """Pool de un solo worker, que se recicla después de cada tarea, para
+    reintentar proponentes pesados sin compartir memoria con otra evaluación."""
+    global _pool_pesado
+    if _pool_pesado is None or getattr(_pool_pesado, "_broken", False):
+        if _pool_pesado is not None:
+            _pool_pesado.shutdown(wait=False, cancel_futures=True)
+        _pool_pesado = ProcessPoolExecutor(max_workers=1, max_tasks_per_child=1, initializer=_preparar_worker_pesado)
+    return _pool_pesado
+
+
+__all__ = ["iniciar_pool", "detener_pool", "obtener_pool", "obtener_pool_pesado", "BrokenProcessPool", "MAX_WORKERS"]

@@ -157,8 +157,21 @@ def encontrar_documentos(pdfs: dict[str, bytes], titulo_re: re.Pattern[str], pis
     return encontrados
 
 
+# Nunca se lee un certificado entero: hay RUP de cientos de páginas (algunos
+# escaneados) y leerlos completos llevó un worker a ~8 GB de memoria y 4
+# minutos en un proponente real. La información de existencia (objeto
+# social, facultades, tipo de sociedad) está en las primeras páginas.
+MAX_PAGINAS_CERTIFICADO = 40
+
+
 def _texto_completo(pdfs: dict[str, bytes], nombre: str) -> str:
-    return extraer_texto(pdfs[nombre])
+    return extraer_texto(pdfs[nombre], max_paginas=MAX_PAGINAS_CERTIFICADO)
+
+
+def _texto_encabezado(pdfs: dict[str, bytes], nombre: str) -> str:
+    """Primeras páginas: donde está la fecha de expedición (el documento
+    solo se reconoce si la fecha aparece dentro de PAGINAS_PARA_TITULO)."""
+    return extraer_texto(pdfs[nombre], max_paginas=PAGINAS_PARA_TITULO)
 
 
 class ResultadoEvaluacionCamara:
@@ -184,7 +197,7 @@ def _evaluar_vigencia_documentos(
 
     motivos = []
     for nombre in encontrados:
-        texto_norm = _norm(_texto_completo(pdfs, nombre))
+        texto_norm = _norm(_texto_encabezado(pdfs, nombre))
         fecha = _parsear_fecha_expedicion(texto_norm)
         if fecha is None:
             motivos.append(f"no se pudo leer la fecha de expedición de '{nombre}' — confirma manualmente que no supere 1 mes")

@@ -6,6 +6,7 @@ extrae una vez (ver app/procesamiento/memoria_proponente.py), en vez de
 repetir todo ese trabajo por cada requisito."""
 from __future__ import annotations
 
+import gc
 from collections.abc import Callable
 
 from app.evaluacion.antecedentes import (
@@ -29,7 +30,9 @@ from app.evaluacion.garantia import evaluar_proponente_requisito11
 from app.evaluacion.proponente_plural import evaluar_proponente_requisito4
 from app.evaluacion.seguridad_social import evaluar_proponente_requisito12
 from app.evaluacion.trivial import evaluar_proponente_requisito13
+from app.integrations import drive
 from app.models.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from app.procesamiento import pdf_utils, zip_utils
 
 EvaluadorProponente = Callable[[Proponente, ProcesoDocumentoBase], ResultadoRequisito]
 
@@ -57,9 +60,28 @@ EVALUADORES_POR_REQUISITO: dict[int, EvaluadorProponente] = {
 }
 
 
+def liberar_memoria_proponente() -> None:
+    """Suelta el zip, los PDF extraídos y el texto en memoria del proponente
+    anterior. Sin esto, al empezar el siguiente convivían en el worker los
+    documentos de los dos (se confirmó en la medición real: 4 proponentes
+    pesados murieron por superar el tope de memoria del worker)."""
+    zip_utils._ULTIMO_ZIP = None
+    drive._ULTIMO_ZIP_LEIDO = None
+    pdf_utils.limpiar_memoria_texto()
+    gc.collect()
+
+
 def evaluar_proponente_todos(proponente: Proponente, proceso: ProcesoDocumentoBase) -> list[ResultadoRequisito]:
     """Evalúa los 18 requisitos de un proponente. Un fallo en un requisito
     queda como error de ese requisito y no impide evaluar los demás."""
+    liberar_memoria_proponente()
+    try:
+        return _evaluar_todos(proponente, proceso)
+    finally:
+        liberar_memoria_proponente()
+
+
+def _evaluar_todos(proponente: Proponente, proceso: ProcesoDocumentoBase) -> list[ResultadoRequisito]:
     resultados = []
     for requisito, evaluador in EVALUADORES_POR_REQUISITO.items():
         try:

@@ -23,7 +23,7 @@ from app.models.proceso import (
 )
 from app.parsers.documento_base import build_proceso
 from app.procesamiento.zip_utils import extraer_pdfs
-from app.workers import BrokenProcessPool, obtener_pool
+from app.workers import BrokenProcessPool, obtener_pool, obtener_pool_pesado
 
 router = APIRouter(prefix="/api/procesos", tags=["procesos"])
 
@@ -163,11 +163,16 @@ for _numero, _evaluador in EVALUADORES_POR_REQUISITO.items():
     _registrar_rutas_requisito(_numero, _evaluador)
 
 
+_CARRIL_PESADO = asyncio.Lock()
+
+
 async def _evaluar_todos_en_proceso(proponente: Proponente, proceso: ProcesoDocumentoBase) -> list[ResultadoRequisito]:
     """Los 18 requisitos de un proponente en un solo worker (ver
-    app/evaluacion/todos.py). Mismo aislamiento de fallos que
-    `_evaluar_en_proceso`: si el worker muere, se reintenta una vez y si no,
-    cada requisito queda con `error` para revisión manual."""
+    app/evaluacion/todos.py). Si el worker muere (normalmente por memoria) o
+    algún requisito queda con error, se reintenta el proponente SOLO en el
+    carril pesado (un worker, más memoria, sin otra evaluación al lado) y se
+    conserva el intento con menos errores. Nunca tumba la evaluación de los
+    demás: en el peor caso cada requisito queda con `error` para revisión."""
     loop = asyncio.get_running_loop()
 
     def con_error(mensaje: str) -> list[ResultadoRequisito]:
@@ -182,17 +187,27 @@ async def _evaluar_todos_en_proceso(proponente: Proponente, proceso: ProcesoDocu
             for numero in EVALUADORES_POR_REQUISITO
         ]
 
+    def errores(resultados: list[ResultadoRequisito]) -> int:
+        return sum(1 for r in resultados if r.error)
+
     try:
-        return await loop.run_in_executor(obtener_pool(), evaluar_proponente_todos, proponente, proceso)
-    except BrokenProcessPool:
-        try:
-            return await loop.run_in_executor(obtener_pool(), evaluar_proponente_todos, proponente, proceso)
-        except Exception as exc:  # noqa: BLE001
-            return con_error(f"No se pudo evaluar (el proceso murió, posiblemente por falta de memoria): {exc}")
-    except MemoryError:
-        return con_error("No se pudo evaluar: el proponente superó el límite de memoria del servidor. Revísalo manualmente.")
+        resultados = await loop.run_in_executor(obtener_pool(), evaluar_proponente_todos, proponente, proceso)
+    except (BrokenProcessPool, MemoryError) as exc:
+        resultados = con_error(
+            f"No se pudo evaluar (el proceso murió, posiblemente por falta de memoria): {exc}. Revísalo manualmente."
+        )
     except Exception as exc:  # noqa: BLE001
-        return con_error(f"No se pudo evaluar automáticamente: {exc}")
+        resultados = con_error(f"No se pudo evaluar automáticamente: {exc}")
+
+    if errores(resultados) == 0:
+        return resultados
+
+    async with _CARRIL_PESADO:
+        try:
+            reintento = await loop.run_in_executor(obtener_pool_pesado(), evaluar_proponente_todos, proponente, proceso)
+        except Exception:  # noqa: BLE001
+            return resultados
+    return reintento if errores(reintento) < errores(resultados) else resultados
 
 
 @router.post("/evaluar-todos/proponente", response_model=list[ResultadoRequisito])
