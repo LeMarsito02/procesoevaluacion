@@ -596,6 +596,7 @@ def _pliego_out(proceso: Proceso) -> dict | None:
         "ajustes": proceso.ajustes_pliego,
         # Lo que no cambia la evaluación pero hay que tener presente al revisar.
         "aclaraciones": [h.model_dump(mode="json") for h in vigentes if h.tipo in ("aclaracion", "informativo")],
+        "obligaciones": [h.model_dump(mode="json") for h in vigentes if h.tipo == "obligacion"],
     }
 
 

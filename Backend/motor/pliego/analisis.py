@@ -26,7 +26,7 @@ from motor.pliego.lectura import Pagina, Seccion, codigo_documento_tipo, norm, s
 
 # Sube cuando cambian los detectores: los análisis guardados con otra versión
 # se rehacen.
-VERSION_ANALISIS = 1
+VERSION_ANALISIS = 2
 
 Ambito = Literal["juridica", "tecnica", "financiera", "puntaje", "garantias", "general"]
 
@@ -123,9 +123,12 @@ class Extraccion(BaseModel):
     secciones: list[SeccionAnalizada]
     exigencias: list[Exigencia]
     formatos: list[Exigencia] = Field(default_factory=list)
+    # Toda oración de una sección jurídica que obliga al proponente: la red de
+    # seguridad para exigencias que ningún detector conoce.
+    obligaciones: list[Exigencia] = Field(default_factory=list)
 
 
-TipoHallazgo = Literal["ajuste_parametro", "requisito_nuevo", "aclaracion", "informativo", "fuera_de_alcance"]
+TipoHallazgo = Literal["ajuste_parametro", "requisito_nuevo", "aclaracion", "informativo", "fuera_de_alcance", "obligacion"]
 
 
 class Hallazgo(BaseModel):
@@ -269,11 +272,31 @@ def _detectar_formatos(sec: Seccion, paginas: list[Pagina]) -> list[Exigencia]:
     return salida
 
 
+_OBLIGA_RE = re.compile(
+    r"\b(?:DEBE|DEBERA|DEBERAN|DEBEN|TENDRA QUE|TENDRAN QUE|ESTA OBLIGADO A|ESTAN OBLIGADOS A)\s+(?:\w+\s+){0,3}?"
+    r"(?:PRESENTAR|APORTAR|ACREDITAR|ADJUNTAR|ALLEGAR|ANEXAR|DILIGENCIAR|ENTREGAR|CONTAR CON)\b"
+)
+# Encabezados de lista ("Deben presentar los siguientes documentos:"): lo que
+# importa son los literales, que ya revisan los detectores.
+_INTRODUCE_LISTA_RE = re.compile(r"SIGUIENTES?\s+(?:DOCUMENTOS|REQUISITOS|ASPECTOS|INFORMACION)|:\s*[A-Z]?$")
+
+
+def _detectar_obligaciones(sec: Seccion, paginas: list[Pagina]) -> list[Exigencia]:
+    salida = []
+    for m in _OBLIGA_RE.finditer(norm(sec.texto)):
+        cita, pagina = _cita(sec, m.start(), m.end(), paginas)
+        if len(cita) < 40 or _INTRODUCE_LISTA_RE.search(norm(cita)):
+            continue
+        salida.append(Exigencia(clave="obligacion", titulo=sec.encabezado, seccion=sec.encabezado, pagina=pagina, cita=cita))
+    return salida
+
+
 def extraer(paginas: list[Pagina]) -> Extraccion:
     todas = secciones(paginas)
     analizadas: list[SeccionAnalizada] = []
     exigencias: list[Exigencia] = []
     formatos: list[Exigencia] = []
+    obligaciones: list[Exigencia] = []
     capitulo = ""
     ambitos: dict[str, Ambito] = {}
     for sec in todas:
@@ -294,11 +317,12 @@ def extraer(paginas: list[Pagina]) -> Extraccion:
         ))
         if amb == "juridica":
             exigencias += _detectar_vigencias(sec, paginas) + _detectar_fijos(sec, paginas)
+            obligaciones += _detectar_obligaciones(sec, paginas)
         formatos += _detectar_formatos(sec, paginas)
         # "11.2 FORMATOS" viene como subsección del capítulo de anexos.
     return Extraccion(
         paginas=len(paginas), documento_tipo=codigo_documento_tipo(paginas),
-        secciones=analizadas, exigencias=_sin_repetir(exigencias), formatos=formatos,
+        secciones=analizadas, exigencias=_sin_repetir(exigencias), formatos=formatos, obligaciones=obligaciones,
     )
 
 
@@ -469,7 +493,30 @@ def comparar(extraccion: Extraccion, definicion: criterios.DefinicionEvaluacion)
             seccion=f.seccion, pagina=f.pagina, cita=f.cita,
         ))
 
-    # 6. Capítulos que no son de la evaluación jurídica (para que se vea que se leyeron).
+    # 6. Red de seguridad: obligaciones del pliego que nada de lo anterior cubre.
+    citadas = {norm(h.cita)[:80] for h in hallazgos} | {norm(e.cita)[:80] for e in extraccion.exigencias}
+    for i, o in enumerate(extraccion.obligaciones):
+        cubre = verificaciones_de(o.cita)
+        if norm(o.cita)[:80] in citadas or (cubre and all(v in en_plantilla for v in cubre)):
+            continue
+        hallazgos.append(Hallazgo(
+            id=f"obligacion_{i}", tipo="obligacion", titulo=o.seccion,
+            detalle="El pliego impone esta obligación y ninguna verificación automática la cubre: léala al revisar.",
+            seccion=o.seccion, pagina=o.pagina, cita=o.cita,
+        ))
+
+    # 7. Si no se reconoce la estructura, el análisis no sirve de garantía.
+    juridicas = [s for s in extraccion.secciones if s.ambito == "juridica"]
+    if len(juridicas) < 3:
+        hallazgos.insert(0, Hallazgo(
+            id="estructura_no_reconocida", tipo="aclaracion", titulo="No se reconoció la estructura del pliego",
+            detalle=(f"Se leyeron {extraccion.paginas} páginas pero solo se identificaron {len(juridicas)} secciones "
+                     "jurídicas (puede ser un escaneo de baja calidad o un formato distinto al de los pliegos tipo). "
+                     "No confíe en este análisis: revise el pliego completo antes de evaluar."),
+            seccion="—", pagina=1, cita="—",
+        ))
+
+    # 8. Capítulos que no son de la evaluación jurídica (para que se vea que se leyeron).
     for s in extraccion.secciones:
         if s.ambito in ("tecnica", "financiera", "puntaje") and "." in s.numero and s.numero.count(".") == 1:
             que = {"tecnica": "Requisito de la evaluación técnica", "financiera": "Requisito de la evaluación financiera",

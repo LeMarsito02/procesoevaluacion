@@ -1374,6 +1374,28 @@ class AnalisisPliegoTests(TestCase):
         definicion.parametros = {"camara_dias": 30}
         self.assertNotIn("vigencia_existencia", self.hallazgos(definicion))
 
+    def test_obligacion_desconocida_queda_a_la_vista(self):
+        """Una exigencia que ningún detector conoce no se pierde: se muestra con su cita."""
+        from motor import criterios
+        from motor.pliego.analisis import comparar, extraer
+
+        paginas = list(PLIEGO_DE_PRUEBA)
+        paginas[3] = _pagina(4, "3.4 CERTIFICACIÓN DE PAGOS AL SISTEMA DE SEGURIDAD SOCIAL",
+                             "El proponente deberá aportar el paz y salvo ambiental expedido por la corporación autónoma regional.")
+        h = [x for x in comparar(extraer(paginas), criterios.definicion_sistema("juridica")) if x.tipo == "obligacion"]
+        self.assertEqual(len(h), 1)
+        self.assertIn("paz y salvo ambiental", h[0].cita)
+        self.assertEqual(h[0].pagina, 4)
+
+    def test_pliego_sin_estructura_avisa(self):
+        from motor import criterios
+        from motor.pliego.analisis import comparar, extraer
+        from motor.pliego.lectura import Pagina
+
+        paginas = [Pagina(i, "texto escaneado ilegible sin títulos") for i in range(1, 6)]
+        h = comparar(extraer(paginas), criterios.definicion_sistema("juridica"))
+        self.assertEqual(h[0].id, "estructura_no_reconocida")
+
     def test_aplicar_ajustes_aceptados(self):
         from evaluaciones.pliego import aplicar_ajustes
         from motor import criterios

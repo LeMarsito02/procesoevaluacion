@@ -108,6 +108,7 @@ export interface PliegoProceso {
   documento_tipo: string
   ajustes: AjustePliego[]
   aclaraciones: HallazgoPliego[]
+  obligaciones: HallazgoPliego[]
 }
 
 export const urlPliego = (evaluacionId: string) => `/api/evaluaciones/${evaluacionId}/pliego`

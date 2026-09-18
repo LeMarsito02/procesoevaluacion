@@ -28,10 +28,13 @@ const ETIQUETA: Record<string, string> = {
 export default function PasoPliego(p: Props) {
   const [verCobertura, setVerCobertura] = useState(false)
   const [verFuera, setVerFuera] = useState(false)
+  const [verObligaciones, setVerObligaciones] = useState(false)
 
   const hallazgos = p.pliego?.hallazgos ?? []
   const porDecidir = hallazgos.filter((h) => h.requiere_decision)
-  const aTener = hallazgos.filter((h) => h.tipo === 'aclaracion' || h.tipo === 'informativo')
+  const sinEstructura = hallazgos.find((h) => h.id === 'estructura_no_reconocida')
+  const aTener = hallazgos.filter((h) => (h.tipo === 'aclaracion' || h.tipo === 'informativo') && h !== sinEstructura)
+  const obligaciones = hallazgos.filter((h) => h.tipo === 'obligacion')
   const fuera = hallazgos.filter((h) => h.tipo === 'fuera_de_alcance')
   const listos = porDecidir.filter((h) => decisionCompleta(p.decisiones[h.id])).length
   const puedeCrear = p.pliego ? listos === porDecidir.length : p.sinPliegoConfirmado
@@ -83,6 +86,15 @@ export default function PasoPliego(p: Props) {
             </span>
             {p.pliego.reutilizado && <span className="tag">Ya se había analizado: se reutilizó</span>}
           </div>
+
+          {sinEstructura && (
+            <div className="callout callout-bad" role="alert" style={{ marginTop: 16 }}>
+              <Icono nombre="alerta" />
+              <div>
+                <strong>{sinEstructura.titulo}.</strong> {sinEstructura.detalle}
+              </div>
+            </div>
+          )}
 
           <section className="card" style={{ marginTop: 16 }}>
             <div className="card-head">
@@ -163,6 +175,28 @@ export default function PasoPliego(p: Props) {
               </div>
             )}
           </section>
+
+          {obligaciones.length > 0 && (
+            <section className="card" style={{ marginTop: 16 }}>
+              <button type="button" className="plegable" onClick={() => setVerObligaciones((v) => !v)} aria-expanded={verObligaciones}>
+                <Icono nombre={verObligaciones ? 'menos' : 'mas'} tam={15} /> Otras obligaciones del pliego sin verificación automática (
+                {obligaciones.length})
+              </button>
+              {verObligaciones && (
+                <>
+                  <p className="small muted" style={{ marginTop: 8 }}>
+                    Oraciones que obligan al proponente y que ninguna verificación del programa cubre. Léalas: si alguna
+                    exige algo que deba revisarse en este proceso, téngalo en cuenta al evaluar.
+                  </p>
+                  <div className="hallazgos">
+                    {obligaciones.map((h) => (
+                      <Cita key={h.id} h={h} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
 
           {fuera.length > 0 && (
             <section className="card" style={{ marginTop: 16 }}>

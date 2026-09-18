@@ -48,7 +48,7 @@ export interface AnalisisResponse {
   pliego_error: string | null
 }
 
-export type TipoHallazgo = 'ajuste_parametro' | 'requisito_nuevo' | 'aclaracion' | 'informativo' | 'fuera_de_alcance'
+export type TipoHallazgo = 'ajuste_parametro' | 'requisito_nuevo' | 'aclaracion' | 'informativo' | 'fuera_de_alcance' | 'obligacion'
 
 /** Algo que dice el pliego frente a la forma de evaluar de la entidad, con su prueba literal. */
 export interface HallazgoPliego {

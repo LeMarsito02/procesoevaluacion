@@ -69,6 +69,21 @@ export default function PliegoProceso({ evaluacionId, pliego }: { evaluacionId: 
           ))}
         </div>
       )}
+      {pliego.obligaciones.length > 0 && (
+        <details style={{ marginTop: 16 }}>
+          <summary className="plegable">Otras obligaciones del pliego sin verificación automática ({pliego.obligaciones.length})</summary>
+          <div className="hallazgos" style={{ marginTop: 10 }}>
+            {pliego.obligaciones.map((h) => (
+              <blockquote key={h.id} className="cita-pliego">
+                «{h.cita}»
+                <footer>
+                  {h.seccion} · pág. {h.pagina}
+                </footer>
+              </blockquote>
+            ))}
+          </div>
+        </details>
+      )}
       {pliego.aclaraciones.length > 0 && (
         <>
           <h3 style={{ marginTop: 16, fontSize: 15 }}>Para tener en cuenta al revisar</h3>
