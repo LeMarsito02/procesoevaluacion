@@ -119,6 +119,18 @@ PARAMETROS: dict[str, Parametro] = {
             ("juridica.sanciones_rup",),
         ),
         Parametro(
+            "smmlv",
+            "Salario mínimo mensual legal vigente",
+            "Del año del proceso. Los certificados de Cámara de Comercio suelen expresar el límite de cuantía del "
+            "representante legal en salarios mínimos; sin este valor, esos casos quedan para revisión humana.",
+            0,
+            "entero",
+            0,
+            100_000_000,
+            "pesos",
+            ("juridica.facultades",),
+        ),
+        Parametro(
             "prefijo_codigo",
             "Sigla de la entidad en el código del proceso",
             "Se acepta el código con o sin esta sigla (ej. ENT-CM-037-2026 o CM-037-2026).",

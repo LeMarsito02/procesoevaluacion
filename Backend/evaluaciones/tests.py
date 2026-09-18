@@ -1144,3 +1144,47 @@ class IdentidadAntecedentesTests(TestCase):
         with mock.patch("motor.evaluacion.antecedentes.leer_certificados", return_value=[certificado]):
             resultado = evaluar_antecedente({}, CONFIG_RNMC, [("JUAN CARLOS PEREZ GOMEZ", "79.123.456")])
         self.assertTrue(resultado.cumple, resultado.motivo)
+
+
+class FacultadesRepresentanteTests(TestCase):
+    """Criterio del abogado: un límite de cuantía solo impide contratar si
+    queda por debajo del valor del proceso."""
+
+    CERTIFICADO = (
+        "CERTIFICADO DE EXISTENCIA Y REPRESENTACION LEGAL "
+        "FACULTADES Y LIMITACIONES DEL REPRESENTANTE LEGAL: EL GERENTE NO PODRA SUSCRIBIR CONTRATOS "
+        "SIN PREVIA AUTORIZACION DE LA ASAMBLEA POR CUANTIA SUPERIOR A {limite}. "
+    )
+
+    def evaluar(self, limite, valor_proceso, smmlv=0):
+        from motor import criterios
+        from motor.evaluacion.camara_comercio import _evaluar_facultades_certificado
+
+        with criterios.usar({"smmlv": smmlv}):
+            return _evaluar_facultades_certificado(
+                "certificado.pdf", self.CERTIFICADO.format(limite=limite), valor_proceso
+            )
+
+    def test_limite_por_encima_del_proceso_se_aprueba(self):
+        cumple, motivo = self.evaluar("$5.000.000.000", 2_269_370_336)
+        self.assertTrue(cumple, motivo)
+        self.assertIn("puede suscribir", motivo)
+
+    def test_limite_por_debajo_va_a_revision(self):
+        cumple, motivo = self.evaluar("$100.000.000", 2_269_370_336)
+        self.assertFalse(cumple)
+        self.assertIn("autorización", motivo)
+
+    def test_limite_en_salarios_minimos_con_el_valor_configurado(self):
+        # 100 salarios de $1.500.000 = $150.000.000: no alcanza para el proceso.
+        cumple, _ = self.evaluar("100 SALARIOS MINIMOS MENSUALES LEGALES VIGENTES", 2_269_370_336, smmlv=1_500_000)
+        self.assertFalse(cumple)
+        # 3.000 salarios sí lo cubren.
+        cumple, motivo = self.evaluar("3.000 SALARIOS MINIMOS MENSUALES LEGALES VIGENTES", 2_269_370_336, smmlv=1_500_000)
+        self.assertTrue(cumple, motivo)
+
+    def test_sin_salario_minimo_configurado_queda_para_revision(self):
+        """Nunca se aprueba a ciegas: sin el dato, decide una persona."""
+        cumple, motivo = self.evaluar("100 SALARIOS MINIMOS MENSUALES LEGALES VIGENTES", 2_269_370_336)
+        self.assertFalse(cumple)
+        self.assertIn("salario mínimo", motivo)

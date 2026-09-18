@@ -157,7 +157,60 @@ def encontrar_documentos(pdfs: dict[str, bytes], titulo_re: re.Pattern[str], pis
                 encontrados.append(nombre)
         except Exception:  # noqa: BLE001
             continue
-    return encontrados
+    return _sin_copias(pdfs, encontrados, titulo_re)
+
+
+# Los proponentes adjuntan copias del certificado de la empresa dentro de otros
+# formatos (acreditación MIPYME, puntaje de industria nacional…), a veces solo
+# las primeras páginas. Cada copia se evaluaba como un certificado aparte y
+# bastaba una truncada para mandar el requisito a revisión. Lo que se exige es
+# un certificado por empresa: se agrupan por NIT y se evalúa la copia en la que
+# el certificado ocupa más páginas (el archivo del formato puede tener más
+# páginas en total sin traer el certificado completo). Los integrantes de un
+# consorcio tienen cada uno su NIT, así que todos se conservan.
+NIT_CERTIFICADO_RE = re.compile(r"\bNIT\.?:?\s*(\d[\d.]{7,}\d)")
+CODIGO_VERIFICACION_RE = re.compile(r"CODIGO DE VERIFICACION:?\s*([A-Z0-9]{6,})")
+
+
+def _identidad_y_extension(contenido: bytes, titulo_re: re.Pattern[str]) -> tuple[str | None, int]:
+    """(NIT o código de verificación del certificado, páginas que ocupa el
+    certificado dentro del archivo)."""
+    identidad = None
+    paginas_certificado = 0
+    with abrir_pdf(contenido) as pdf:
+        for page in pdf.pages[:MAX_PAGINAS_CERTIFICADO]:
+            texto_norm = _norm(texto_pagina(page) or "")
+            page.flush_cache()
+            if titulo_re.search(texto_norm) or (identidad and identidad in re.sub(r"\D", "", texto_norm)):
+                paginas_certificado += 1
+            if identidad is None:
+                nit = NIT_CERTIFICADO_RE.search(texto_norm)
+                codigo = CODIGO_VERIFICACION_RE.search(texto_norm)
+                if nit:
+                    identidad = re.sub(r"\D", "", nit.group(1))[:9]
+                elif codigo:
+                    identidad = codigo.group(1)
+    return identidad, paginas_certificado
+
+
+def _sin_copias(pdfs: dict[str, bytes], nombres: list[str], titulo_re: re.Pattern[str]) -> list[str]:
+    if len(nombres) < 2:
+        return nombres
+    elegido: dict[str, tuple[str, int]] = {}  # NIT -> (archivo, páginas del certificado)
+    sin_identidad: list[str] = []
+    for nombre in nombres:  # en orden de búsqueda: primero los que se llaman "existencia"
+        try:
+            identidad, paginas = _identidad_y_extension(pdfs[nombre], titulo_re)
+        except Exception:  # noqa: BLE001
+            identidad, paginas = None, 0
+        if identidad is None:
+            sin_identidad.append(nombre)
+            continue
+        actual = elegido.get(identidad)
+        if actual is None or paginas > actual[1]:
+            elegido[identidad] = (nombre, paginas)
+    conservar = {archivo for archivo, _ in elegido.values()} | set(sin_identidad)
+    return [n for n in nombres if n in conservar]
 
 
 # Nunca se lee un certificado entero: hay RUP de cientos de páginas (algunos
@@ -373,6 +426,54 @@ SECCION_REPRESENTACION_LEGAL_RE = re.compile(
 )
 
 
+# El límite de cuantía viene en salarios mínimos ("100 SMMLV", "cien salarios
+# mínimos mensuales legales vigentes") o en pesos ("$500.000.000"). Se lee el
+# número para poder compararlo con el valor del proceso: si el límite lo
+# cubre, el representante sí puede firmar y el requisito se aprueba.
+LIMITE_EN_SALARIOS_RE = re.compile(
+    r"(\d[\d.,]*)\s*(?:\(\s*[\d.,]+\s*\)\s*)?"
+    r"(?:S\.?M\.?M\.?L\.?V|S\.?M\.?L\.?M\.?V|SALARIOS?\s+MINIMOS?)"
+)
+LIMITE_EN_PESOS_RE = re.compile(r"\$\s*(\d[\d.,]*)")
+
+
+def _numero(texto: str) -> float | None:
+    """"500.000.000" o "500,000,000" → 500000000.0 (los certificados usan el
+    punto como separador de miles, nunca decimales en estos montos)."""
+    limpio = re.sub(r"[.,](?=\d{3}\b)", "", texto).replace(",", ".")
+    try:
+        return float(limpio)
+    except ValueError:
+        return None
+
+
+def _limite_en_pesos(fragmento: str) -> tuple[float | None, str]:
+    """(monto del límite en pesos, cómo venía expresado). None si no se pudo
+    leer, o si viene en salarios y la entidad no configuró el salario mínimo."""
+    salarios = LIMITE_EN_SALARIOS_RE.search(fragmento)
+    if salarios:
+        cantidad = _numero(salarios.group(1))
+        smmlv = criterios.valor("smmlv")
+        if cantidad and smmlv:
+            return cantidad * smmlv, f"{salarios.group(1)} salarios mínimos"
+        return None, "salarios mínimos"
+    pesos = LIMITE_EN_PESOS_RE.search(fragmento)
+    if pesos:
+        monto = _numero(pesos.group(1))
+        if monto:
+            return monto, f"${pesos.group(1)}"
+    return None, ""
+
+
+def _valor_de_referencia(proceso: ProcesoDocumentoBase) -> float | None:
+    """El lote más costoso del proceso: si el límite del representante cubre
+    ese valor, lo cubre para cualquier lote al que se presente."""
+    valores = [lote.valor_presupuesto for lote in proceso.lotes if lote.valor_presupuesto]
+    if valores:
+        return float(max(valores))
+    return None
+
+
 def _seccion_facultades(texto_norm: str) -> str:
     match = SECCION_FACULTADES_RE.search(texto_norm) or SECCION_REPRESENTACION_LEGAL_RE.search(texto_norm)
     if not match:
@@ -380,7 +481,9 @@ def _seccion_facultades(texto_norm: str) -> str:
     return match.group(0)[:MAX_CARACTERES_SECCION_FACULTADES]
 
 
-def _evaluar_facultades_certificado(nombre: str, texto_norm: str) -> tuple[bool, str | None]:
+def _evaluar_facultades_certificado(
+    nombre: str, texto_norm: str, valor_proceso: float | None = None
+) -> tuple[bool, str | None]:
     """(cumple, motivo) para un Certificado de Existencia."""
     if any(patron.search(texto_norm) for patron in FACULTADES_SIN_LIMITE_PATRONES):
         return True, None
@@ -395,9 +498,24 @@ def _evaluar_facultades_certificado(nombre: str, texto_norm: str) -> tuple[bool,
     limite = LIMITE_CUANTIA_RE.search(seccion)
     if limite:
         fragmento = seccion[max(0, limite.start() - 150) : limite.end() + 100]
+        monto, expresado = _limite_en_pesos(fragmento)
+        # Un límite que cubre el valor del proceso no impide contratar: el
+        # abogado lo aprueba. Se compara contra el lote más costoso, así que
+        # si alcanza para ese, alcanza para cualquiera al que se presente.
+        if monto is not None and valor_proceso is not None and monto >= valor_proceso:
+            return True, (
+                f"'{nombre}' limita al representante legal a {expresado} (${monto:,.0f}), por encima del valor del "
+                f"proceso (${valor_proceso:,.0f}): puede suscribir el contrato"
+            )
+        if monto is not None and valor_proceso is not None:
+            return False, (
+                f"'{nombre}' limita al representante legal a {expresado} (${monto:,.0f}), por debajo del valor del "
+                f"proceso (${valor_proceso:,.0f}) — revisa si hay autorización de la asamblea o junta"
+            )
+        falta = " (la entidad no tiene configurado el salario mínimo)" if expresado == "salarios mínimos" else ""
         return False, (
-            f"'{nombre}' menciona un posible límite de cuantía para el representante legal (\"...{fragmento}...\") — "
-            "revisa si el proceso lo supera y si hay autorización"
+            f"'{nombre}' menciona un posible límite de cuantía para el representante legal{falta} "
+            f"(\"...{fragmento}...\") — revisa si el proceso lo supera y si hay autorización"
         )
 
     respuesta = consultar_json(_INSTRUCCION_FACULTADES, seccion)
@@ -420,13 +538,16 @@ def _evaluar_facultades_certificado(nombre: str, texto_norm: str) -> tuple[bool,
     )
 
 
-def evaluar_requisito8(pdfs: dict[str, bytes], tipo_proponente: str | None) -> ResultadoEvaluacionCamara:
+def evaluar_requisito8(
+    pdfs: dict[str, bytes], tipo_proponente: str | None, valor_proceso: float | None = None
+) -> ResultadoEvaluacionCamara:
     """Requisito 8: Facultades del representante legal. Cumple cuando el
     certificado dice expresamente que no hay restricción para contratar, o
     cuando sus facultades no imponen ningún límite (confirmado por el modelo
-    local, sin montos ni topes detectados). Un límite de cuantía o una
-    autorización requerida para contratar siempre queda para revisión
-    humana. N.A. si es persona natural."""
+    local, sin montos ni topes detectados), y también cuando el límite que
+    imponen cubre el valor del proceso. Un límite por debajo de ese valor, o
+    uno que no se pueda cuantificar, queda para revisión humana. N.A. si es
+    persona natural."""
     if tipo_proponente == "persona_natural":
         return ResultadoEvaluacionCamara(
             cumple=True, motivo="N.A. — persona natural, no aplica certificado de facultades", archivo=None
@@ -443,7 +564,9 @@ def evaluar_requisito8(pdfs: dict[str, bytes], tipo_proponente: str | None) -> R
     no_cumple: list[str] = []
     notas: list[str] = []
     for nombre in encontrados:
-        cumple_certificado, motivo = _evaluar_facultades_certificado(nombre, _norm(_texto_completo(pdfs, nombre)))
+        cumple_certificado, motivo = _evaluar_facultades_certificado(
+            nombre, _norm(_texto_completo(pdfs, nombre)), valor_proceso
+        )
         if not cumple_certificado:
             no_cumple.append(motivo or "")
         elif motivo:
@@ -596,7 +719,9 @@ def evaluar_proponente_requisito7(proponente: Proponente, proceso: ProcesoDocume
 
 
 def evaluar_proponente_requisito8(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
-    return _evaluar_proponente_camara(8, lambda pdfs, proceso, tipo: evaluar_requisito8(pdfs, tipo), proponente, proceso)
+    return _evaluar_proponente_camara(
+        8, lambda pdfs, proceso, tipo: evaluar_requisito8(pdfs, tipo, _valor_de_referencia(proceso)), proponente, proceso
+    )
 
 
 def evaluar_proponente_requisito9(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
@@ -657,7 +782,12 @@ def evaluar_requisito18(pdfs: dict[str, bytes], tipo_proponente: str | None) -> 
 
     return ResultadoEvaluacionCamara(
         cumple=False,
-        motivo="El proponente es una Sociedad Anónima (S.A.), pero no se pudo confirmar si es abierta o cerrada — revisa manualmente el certificado de Revisor Fiscal.",
+        # Criterio del abogado: sin la certificación que diga si la S.A. es
+        # abierta o cerrada, el requisito no se aprueba.
+        motivo=(
+            "El proponente es una Sociedad Anónima (S.A.) y no se encontró la certificación que indique si es abierta "
+            "o cerrada: sin ella el requisito no se aprueba. Si el proponente la aportó en otro documento, verifícala."
+        ),
         archivo=encontrados[0],
     )
 
