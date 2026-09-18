@@ -8,7 +8,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://localhost:8000',
+      // API_DESTINO permite apuntar a otro backend (p. ej. mientras una
+      // medición ocupa el puerto 8000).
+      '/api': process.env.API_DESTINO ?? 'http://localhost:8000',
     },
   },
 })
