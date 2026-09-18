@@ -1091,3 +1091,56 @@ class HuellaCriteriosTests(TestCase):
         with mock.patch.dict(criterios._ENTORNO, {"beneficiario_claves": ["ENT"]}, clear=True):
             with criterios.usar({"beneficiario_claves": ["SUYA"]}):
                 self.assertEqual(criterios.valor("beneficiario_claves"), ["SUYA"])
+
+
+class IdentidadAntecedentesTests(TestCase):
+    """Cada entidad redacta su certificado a su manera: lo que importa es sacar
+    de quién es, para no pedirle al evaluador que revise algo que ya está."""
+
+    def identidad(self, requisito, texto):
+        from motor.evaluacion import antecedentes as ant
+
+        config = next(c for c in ant._configs() if c.requisito == requisito)
+        return config.extraer_identidad(ant._norm(texto))
+
+    def test_rnmc_con_nombre_y_cedula(self):
+        texto = (
+            "EL CIUDADANO CON CEDULA DE CIUDADANIA NO. 79123456 Y NOMBRE: JUAN CARLOS PEREZ GOMEZ. "
+            "NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR."
+        )
+        self.assertEqual(self.identidad(17, texto), ("JUAN CARLOS PEREZ GOMEZ", "79123456"))
+
+    def test_rnmc_solo_con_cedula(self):
+        """Variante sin nombre: la cédula sola alcanza para saber de quién es."""
+        texto = (
+            "QUE A LA FECHA, 01/07/2026 08:38:35 A. M. EL CIUDADANO CON CEDULA DE CIUDADANIA "
+            "NO. 79123456 . NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR."
+        )
+        self.assertEqual(self.identidad(17, texto), (None, "79123456"))
+
+    def test_rnmc_de_persona_juridica_no_es_de_nadie(self):
+        """El certificado a nombre de un NIT no se puede atribuir a una persona."""
+        texto = (
+            "QUE A LA FECHA, 26/05/2026 PARA - NIT, SIN DIGITO DE VERIFICACION: NO. 900123456 "
+            "NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR."
+        )
+        self.assertEqual(self.identidad(17, texto), (None, None))
+
+    def test_la_cedula_empareja_aunque_el_certificado_no_traiga_nombre(self):
+        from motor.evaluacion.antecedentes import CONFIG_RNMC, evaluar_antecedente
+        from unittest import mock
+
+        from motor.evaluacion.antecedentes import Certificado
+
+        certificado = Certificado(
+            archivo="antecedentes.pdf",
+            texto=(
+                "SISTEMA REGISTRO NACIONAL DE MEDIDAS CORRECTIVAS RNMC "
+                "EL CIUDADANO CON CEDULA DE CIUDADANIA NO. 79123456 . "
+                "NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR."
+            ),
+            requisitos=frozenset({17}),
+        )
+        with mock.patch("motor.evaluacion.antecedentes.leer_certificados", return_value=[certificado]):
+            resultado = evaluar_antecedente({}, CONFIG_RNMC, [("JUAN CARLOS PEREZ GOMEZ", "79.123.456")])
+        self.assertTrue(resultado.cumple, resultado.motivo)

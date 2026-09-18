@@ -36,7 +36,10 @@ PAGINAS_MINIMAS = 4
 # certificado (se vio uno real de 22 páginas con Contraloría en la página 6):
 # si el archivo o sus primeras páginas hablan de antecedentes, se sigue leyendo.
 PISTA_PAQUETE_ANTECEDENTES_RE = re.compile(r"ANTECEDENTE|CONTRALOR|PROCURADUR|POLICIA|JUDICIAL|RNMC|REDAM")
-PAGINAS_MAXIMAS_FUSIONADOS = 20
+# Se midió un paquete real con el RNMC en la página 21, que el límite anterior
+# de 20 dejaba fuera: solo aplica a archivos que ya se ven como paquete de
+# antecedentes, así que no obliga a recorrer documentos largos de otro tipo.
+PAGINAS_MAXIMAS_FUSIONADOS = 32
 
 
 def _solo_digitos(texto: str) -> str:
@@ -371,9 +374,13 @@ CONFIG_POLICIA = AntecedenteConfig(
 # "y Nombre:": "...Nº. 87654321 ANA LUCIA TORRES DIAZ. NO TIENE...") — el de la empresa
 # dice "...para - NIT, sin digito de verificación: N. ...", que este patrón
 # ignora a propósito al exigir "CEDULA DE CIUDADANIA".
+# El RNMC tiene dos redacciones para persona natural: con el nombre junto a la
+# cédula, y otra que solo trae la cédula ("EL CIUDADANO CON CEDULA DE
+# CIUDADANIA NO. 12345 . NO TIENE MEDIDAS..."). En la segunda el nombre no
+# aparece, pero la cédula sola basta para saber de quién es el certificado.
 _RNMC_PERSONA_RE = re.compile(
-    r"CIUDADANO CON C[EÉ]DULA DE CIUDADAN[IÍ]A N(?:[^\d\s]{0,3}|9\.)\s*(\d[\d.]*)\s*"
-    r"(?:Y NOMBRE:?\s*([A-ZÑ][A-ZÑ .]+?)\.|([A-ZÑ][A-ZÑ .]+?)\.\s*NO TIENE)"
+    r"CIUDADANO CON C[EÉ]DULA DE CIUDADAN[IÍ]A N(?:[^\d\s]{0,3}|9\.)\s*(\d[\d.]*)\s*\.?\s*"
+    r"(?:Y NOMBRE:?\s*([A-ZÑ][A-ZÑ .]+?)\.|([A-ZÑ][A-ZÑ .]+?)\.\s*NO TIENE)?"
 )
 
 
@@ -381,7 +388,8 @@ def _identidad_rnmc(texto_norm: str) -> tuple[str | None, str | None]:
     match = _RNMC_PERSONA_RE.search(texto_norm)
     if not match:
         return None, None
-    nombre = re.sub(r"\s+", " ", match.group(2) or match.group(3)).strip(" .")
+    crudo = match.group(2) or match.group(3)
+    nombre = re.sub(r"\s+", " ", crudo).strip(" .") if crudo else None
     return nombre or None, match.group(1)
 
 
