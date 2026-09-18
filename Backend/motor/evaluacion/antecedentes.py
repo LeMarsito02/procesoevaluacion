@@ -21,7 +21,7 @@ from motor.evaluacion.proponente_plural import (
     obtener_personas_a_verificar,
 )
 from motor.integrations.drive import download_file_bytes, get_file_metadata
-from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from motor.esquemas.proceso import PersonaAntecedente, ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.pdf_utils import abrir_pdf, texto_pagina
 from motor.procesamiento.zip_utils import extraer_pdfs
 
@@ -176,43 +176,56 @@ def _puede_tener_integrantes_naturales(pdfs: dict[str, bytes], codigo_proceso: s
     return integrantes == 0 or integrantes > len(empresas_con_certificado(pdfs))
 
 
-def _con_integrantes_naturales(
-    personas: list[tuple[str, str | None]], integrantes: list[Integrante]
-) -> list[tuple[str, str | None]]:
+def _con_integrantes_naturales(personas: list[tuple], integrantes: list[Integrante]) -> list[tuple]:
     todas = list(personas)
     for integrante in integrantes:
         if not integrante.persona_natural:
             continue
         cedula = _solo_digitos(integrante.identificacion) if integrante.identificacion else None
         repetida = any(
-            _nombres_coinciden(integrante.nombre, nombre) or (cedula and c and _solo_digitos(c) == cedula)
-            for nombre, c in todas
+            _nombres_coinciden(integrante.nombre, p[0]) or (cedula and p[1] and _solo_digitos(p[1]) == cedula)
+            for p in todas
         )
         if not repetida:
-            todas.append((integrante.nombre, integrante.identificacion))
+            todas.append((integrante.nombre, integrante.identificacion, "integrante"))
     return todas
 
 
+def _con_roles(personas: list[tuple[str, str | None]], tipo_proponente: str | None) -> list[tuple[str, str | None, str]]:
+    """Del consorcio: el primero es su representante y el segundo, el suplente.
+    De una persona natural que se presenta sola, ella misma."""
+    if tipo_proponente in ("consorcio", "union_temporal"):
+        roles = ["representante_legal", "suplente"]
+        return [(n, c, roles[i] if i < 2 else "integrante") for i, (n, c) in enumerate(personas)]
+    rol = "proponente" if tipo_proponente == "persona_natural" else "representante_legal"
+    return [(n, c, rol) for n, c in personas]
+
+
 class ResultadoEvaluacionAntecedente:
-    def __init__(self, cumple: bool, motivo: str | None, archivo: str | None) -> None:
+    def __init__(
+        self, cumple: bool, motivo: str | None, archivo: str | None, personas: list[PersonaAntecedente] | None = None
+    ) -> None:
         self.cumple = cumple
         self.motivo = motivo
         self.archivo = archivo
+        # El resultado de cada persona y empresa, para la tabla de antecedentes.
+        self.personas = personas or []
 
 
 def evaluar_antecedente(
     pdfs: dict[str, bytes],
     config: AntecedenteConfig,
-    personas: list[tuple[str, str | None]],
+    personas: list[tuple],
     empresas: list[Empresa] | None = None,
+    plural: bool = False,
 ) -> ResultadoEvaluacionAntecedente:
     """Verifica que se haya aportado el certificado de `config.entidad` para
-    cada persona en `personas` (representante legal, o representante +
-    suplente del consorcio/UT) y, si el requisito aplica a personas
-    jurídicas, para cada empresa en `empresas` (por su NIT). Ninguno puede
-    reportar novedades."""
+    cada persona en `personas` —(nombre, cédula) o (nombre, cédula, rol)— y,
+    si el requisito aplica a personas jurídicas, para cada empresa en
+    `empresas` (por su NIT). Ninguno puede reportar novedades. Además del
+    resultado global, devuelve el de cada una."""
     empresas = list(empresas or []) if config.requisito in REQUISITOS_PERSONA_JURIDICA else []
-    if not personas:
+    if not personas and not empresas:
         return ResultadoEvaluacionAntecedente(
             cumple=False,
             motivo=(
@@ -224,19 +237,15 @@ def evaluar_antecedente(
 
     certificados = leer_certificados(pdfs)
     candidatos = [c for c in certificados if config.requisito in c.requisitos]
-    if not candidatos:
-        return ResultadoEvaluacionAntecedente(
-            cumple=False,
-            motivo=f"No se encontró el certificado de {config.entidad} por título dentro de los documentos del proponente.",
-            archivo=None,
-        )
-
     identidades = [(c.archivo, c.texto, *config.extraer_identidad(_norm(c.texto))) for c in candidatos]
     pares_conocidos = _cedulas_por_nombre(certificados)
 
     faltantes: list[str] = []
+    resultados: list[PersonaAntecedente] = []
     archivo_evaluado: str | None = None
-    for nombre_persona, cedula_persona in personas:
+    for persona in personas:
+        nombre_persona, cedula_persona = persona[0], persona[1]
+        rol = persona[2] if len(persona) > 2 else "representante_legal"
         if not cedula_persona:
             cedula_persona = next(
                 (cedula for nombre, cedula in pares_conocidos if _nombres_coinciden(nombre, nombre_persona)), None
@@ -253,8 +262,10 @@ def evaluar_antecedente(
             if coincide:
                 encontrado = (archivo, texto)
                 break
+        base = {"nombre": nombre_persona, "documento": cedula_persona_digitos, "tipo": "natural", "rol": rol}
         if encontrado is None:
             faltantes.append(f"no se aportó el certificado de {config.entidad} de {nombre_persona}")
+            resultados.append(PersonaAntecedente(**base, estado="falta"))
             continue
         archivo, texto = encontrado
         if archivo_evaluado is None:
@@ -263,13 +274,19 @@ def evaluar_antecedente(
             faltantes.append(
                 f"el certificado de {config.entidad} de {nombre_persona} no confirma que esté libre de novedades"
             )
+            resultados.append(PersonaAntecedente(**base, estado="con_novedad", archivo=archivo))
+        else:
+            resultados.append(PersonaAntecedente(**base, estado="cumple", archivo=archivo))
 
     for empresa in empresas:
+        base = {"nombre": empresa.nombre, "documento": empresa.nit, "tipo": "juridica",
+                "rol": "integrante" if plural else "proponente"}
         suyo = next(
             (c for c in candidatos if _nit_del_certificado(config.requisito, _norm(c.texto)) == empresa.nit), None
         )
         if suyo is None:
             faltantes.append(f"no se aportó el certificado de {config.entidad} de {empresa.nombre} (NIT {empresa.nit})")
+            resultados.append(PersonaAntecedente(**base, estado="falta"))
             continue
         if archivo_evaluado is None:
             archivo_evaluado = suyo.archivo
@@ -278,10 +295,17 @@ def evaluar_antecedente(
                 f"el certificado de {config.entidad} de {empresa.nombre} (NIT {empresa.nit}) no confirma que esté "
                 "libre de novedades"
             )
+            resultados.append(PersonaAntecedente(**base, estado="con_novedad", archivo=suyo.archivo))
+        else:
+            resultados.append(PersonaAntecedente(**base, estado="cumple", archivo=suyo.archivo))
 
+    if not candidatos:
+        # Mismo motivo de siempre: no hay ningún certificado de esta entidad en la oferta.
+        motivo = f"No se encontró el certificado de {config.entidad} por título dentro de los documentos del proponente."
+        return ResultadoEvaluacionAntecedente(cumple=False, motivo=motivo, archivo=None, personas=resultados)
     cumple = not faltantes
     motivo = "; ".join(faltantes) if faltantes else None
-    return ResultadoEvaluacionAntecedente(cumple=cumple, motivo=motivo, archivo=archivo_evaluado)
+    return ResultadoEvaluacionAntecedente(cumple=cumple, motivo=motivo, archivo=archivo_evaluado, personas=resultados)
 
 
 def _evaluar_proponente_antecedente(
@@ -331,7 +355,7 @@ def _evaluar_proponente_antecedente(
         )
 
     tipo_proponente = obtener_tipo_proponente(pdfs)
-    personas = obtener_personas_a_verificar(pdfs, tipo_proponente, proceso.codigo_proceso)
+    personas = _con_roles(obtener_personas_a_verificar(pdfs, tipo_proponente, proceso.codigo_proceso), tipo_proponente)
     if (
         tipo_proponente in ("consorcio", "union_temporal")
         and config.requisito in REQUISITOS_INTEGRANTE_NATURAL
@@ -343,7 +367,9 @@ def _evaluar_proponente_antecedente(
         if config.requisito in REQUISITOS_PERSONA_JURIDICA and tipo_proponente != "persona_natural"
         else []
     )
-    resultado = evaluar_antecedente(pdfs, config, personas, empresas)
+    resultado = evaluar_antecedente(
+        pdfs, config, personas, empresas, plural=tipo_proponente in ("consorcio", "union_temporal")
+    )
 
     return finalizar(
         ResultadoRequisito(
@@ -353,6 +379,7 @@ def _evaluar_proponente_antecedente(
             archivo_evaluado=resultado.archivo,
             archivos_disponibles=sorted(pdfs.keys()) if resultado.archivo is None else [],
             tipo_proponente=tipo_proponente,
+            personas_antecedente=resultado.personas,
         ),
         cacheable=True,
     )

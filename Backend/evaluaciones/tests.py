@@ -648,7 +648,8 @@ class PlantillaEvaluacionTests(BaseEvaluaciones):
 
         jefe.post(f"/api/evaluaciones/{ev['id']}/evaluar", {})
         correr_fila(motor_que_mira)
-        self.assertEqual(recibido["criterios"]["parametros"], {"copnia_meses": 6})
+        # Además del parámetro de la entidad, el salario mínimo del año del cierre.
+        self.assertEqual(recibido["criterios"]["parametros"], {"copnia_meses": 6, "smmlv": 1_750_905})
         self.assertEqual(len(recibido["criterios"]["requisitos"]), 17)
 
     def test_nueva_version_y_actualizar_evaluacion(self):
@@ -832,7 +833,7 @@ def pdf_minimo(texto: str = "certificado") -> bytes:
     return b"%PDF-1.4\n1 0 obj<<>>endobj\n% " + texto.encode() + b"\n%%EOF"
 
 
-class HistoricoTests(BaseEvaluaciones):
+class BaseHistorico(BaseEvaluaciones):
     def setUp(self):
         import tempfile
 
@@ -868,6 +869,8 @@ class HistoricoTests(BaseEvaluaciones):
             datos["persona_id"] = persona_id
         return c.http.post(f"/api/evaluaciones/{self.ev['id']}/proponentes/{prop}/aportados", datos, headers={"X-CSRFToken": c.csrf})
 
+
+class HistoricoTests(BaseHistorico):
     def test_justificacion_obligatoria(self):
         self.assertEqual(self.revisar(self.abogado, self.p1, 2, True, "").status_code, 400)
         self.assertEqual(self.revisar(self.abogado, self.p1, 2, True, "Se verificó el COPNIA en físico").status_code, 200)
@@ -1240,6 +1243,27 @@ class AntecedentesEmpresaTests(TestCase):
         self.assertFalse(r.cumple)
         self.assertIn("NIT 900123456", r.motivo)
 
+    def test_resultado_de_cada_persona(self):
+        """La tabla de antecedentes necesita el estado de cada persona y empresa, no solo el global."""
+        from unittest import mock
+
+        from motor.evaluacion.antecedentes import CONFIG_PROCURADURIA, Certificado, evaluar_antecedente
+        from motor.evaluacion.camara_comercio import Empresa
+
+        certificados = [Certificado("c0.pdf", self.PROCURADURIA_PERSONA, frozenset({15}))]
+        personas = [("JUAN CARLOS PEREZ GOMEZ", "79123456", "representante_legal"), ("ANA MARIA RUIZ LOPEZ", "52999888", "suplente")]
+        with mock.patch("motor.evaluacion.antecedentes.leer_certificados", return_value=certificados):
+            r = evaluar_antecedente({}, CONFIG_PROCURADURIA, personas, [Empresa("CONSTRUCTORA EJEMPLO S.A.S", "900123456")], plural=True)
+        self.assertEqual(
+            [(x.nombre, x.rol, x.tipo, x.estado) for x in r.personas],
+            [
+                ("JUAN CARLOS PEREZ GOMEZ", "representante_legal", "natural", "cumple"),
+                ("ANA MARIA RUIZ LOPEZ", "suplente", "natural", "falta"),
+                ("CONSTRUCTORA EJEMPLO S.A.S", "integrante", "juridica", "falta"),
+            ],
+        )
+        self.assertEqual(r.personas[0].archivo, "c0.pdf")
+
     def test_a_la_empresa_no_se_le_exige_policia_ni_rnmc(self):
         from motor.evaluacion.antecedentes import CONFIG_RNMC
         from motor.evaluacion.camara_comercio import Empresa
@@ -1268,7 +1292,7 @@ class IntegrantesNaturalesTests(TestCase):
         ]
         self.assertEqual(
             _con_integrantes_naturales(personas, integrantes),
-            [("JUAN CARLOS PEREZ GOMEZ", "79123456"), ("MARIA LUISA TORRES DIAZ", "52111222")],
+            [("JUAN CARLOS PEREZ GOMEZ", "79123456"), ("MARIA LUISA TORRES DIAZ", "52111222", "integrante")],
         )
 
     def test_el_redam_no_se_le_pide_al_integrante(self):
@@ -1524,3 +1548,97 @@ class PliegoProcesoTests(BaseEvaluaciones):
             registro = json.loads(z.read("registro.json"))
         self.assertEqual(registro["pliego"]["sha256"], a.sha256)
         self.assertEqual(len(registro["pliego"]["ajustes"]), 4)
+
+
+class TablaAntecedentesTests(BaseHistorico):
+    """La tabla de antecedentes se arma sola con todas las personas que exige la
+    regla (las que sean) y el estado del certificado de cada una."""
+
+    def guardar(self, personas_por_requisito):
+        from evaluaciones.models import Evaluacion, Proponente
+        from motor.esquemas.proceso import PersonaAntecedente, ResultadoRequisito
+
+        ev = Evaluacion.objects.get(pk=self.ev["id"])
+        prop = Proponente.objects.get(pk=self.p1)
+        resultados = [
+            ResultadoRequisito(
+                hoja=prop.hoja, numero_orden=prop.numero_orden, nombre_proponente=prop.nombre, requisito=req,
+                cumple=all(p[3] == "cumple" for p in personas), motivo=None,
+                personas_antecedente=[
+                    PersonaAntecedente(nombre=n, documento=d, tipo=t, rol=r, estado=e) for n, d, r, e, t in
+                    [(p[0], p[1], p[2], p[3], p[4] if len(p) > 4 else "natural") for p in personas]
+                ],
+            )
+            for req, personas in personas_por_requisito.items()
+        ]
+        servicios.guardar_resultados(ev, prop, resultados)
+
+    def tabla(self):
+        return self.abogado.get(f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/antecedentes").json()
+
+    def test_varias_personas_con_su_estado(self):
+        rep = ("ANA MARIA RUIZ LOPEZ", "52999888", "representante_legal")
+        sup = ("CARLOS PEREZ GOMEZ", "79123456", "suplente")
+        emp = ("CONSTRUCTORA EJEMPLO S.A.S", "900123456", "integrante")
+        self.guardar({
+            14: [(*rep, "cumple"), (*sup, "falta"), (*emp, "cumple", "juridica")],
+            16: [(*rep, "cumple"), (*sup, "con_novedad")],
+        })
+        t = self.tabla()
+        personas = {p["nombre"]: p for p in t["personas"]}
+        self.assertEqual(set(personas), {"ANA MARIA RUIZ LOPEZ", "CARLOS PEREZ GOMEZ", "CONSTRUCTORA EJEMPLO S.A.S"})
+        self.assertTrue(all(p["detectada"] for p in personas.values()))
+        estados = t["estados"]
+        self.assertEqual(estados[personas["CARLOS PEREZ GOMEZ"]["id"]]["14"]["estado"], "falta")
+        self.assertEqual(estados[personas["CARLOS PEREZ GOMEZ"]["id"]]["16"]["estado"], "con_novedad")
+        # A la empresa no se le exige Policía.
+        self.assertEqual(estados[personas["CONSTRUCTORA EJEMPLO S.A.S"]["id"]]["16"]["estado"], "no_requerido")
+
+    def test_reevaluar_no_toca_lo_manual_ni_lo_aportado(self):
+        self.guardar({14: [("ANA MARIA RUIZ LOPEZ", "52999888", "representante_legal", "falta")]})
+        manual = self.abogado.post(
+            f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/personas",
+            {"rol": "integrante", "tipo": "natural", "nombre": "Pedro Pablo León", "documento": "1020304050"},
+        ).json()
+        ana = next(p for p in self.tabla()["personas"] if p["nombre"] == "ANA MARIA RUIZ LOPEZ")
+        self.aportar(self.abogado, self.p1, 14, ana["id"])
+        # Al reevaluar, el programa ya no la exige (otro representante): se conserva por tener un certificado aportado.
+        self.guardar({14: [("JORGE LUIS DIAZ", "80111222", "representante_legal", "cumple")]})
+        nombres = {p["nombre"] for p in self.tabla()["personas"]}
+        self.assertEqual(nombres, {"ANA MARIA RUIZ LOPEZ", "PEDRO PABLO LEÓN", "JORGE LUIS DIAZ"})
+        self.assertIn(manual["id"], {p["id"] for p in self.tabla()["personas"]})
+
+
+class SalarioMinimoTests(BaseEvaluaciones):
+    def test_la_evaluacion_usa_el_del_ano_del_cierre(self):
+        from evaluaciones.models import Evaluacion, SalarioMinimo
+
+        _, ev = self.crear()
+        evaluacion = Evaluacion.objects.get(pk=ev["id"])
+        ano = evaluacion.proceso.fecha_cierre.year
+        SalarioMinimo.objects.update_or_create(ano=ano, defaults={"valor": 1_750_905})
+        self.assertEqual(servicios.definicion_de(evaluacion).parametros["smmlv"], 1_750_905)
+        SalarioMinimo.objects.filter(ano=ano).delete()
+        self.assertNotIn("smmlv", servicios.definicion_de(evaluacion).parametros)
+
+    def test_los_valores_oficiales_vienen_cargados(self):
+        from evaluaciones.models import SalarioMinimo
+
+        self.assertEqual(SalarioMinimo.objects.get(ano=2025).valor, 1_423_500)
+        self.assertEqual(SalarioMinimo.objects.get(ano=2026).valor, 1_750_905)
+
+    def test_solo_el_superadmin_lo_actualiza(self):
+        import pyotp
+
+        c = Cliente()
+        c.entrar("admin@entidad.gov.co")
+        self.assertEqual(c.http.put("/api/plataforma/salarios-minimos/2027", {"valor": 1900000}, content_type="application/json",
+                                    headers={"X-CSRFToken": c.csrf}).status_code, 403)
+        s = Cliente()
+        s.entrar("santiagopebe01@lemartek.com")
+        secreto = s.post("/api/auth/2fa/configurar").json()["secreto"]
+        s.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
+        r = s.http.put("/api/plataforma/salarios-minimos/2027", {"valor": 1900000, "norma": "Decreto de prueba"},
+                       content_type="application/json", headers={"X-CSRFToken": s.csrf})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(s.get("/api/plataforma/salarios-minimos").json()[0]["ano"], 2027)

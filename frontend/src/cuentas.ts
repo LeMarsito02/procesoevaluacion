@@ -144,3 +144,16 @@ export const revocarSoporte = (id: string) => enviarJson<void>(`/api/equipo/sopo
 export const personalDeSoporte = () => pedirJson<PersonaSoporte[]>('/api/plataforma/soporte')
 export const crearCuentaSoporte = (email: string, nombre_completo: string) =>
   enviarJson<{ soporte: PersonaSoporte; password_temporal: string }>('/api/plataforma/soporte', 'POST', { email, nombre_completo })
+
+// --- Salario mínimo por año (plataforma) ---
+export interface SalarioMinimo {
+  ano: number
+  valor: number
+  norma: string
+  actualizado_por: string | null
+  actualizado_en: string
+}
+
+export const listarSalariosMinimos = () => pedirJson<SalarioMinimo[]>('/api/plataforma/salarios-minimos')
+export const guardarSalarioMinimo = (ano: number, valor: number, norma: string) =>
+  enviarJson<SalarioMinimo>(`/api/plataforma/salarios-minimos/${ano}`, 'PUT', { valor, norma })

@@ -133,7 +133,8 @@ PARAMETROS: dict[str, Parametro] = {
         Parametro(
             "smmlv",
             "Salario mínimo mensual legal vigente",
-            "Del año del proceso. Los certificados de Cámara de Comercio suelen expresar el límite de cuantía del "
+            "Del año del proceso. Se toma solo de la tabla anual de la plataforma; la entidad solo lo fija si "
+            "necesita otro valor. Los certificados de Cámara de Comercio suelen expresar el límite de cuantía del "
             "representante legal en salarios mínimos; sin este valor, esos casos quedan para revisión humana.",
             0,
             "entero",
@@ -171,6 +172,8 @@ def _configuracion_entorno() -> dict[str, Any]:
         config["prefijo_codigo"] = prefijo
     if claves := _lista_env("PARAMETRO_BENEFICIARIO_CLAVES"):
         config["beneficiario_claves"] = claves
+    if (smmlv := _texto_env("PARAMETRO_SMMLV")).isdigit():
+        config["smmlv"] = int(smmlv)
     return config
 
 

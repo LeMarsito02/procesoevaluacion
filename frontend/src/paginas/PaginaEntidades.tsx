@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Icono from '../components/Icono'
+import SalariosMinimos from '../components/SalariosMinimos'
 import TarjetaCredenciales from '../components/TarjetaCredenciales'
 import { subirPlantilla } from '../configuracion'
 import {
@@ -112,6 +113,7 @@ export default function PaginaEntidades() {
         </div>
       )}
       <PersonalSoporte onAviso={setAviso} onError={setError} />
+      <SalariosMinimos onAviso={setAviso} />
 
       {creando && (
         <DialogoEntidad

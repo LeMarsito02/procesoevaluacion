@@ -274,6 +274,9 @@ class PersonaVerificada(models.Model):
     # Cédula (persona natural) o NIT (persona jurídica).
     documento = models.CharField(max_length=30)
     fecha_expedicion_documento = models.DateField(null=True, blank=True)
+    # La detectó el programa en la oferta (no la agregó el evaluador): se
+    # actualiza sola cuando se vuelve a evaluar.
+    detectada = models.BooleanField(default=False)
     creada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     creada_en = models.DateTimeField(auto_now_add=True)
 
@@ -370,3 +373,23 @@ class AnalisisPliego(models.Model):
 
     def __str__(self) -> str:
         return self.nombre_archivo
+
+
+class SalarioMinimo(models.Model):
+    """Salario mínimo mensual legal vigente de cada año (lo fija el Gobierno
+    cada diciembre). Es de la plataforma, no de una entidad: el superadmin lo
+    actualiza cada año y cada proceso usa el del año de su fecha de cierre."""
+
+    ano = models.PositiveIntegerField("año", primary_key=True)
+    valor = models.PositiveIntegerField()
+    norma = models.CharField(max_length=200, blank=True)
+    actualizado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-ano"]
+        verbose_name = "salario mínimo"
+        verbose_name_plural = "salarios mínimos"
+
+    def __str__(self) -> str:
+        return f"{self.ano}: ${self.valor:,}"

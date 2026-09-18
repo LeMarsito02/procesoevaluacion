@@ -66,6 +66,22 @@ class AnalisisResponse(BaseModel):
     pliego_error: str | None = None
 
 
+class PersonaAntecedente(BaseModel):
+    """Una persona (o empresa) a la que el requisito de antecedentes le exige
+    certificado, y qué pasó con el suyo."""
+
+    nombre: str
+    documento: str | None = None  # cédula o NIT
+    tipo: str = "natural"  # "natural" | "juridica"
+    # "representante_legal" | "suplente" | "integrante" | "proponente"
+    rol: str = "representante_legal"
+    # "cumple": el certificado está y no reporta novedades · "falta": no se
+    # encontró en la oferta · "con_novedad": está pero no confirma que esté
+    # libre de novedades.
+    estado: str
+    archivo: str | None = None
+
+
 class ResultadoRequisito(BaseModel):
     hoja: str
     numero_orden: int
@@ -104,6 +120,8 @@ class ResultadoRequisito(BaseModel):
         "coincide con otra persona, None si no se pudo verificar automáticamente (firma escaneada o certificado sin "
         "nombre real) y requiere revisión humana",
     )
+    # --- Antecedentes (Requisitos 5 y 14 a 17): el resultado de cada persona ---
+    personas_antecedente: list[PersonaAntecedente] = Field(default_factory=list)
     # --- Específicos del Requisito 2 (COPNIA: aval de ingeniero/arquitecto) ---
     matricula_profesional: str | None = Field(default=None, description="Número de matrícula profesional del COPNIA")
     profesion_certificada: str | None = Field(default=None, description="Profesión certificada en el COPNIA")

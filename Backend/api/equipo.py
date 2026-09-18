@@ -455,3 +455,51 @@ def crear_soporte(request: HttpRequest, datos: CrearSoporteIn):
         soporte=SoporteOut(id=usuario.id, nombre_completo=usuario.nombre_completo, email=usuario.email),
         password_temporal=clave,
     )
+
+
+# --- Salario mínimo por año (plataforma) ---
+class SalarioMinimoOut(Schema):
+    ano: int
+    valor: int
+    norma: str
+    actualizado_por: str | None
+    actualizado_en: datetime
+
+
+class SalarioMinimoIn(Schema):
+    valor: int
+    norma: str = ""
+
+
+def _salario_out(s) -> SalarioMinimoOut:
+    return SalarioMinimoOut(
+        ano=s.ano, valor=s.valor, norma=s.norma,
+        actualizado_por=s.actualizado_por.nombre_completo if s.actualizado_por else None, actualizado_en=s.actualizado_en,
+    )
+
+
+@plataforma.get("/salarios-minimos", response=list[SalarioMinimoOut])
+def listar_salarios_minimos(request: HttpRequest) -> list[SalarioMinimoOut]:
+    _solo_superadmin(request)
+    from evaluaciones.models import SalarioMinimo
+
+    return [_salario_out(s) for s in SalarioMinimo.objects.select_related("actualizado_por")]
+
+
+@plataforma.put("/salarios-minimos/{ano}", response=SalarioMinimoOut)
+def guardar_salario_minimo(request: HttpRequest, ano: int, datos: SalarioMinimoIn) -> SalarioMinimoOut:
+    """Cada diciembre el Gobierno fija el del año siguiente: se registra aquí y
+    lo usan los procesos que cierran ese año."""
+    _solo_superadmin(request)
+    from evaluaciones.models import SalarioMinimo
+
+    if not 2000 <= ano <= 2100:
+        raise HttpError(400, "Año no válido.")
+    if not 100_000 <= datos.valor <= 100_000_000:
+        raise HttpError(400, "Escriba el valor mensual en pesos, sin puntos (ej. 1750905).")
+    anterior = SalarioMinimo.objects.filter(ano=ano).values_list("valor", flat=True).first()
+    s, _ = SalarioMinimo.objects.update_or_create(
+        ano=ano, defaults={"valor": datos.valor, "norma": " ".join(datos.norma.split())[:200], "actualizado_por": request.auth}
+    )
+    auditar(request, "plataforma.salario_minimo", entidad_id=None, ano=ano, anterior=anterior, valor=datos.valor, norma=s.norma)
+    return _salario_out(s)

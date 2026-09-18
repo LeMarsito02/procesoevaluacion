@@ -12,7 +12,11 @@ export interface PersonaVerificada {
   documento: string
   fecha_expedicion_documento: string | null
   de_id: string | null
+  /** La detectó el programa en la oferta; si no, la agregó el evaluador. */
+  detectada: boolean
 }
+
+export type EstadoCertificado = 'cumple' | 'falta' | 'con_novedad' | 'no_requerido'
 
 export interface DocumentoAportado {
   id: string
@@ -32,6 +36,8 @@ export interface Antecedentes {
   personas: PersonaVerificada[]
   aportados: DocumentoAportado[]
   encontrados: Record<string, string | null>
+  /** Estado de cada certificado de cada persona: estados[persona_id][requisito]. */
+  estados: Record<string, Record<string, { estado: EstadoCertificado; archivo: string | null }>>
 }
 
 export interface ExpedienteInfo {

@@ -135,6 +135,50 @@ def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultado
                     "requiere_revision": requiere_revision(r),
                 },
             )
+        sincronizar_personas(evaluacion, proponente)
+
+
+def clave_persona(nombre: str, documento: str | None) -> str:
+    """Una misma persona se reconoce por su documento; sin él, por su nombre."""
+    digitos = "".join(c for c in (documento or "") if c.isdigit())
+    if len(digitos) >= 5:
+        return digitos[:9] if len(digitos) >= 9 else digitos
+    return " ".join(sorted(nombre.upper().split()))
+
+
+def sincronizar_personas(evaluacion: Evaluacion, proponente: Proponente) -> None:
+    """Las personas y empresas a las que el programa les exigió antecedentes
+    quedan en la tabla del proponente, para que el evaluador vea y complete el
+    certificado de cada una. Las que agregó el evaluador no se tocan; las
+    detectadas que ya no aplican se quitan si no tienen certificados aportados."""
+    from evaluaciones.models import PersonaVerificada, RolPersona, TipoPersona
+
+    # Todos los resultados guardados del proponente, no solo los recién
+    # evaluados: si se reevalúa un requisito, las personas de los demás siguen.
+    detectadas: dict[str, dict] = {}
+    for datos in Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente).values_list("datos", flat=True):
+        for per in datos.get("personas_antecedente") or []:
+            detectadas.setdefault(clave_persona(per["nombre"], per.get("documento")), per)
+    existentes = {
+        clave_persona(x.nombre, x.documento): x for x in PersonaVerificada.objects.filter(evaluacion=evaluacion, proponente=proponente)
+    }
+    roles = set(RolPersona.values)
+    for clave, per in detectadas.items():
+        if clave in existentes:
+            continue
+        PersonaVerificada.objects.create(
+            entidad_id=evaluacion.entidad_id,
+            evaluacion=evaluacion,
+            proponente=proponente,
+            rol=per["rol"] if per["rol"] in roles else RolPersona.REPRESENTANTE,
+            tipo=TipoPersona.JURIDICA if per["tipo"] == "juridica" else TipoPersona.NATURAL,
+            nombre=per["nombre"].upper()[:300],
+            documento=(per["documento"] or "")[:30],
+            detectada=True,
+        )
+    for clave, persona in existentes.items():
+        if persona.detectada and clave not in detectadas and not persona.documentos.exists():
+            persona.delete()
 
 
 # --- Fila ---
@@ -308,7 +352,18 @@ def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
         definicion = criterios.definicion_sistema(evaluacion.tipo)
     if evaluacion.tipo == "juridica" and evaluacion.proceso.ajustes_pliego:
         definicion = aplicar_ajustes(definicion, evaluacion.proceso.ajustes_pliego)
+    # El salario mínimo del año del cierre, salvo que la entidad fije otro.
+    if not definicion.parametros.get("smmlv"):
+        salario = salario_minimo(evaluacion.proceso.fecha_cierre.year)
+        if salario:
+            definicion = definicion.model_copy(update={"parametros": {**definicion.parametros, "smmlv": salario}})
     return definicion
+
+
+def salario_minimo(ano: int) -> int | None:
+    from evaluaciones.models import SalarioMinimo
+
+    return SalarioMinimo.objects.filter(ano=ano).values_list("valor", flat=True).first()
 
 
 def catalogo(definicion: criterios.DefinicionEvaluacion) -> list[dict]:

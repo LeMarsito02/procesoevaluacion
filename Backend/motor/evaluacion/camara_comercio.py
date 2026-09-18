@@ -559,7 +559,7 @@ def _evaluar_facultades_certificado(
                 f"'{nombre}' limita al representante legal a {expresado} (${monto:,.0f}), por debajo del valor del "
                 f"proceso (${valor_proceso:,.0f}) — revisa si hay autorización de la asamblea o junta"
             )
-        falta = " (la entidad no tiene configurado el salario mínimo)" if expresado == "salarios mínimos" else ""
+        falta = " (no está registrado el salario mínimo del año del proceso)" if expresado == "salarios mínimos" else ""
         return False, (
             f"'{nombre}' menciona un posible límite de cuantía para el representante legal{falta} "
             f"(\"...{fragmento}...\") — revisa si el proceso lo supera y si hay autorización"

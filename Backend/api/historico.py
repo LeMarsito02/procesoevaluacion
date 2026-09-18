@@ -43,6 +43,8 @@ class PersonaOut(Schema):
     documento: str
     fecha_expedicion_documento: date | None
     de_id: UUID | None
+    # La detectó el programa en la oferta (no la agregó el evaluador).
+    detectada: bool = False
 
 
 class PersonaIn(Schema):
@@ -74,6 +76,11 @@ class AntecedentesOut(Schema):
     aportados: list[AportadoOut]
     # Documento que la oferta trae para cada requisito (si el motor lo encontró).
     encontrados: dict[int, str | None]
+    # Estado de cada certificado de cada persona según el programa:
+    # {persona_id: {requisito: {"estado": "cumple" | "falta" | "con_novedad" |
+    # "no_requerido", "archivo": ...}}}. Sin entrada: el programa no la evaluó
+    # (la agregó el evaluador y no está entre las que exige la regla).
+    estados: dict[str, dict[int, dict]] = {}
 
 
 class ExpedienteOut(Schema):
@@ -97,7 +104,22 @@ def _persona_out(p: PersonaVerificada) -> PersonaOut:
         documento=p.documento,
         fecha_expedicion_documento=p.fecha_expedicion_documento,
         de_id=p.de_id,
+        detectada=p.detectada,
     )
+
+
+def _estados(personas: list[PersonaVerificada], requisitos: list[dict], datos: dict[int, dict]) -> dict[str, dict[int, dict]]:
+    salida: dict[str, dict[int, dict]] = {}
+    for req in requisitos:
+        lista = (datos.get(req["numero"]) or {}).get("personas_antecedente") or []
+        if not lista:
+            continue
+        por_clave = {servicios.clave_persona(x["nombre"], x.get("documento")): x for x in lista}
+        for persona in personas:
+            x = por_clave.get(servicios.clave_persona(persona.nombre, persona.documento))
+            estado = {"estado": x["estado"], "archivo": x.get("archivo")} if x else {"estado": "no_requerido", "archivo": None}
+            salida.setdefault(str(persona.id), {})[req["numero"]] = estado
+    return salida
 
 
 def _aportado_out(d: DocumentoAportado) -> AportadoOut:
@@ -124,16 +146,18 @@ def antecedentes(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID)
     catalogo = servicios.catalogo(servicios.definicion_de(evaluacion))
     requisitos = [c for c in catalogo if c["grupo"] == "antecedentes"]
     datos = {r.requisito: r.datos for r in Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente)}
+    personas = list(PersonaVerificada.objects.filter(evaluacion=evaluacion, proponente=proponente))
     return AntecedentesOut(
         tipo_proponente=next((d.get("tipo_proponente") for d in datos.values() if d.get("tipo_proponente")), None),
         representante_legal=next((d.get("representante_legal") for d in datos.values() if d.get("representante_legal")), None),
         requisitos=requisitos,
-        personas=[_persona_out(p) for p in PersonaVerificada.objects.filter(evaluacion=evaluacion, proponente=proponente)],
+        personas=[_persona_out(p) for p in personas],
         aportados=[
             _aportado_out(d)
             for d in DocumentoAportado.objects.filter(evaluacion=evaluacion, proponente=proponente).select_related("subido_por")
         ],
         encontrados={c["numero"]: (datos.get(c["numero"]) or {}).get("archivo_evaluado") for c in requisitos},
+        estados=_estados(personas, requisitos, datos),
     )
 
 

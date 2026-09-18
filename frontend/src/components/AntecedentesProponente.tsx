@@ -76,17 +76,21 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   const hijos = (id: string) => datos.personas.filter((p) => p.de_id === id)
   const ordenadas = raiz.flatMap((p) => [p, ...hijos(p.id)])
   const aportado = (persona: string | null, req: number) => datos.aportados.filter((d) => d.persona_id === persona && d.requisito === req)
-  const sinCertificado = ordenadas.reduce(
-    (n, per) => n + datos.requisitos.filter((r) => aportado(per.id, r.numero).length === 0 && !datos.encontrados[r.numero]).length,
-    0,
-  )
+  const estado = (persona: string, req: number) => datos.estados[persona]?.[String(req)]
+  const pendiente = (per: PersonaVerificada, req: number) => {
+    if (aportado(per.id, req).length) return false
+    const e = estado(per.id, req)?.estado
+    return e ? e === 'falta' || e === 'con_novedad' : !datos.encontrados[req]
+  }
+  const sinCertificado = ordenadas.reduce((n, per) => n + datos.requisitos.filter((r) => pendiente(per, r.numero)).length, 0)
 
   return (
     <section className="antecedentes">
       <div className="grupo-titulo">Personas verificadas y antecedentes</div>
       <p className="small muted">
-        {AYUDA_TIPO[datos.tipo_proponente ?? ''] ?? 'Registre las personas cuyos antecedentes se verifican.'} Si la oferta no trae un
-        certificado, consúltelo en la fuente oficial y súbalo: queda en el expediente y en el reporte.
+        Las personas y empresas a las que la regla les exige antecedentes aparecen solas, con el estado de cada certificado.{' '}
+        {AYUDA_TIPO[datos.tipo_proponente ?? ''] ?? ''} Si falta uno, consúltelo en la fuente oficial y súbalo: queda en el
+        expediente y en el reporte.
       </p>
       {error && <p className="small" style={{ color: 'var(--bad)' }}>{error}</p>}
 
@@ -108,8 +112,10 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                 <tr key={per.id}>
                   <td style={{ paddingLeft: per.de_id ? 26 : undefined }}>
                     <strong className="small">{per.nombre}</strong>
+                    {per.detectada && <span className="tag" style={{ marginLeft: 6 }}>de la oferta</span>}
                     <div className="small muted">
-                      {per.rol_nombre} · {per.tipo === 'juridica' ? 'NIT' : 'C.C.'} {per.documento}
+                      {per.rol_nombre}
+                      {per.documento ? ` · ${per.tipo === 'juridica' ? 'NIT' : 'C.C.'} ${per.documento}` : ' · documento no leído'}
                       {per.fecha_expedicion_documento && ` · exp. ${fecha(per.fecha_expedicion_documento)}`}
                     </div>
                     {!soloLectura && (
@@ -135,9 +141,11 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                             + representante
                           </button>
                         )}
-                        <button type="button" className="enlace" style={{ color: 'var(--ink-3)' }} onClick={() => accion(() => quitarPersona(evaluacionId, per.id))}>
-                          quitar
-                        </button>
+                        {!per.detectada && (
+                          <button type="button" className="enlace" style={{ color: 'var(--ink-3)' }} onClick={() => accion(() => quitarPersona(evaluacionId, per.id))}>
+                            quitar
+                          </button>
+                        )}
                       </div>
                     )}
                   </td>
@@ -166,7 +174,28 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                             )}
                           </div>
                         ))}
+                        {docs.length === 0 && estado(per.id, r.numero)?.estado === 'cumple' && (
+                          <span className="pill" data-estado="cumple" title={estado(per.id, r.numero)?.archivo ?? ''}>
+                            <span className="dot" /> En la oferta
+                          </span>
+                        )}
+                        {docs.length === 0 && estado(per.id, r.numero)?.estado === 'no_requerido' && (
+                          <span className="small muted" title="La regla no le exige este certificado a esta persona">
+                            No se exige
+                          </span>
+                        )}
+                        {docs.length === 0 && estado(per.id, r.numero)?.estado === 'con_novedad' && (
+                          <span className="pill" data-estado="error" title={estado(per.id, r.numero)?.archivo ?? ''}>
+                            <span className="dot" /> Con novedad
+                          </span>
+                        )}
+                        {docs.length === 0 && estado(per.id, r.numero)?.estado === 'falta' && (
+                          <span className="pill" data-estado="revisar">
+                            <span className="dot" /> Falta
+                          </span>
+                        )}
                         {docs.length === 0 &&
+                          !['cumple', 'no_requerido'].includes(estado(per.id, r.numero)?.estado ?? '') &&
                           (soloLectura ? (
                             <span className="small muted">—</span>
                           ) : (
