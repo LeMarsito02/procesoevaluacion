@@ -131,6 +131,19 @@ PARAMETROS: dict[str, Parametro] = {
             ("juridica.existencia", "juridica.rup"),
         ),
         Parametro(
+            "seguridad_social_certificado",
+            "Aceptar certificación propia de pagos de seguridad social",
+            "1 si el pliego dice que basta el certificado suscrito por el revisor fiscal o el representante legal: "
+            "entonces una certificación propia (art. 50 de la Ley 789 de 2002) vale como el formato del pliego. "
+            "0: solo el formato; la certificación propia queda para revisión.",
+            0,
+            "entero",
+            0,
+            1,
+            "",
+            ("juridica.seguridad_social",),
+        ),
+        Parametro(
             "smmlv",
             "Salario mínimo mensual legal vigente",
             "Del año del proceso. Se toma solo de la tabla anual de la plataforma; la entidad solo lo fija si "

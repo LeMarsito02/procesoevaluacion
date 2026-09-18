@@ -26,7 +26,7 @@ from motor.pliego.lectura import Pagina, Seccion, codigo_documento_tipo, norm, s
 
 # Sube cuando cambian los detectores: los análisis guardados con otra versión
 # se rehacen.
-VERSION_ANALISIS = 2
+VERSION_ANALISIS = 3
 
 Ambito = Literal["juridica", "tecnica", "financiera", "puntaje", "garantias", "general"]
 
@@ -232,6 +232,8 @@ _FIJOS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     ("apoderado", "Oferta presentada por apoderado",
      re.compile(r"(?:DEBEN|DEBERAN)\s+ANEXAR\s+EL\s+PODER")),
     ("redam", "Certificado del REDAM", re.compile(r"REDAM")),
+    ("certificado_seguridad_social", "Certificado de pagos de seguridad social",
+     re.compile(r"BASTARA\s+(?:CON\s+)?EL\s+CERTIFICADO\s+SUSCRITO\s+POR\s+EL\s+REVISOR\s+FISCAL")),
 )
 
 _MIPYME_NO_RE = re.compile(r"NO\s+(?:ES\s+SUSCEPTIBLE|SE\s+LIMITA|SERA\s+LIMITAD)")
@@ -403,6 +405,21 @@ def comparar(extraccion: Extraccion, definicion: criterios.DefinicionEvaluacion)
             exi.titulo = "Vigencia del certificado de existencia y del RUP"
             exi.detalle += " Aplica igual al RUP (" + f"pág. {rup.pagina})."
             hallazgos.remove(rup)
+
+    # Seguridad social: si el pliego dice que basta el certificado firmado por
+    # el revisor fiscal o el representante legal, una certificación propia
+    # vale como el formato.
+    for e in por_clave.get("certificado_seguridad_social", [])[:1]:
+        if not parametros.get("seguridad_social_certificado"):
+            hallazgos.append(Hallazgo(
+                id="certificado_seguridad_social", tipo="ajuste_parametro", titulo=e.titulo,
+                detalle=("El pliego acepta el certificado suscrito por el revisor fiscal o el representante legal, no solo "
+                         "su formato: una certificación propia de pagos (art. 50 de la Ley 789 de 2002) cumple si la "
+                         "firma quien corresponde. La evaluación de la entidad solo acepta el formato."),
+                seccion=e.seccion, pagina=e.pagina, cita=e.cita, verificacion="juridica.seguridad_social",
+                parametro="seguridad_social_certificado", valor_plantilla="Solo el formato del pliego", valor_pliego=1,
+                valor_pliego_texto="También la certificación firmada", requiere_decision=True,
+            ))
 
     # 2. Exigencias que la plantilla no evalúa.
     nuevos = {

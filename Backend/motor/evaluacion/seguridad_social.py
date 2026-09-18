@@ -17,6 +17,7 @@ from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.evaluacion.proponente_plural import datos_formato2, encontrar_formato2
 from motor.llm.cliente import solo_digitos
+from motor import criterios
 from motor.evaluacion.antecedentes import FORMULARIO_SECOP_RE
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.procesamiento.pdf_utils import abrir_pdf, extraer_texto, texto_pagina
@@ -55,10 +56,20 @@ def encontrar_formato5(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
             texto = extraer_texto(contenido, max_paginas=PAGINAS_A_REVISAR)
         except Exception:  # noqa: BLE001
             continue
-        texto_norm = _norm(texto)
-        if TITULO_FORMATO5_RE.search(texto_norm) and not FORMULARIO_SECOP_RE.search(texto_norm):
+        if _es_certificado(_norm(texto)):
             return nombre, texto
     return None
+
+
+def _es_certificado(texto_norm: str) -> bool:
+    """El formato del pliego o, si el pliego lo permite ("bastará el
+    certificado suscrito por el revisor fiscal o el representante legal"),
+    una certificación propia con el mismo contenido."""
+    if FORMULARIO_SECOP_RE.search(texto_norm):
+        return False
+    if TITULO_FORMATO5_RE.search(texto_norm):
+        return True
+    return bool(criterios.valor("seguridad_social_certificado")) and bool(CERTIFICACION_PROPIA_RE.search(texto_norm))
 
 
 # Hay proponentes que no usan el formato del pliego sino una certificación
@@ -132,10 +143,9 @@ def certificados_formato5(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
                 for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_FORMATO5]):
                     texto = texto_pagina(page)
                     page.flush_cache()
-                    texto_norm = _norm(texto)
                     # El formulario de preguntas del SECOP cita el nombre del
                     # formato en el enunciado; no es el formato.
-                    if TITULO_FORMATO5_RE.search(texto_norm) and not FORMULARIO_SECOP_RE.search(texto_norm):
+                    if _es_certificado(_norm(texto)):
                         if actual is not None:
                             certificados.append((nombre, "\n".join(actual)))
                         actual = [texto]

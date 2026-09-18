@@ -1703,3 +1703,34 @@ class DocumentoBaseObjetoUnicoTests(TestCase):
         self.assertEqual((lote.numero, lote.plazo_meses, lote.valor_presupuesto), ("ÚNICO", 12, 5_458_954_545.0))
         self.assertEqual(lote.objeto, "CONSTRUCCIÓN DE LA INSTITUCIÓN EDUCATIVA DEL MUNICIPIO")
         self.assertEqual(lote.lugar_ejecucion, "Municipio de Ejemplo")
+
+
+class CertificadoSeguridadSocialTests(TestCase):
+    """Si el pliego dice que "bastará el certificado suscrito por el revisor
+    fiscal o el representante legal", una certificación propia vale como el formato."""
+
+    PROPIA = "CERTIFICACION DE PAGOS DE SEGURIDAD SOCIAL Y APORTES PARAFISCALES - ARTICULO 50 DE LA LEY 789 DE 2002"
+
+    def test_solo_con_el_ajuste_del_pliego(self):
+        from motor import criterios
+        from motor.evaluacion.seguridad_social import _es_certificado
+
+        self.assertTrue(_es_certificado("FORMATO 6 – PAGOS DE SEGURIDAD SOCIAL Y APORTES LEGALES"))
+        self.assertFalse(_es_certificado(self.PROPIA))
+        with criterios.usar({"seguridad_social_certificado": 1}):
+            self.assertTrue(_es_certificado(self.PROPIA))
+            # El formulario del SECOP nunca cuenta.
+            self.assertFalse(_es_certificado(self.PROPIA + " ESTA PREGUNTA REQUIERE ANEXAR DOCUMENTOS"))
+
+    def test_el_pliego_lo_propone(self):
+        from motor import criterios
+        from motor.pliego.analisis import comparar, extraer
+
+        paginas = list(PLIEGO_DE_PRUEBA)
+        paginas[3] = _pagina(4, "3.4 CERTIFICACIÓN DE PAGOS AL SISTEMA DE SEGURIDAD SOCIAL",
+                             "La Entidad no exigirá las planillas de pago. Bastará el certificado suscrito por el revisor fiscal, "
+                             "en los casos requeridos por la ley, o por el representante legal que así lo acredite.")
+        h = {x.id: x for x in comparar(extraer(paginas), criterios.definicion_sistema("juridica"))}
+        self.assertEqual((h["certificado_seguridad_social"].parametro, h["certificado_seguridad_social"].valor_pliego),
+                         ("seguridad_social_certificado", 1))
+        self.assertTrue(h["certificado_seguridad_social"].requiere_decision)
