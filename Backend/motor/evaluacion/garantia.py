@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from itertools import product
 
 from motor import criterios
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
@@ -9,7 +10,7 @@ from motor.evaluacion.formato1 import _clave_cache, _guardar_cache, _leer_cache,
 from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.llm.cliente import aparece_en_texto, consultar_json
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
-from motor.procesamiento.pdf_utils import extraer_texto
+from motor.procesamiento.pdf_utils import extraer_texto, texto_ocr_reforzado
 from motor.procesamiento.zip_utils import extraer_pdfs
 
 PAGINAS_A_REVISAR = 2
@@ -34,12 +35,19 @@ PISTAS_POLIZA = ("poliza", "garantia", "seriedad")
 # AFAVORDEENTIDADESESTATALES") y escaneadas donde el OCR pierde la tilde
 # ("P LIZA DE SEGURO DE CUMPLIMIENTO"). Zurich no trae "VIGENCIA HASTA" sino
 # otros nombres de campo, así que la guarda acepta vigencia + valor asegurado.
+# Más variantes del proceso ICCU-LP-027-2026: Solidaria parte el título en
+# columnas ("POLIZA DE SEGURO DE POLIZA / ENDOSO <tomador> CUMPLIMIENTO EN
+# FAVOR DE ENTIDADES ESTATALES"), Chubb ("GARANTIA UNICA DE CUMPLIMIENTO EN
+# FAVOR DE ENTIDADES ESTATALES") y "GARANTIA UNICA DE SEGUROS DE CUMPLIMIENTO".
 TITULO_POLIZA_RE = re.compile(
     r"P\s?O?\s?LIZA\s*DE\s*(?:SEGURO\s*DE\s*|GARANTIA\s*UNICA\s*DE\s*)?CUMPLIMIENTO"
     r"|NUMERO\s+(?:DE\s+)?POLIZA:?\s*\S+\s+SEGURO\s+DE\s+CUMPLIMIENTO"
+    r"|GARANTIA\s*UNICA\s*DE\s*(?:SEGUROS?\s*DE\s*)?CUMPLIMIENTO"
+    r"|CUMPLIMIENTO\s*(?:EN|A)\s*FAVOR\s*DE\s*(?:LAS\s*)?ENTIDADES\s*ESTATALES"
 )
 CAMPO_VIGENCIA_RE = re.compile(
     r"VIGENC\S{0,3}\s*\S{0,3}\s*HASTA"
+    r"|VIGENCIA\s*DE\s*TERMINACION"
     r"|VIGENCIA.{0,400}?(?:VALOR|SUMA)\s*ASEGURAD"
     r"|(?:VALOR|SUMA)\s*ASEGURAD.{0,800}?VIGENCIA",
     re.DOTALL,
@@ -69,19 +77,17 @@ def _beneficiario_re() -> re.Pattern[str] | None:
     """Beneficiario según la entidad (parámetro "beneficiario_claves"). Sin
     claves configuradas no se puede confirmar: el requisito va a revisión."""
     claves = [re.escape(_norm(c)) for c in criterios.valor("beneficiario_claves") if c.strip()]
-    return re.compile(r"BENEFICIARIO.{0,150}(?:" + "|".join(claves) + ")") if claves else None
+    if not claves:
+        return None
+    # En una póliza a favor de entidades estatales el asegurado y el
+    # beneficiario son la entidad; hay aseguradoras que solo rotulan
+    # "ASEGURADO" (o cuyo OCR pierde la etiqueta BENEFICIARIO). A "ASEGURADO"
+    # se le exige el nombre casi pegado, para no tomar frases del clausulado
+    # ("el tomador y/o asegurado según corresponda…").
+    return re.compile(r"(?:BENEFICIARIO.{0,150}?|ASEGURAD[OA]\W{0,4}(?:N\b)?.{0,40}?)(?:" + "|".join(claves) + ")")
 
-# Fila del amparo específico de seriedad de la oferta, con sus propias fechas
-# de vigencia y la suma asegurada. Formatos confirmados:
-#   Mundial:            "SERIEDAD DE LA OFERTA 00:00 HORAS DEL 29/07/2026 24:00 HORAS DEL 10/11/2026 129.970.022,40"
-#   Seguros del Estado: "SERIEDAD DE LA OFERTA 29/07/2026 13/11/2026 $129,970,022.40"
-#   Confianza:          "SERIEDAD DE LA OFERTA 29/07/2026 10/11/2026 129,971,000.00"
 # El separador decimal cambia según la aseguradora (ver _parsear_valor_pesos).
 VALOR_PESOS_RE = r"\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?"
-AMPARO_SERIEDAD_RE = re.compile(
-    r"SERIEDAD DE LA OFERTA\s+(?:00:00\s*HORAS\s*DEL\s*)?(\d{2}/\d{2}/\d{4})\s+"
-    rf"(?:24:00\s*HORAS\s*DEL\s*)?(\d{{2}}/\d{{2}}/\d{{4}})\s+\$?\s*({VALOR_PESOS_RE})"
-)
 
 # Seguros del Estado a veces no deja la fila del amparo como texto (queda en
 # una capa no extraíble) pero sí la carátula: "TIPO MOVIMIENTO 24 07 2026
@@ -99,46 +105,176 @@ VALOR_CARATULA_RE = re.compile(
 )
 
 
-def _parsear_fecha_ddmmyyyy(texto: str) -> date | None:
-    match = re.match(r"(\d{2})/(\d{2})/(\d{4})", texto)
-    if not match:
-        return None
-    dia, mes, anio = match.groups()
-    try:
-        return date(int(anio), int(mes), int(dia))
-    except ValueError:
-        return None
-
-
 def _parsear_valor_pesos(texto: str) -> float | None:
     """Distintas aseguradoras usan distinto separador decimal en los mismos
     documentos (formato colombiano '1.234.567,89' vs. formato con coma de
     miles '1,234,567.89') — se asume que el separador decimal es el que
     aparece más a la derecha."""
-    texto = texto.strip()
-    if texto.rfind(",") > texto.rfind("."):
-        limpio = texto.replace(".", "").replace(",", ".")
-    else:
-        limpio = texto.replace(",", "")
-    try:
-        return float(limpio)
-    except ValueError:
+    # Solo cuenta como decimal un separador final seguido de 1 o 2 cifras;
+    # los demás separadores son de miles. Así también se leen valores con
+    # los separadores mezclados o duplicados por el OCR ("545.,895.454,50").
+    limpio = re.sub(r"[^\d.,]", "", texto)
+    decimal = re.fullmatch(r"(.*\d)[.,](\d{1,2})", limpio)
+    entero, centavos = (decimal.group(1), decimal.group(2)) if decimal else (limpio, "0")
+    entero = re.sub(r"\D", "", entero)
+    if not entero:
         return None
+    return float(f"{entero}.{centavos}")
+
+
+# --- Fila del amparo de seriedad, sea cual sea la aseguradora ---------------
+# "SERIEDAD DE LA OFERTA" seguido, en la misma fila, de las fechas de
+# vigencia (desde, hasta) y de la suma asegurada. Formatos reales:
+#   Solidaria: "SERIEDAD DE LA OFERTA ---- COP 545.895.454,50 VIGENCIA DE LA COBERTURA : DESDE LAS 0 HS DEL 24/07/2026, HASTA LAS 0 HS DEL 24/11/2026"
+#   Chubb (OCR): "SERTEDAD OFERTA CO 2026/07/24 2026/11/24 545,895,454.50"
+#   Otra:      "SERIEDAD DE LA OFERTA 24-07-2026 11-11-2026 545,895,455.00"
+#   Mundial (OCR reforzado): "SERIEDAD DE LA OFERTA 00:00 Horas Del 24/07/2026 24:00 Horas Del 24/11/2026 545.895.454,50"
+#   Mundial (digital): "SERIEDAD DE LA OFERTA 00:00 HORAS DEL 29/07/2026 24:00 HORAS DEL 10/11/2026 129.970.022,40"
+#   Seguros del Estado: "SERIEDAD DE LA OFERTA 29/07/2026 13/11/2026 $129,970,022.40"
+#   Confianza: "SERIEDAD DE LA OFERTA 29/07/2026 10/11/2026 129,971,000.00"
+# Los días, meses y años pueden traer errores del OCR (ver _fechas_posibles).
+SERIEDAD_FILA_RE = re.compile(r"SER[IT1L]EDAD\s*(?:DE\s*(?:LA\s*)?)?OFERTA")
+FECHA_FILA_RE = re.compile(
+    r"(?<!\d)(\d{4})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})(?!\d)"  # aaaa/mm/dd
+    r"|(?<![\d:])(\d{1,3})\s*[/;-]\s*(\d{1,3})\s*[/;-]\s*(\d{4,5})(?!\d)"  # dd/mm/aaaa (";": OCR)
+)
+VALOR_FILA_RE = re.compile(r"(?<![\d.,])\d{1,3}(?:[.,]{1,2}\s?\d{3}){2,}(?:[.,]\d{1,2})?(?![\d])")
+VENTANA_FILA = 260
+
+
+# Cifra leída por el OCR → cifras que pudo ser en realidad.
+_CONFUSIONES_OCR = {"8": "0", "6": "0", "7": "2"}
+
+
+def _fechas_posibles(dia: str, mes: str, anio: str, anio_cierre: int) -> set[date]:
+    """Fechas que puede ser "dia/mes/anio" leído de la póliza. Si se lee tal
+    cual y el año es razonable, es esa. Si no, es un error de OCR (la fuente
+    monoespaciada de algunas pólizas hace leer 0 como 8 o 6 y 2 como 7:
+    "24/11/2826", "31/18/2826", "24/11/28726", "24/11/7076") y se devuelven
+    TODAS las lecturas posibles deshaciendo esas confusiones o quitando una
+    cifra de más; quien las usa solo da por buena la vigencia si todas la
+    cumplen."""
+    def valida(d: str, m: str, a: str) -> date | None:
+        try:
+            fecha = date(int(a), int(m), int(d))
+        except ValueError:
+            return None
+        return fecha if anio_cierre <= fecha.year <= anio_cierre + 2 else None
+
+    directa = valida(dia, mes, anio)
+    if directa is not None:
+        return {directa}
+
+    def variantes(texto: str, largo: int) -> set[str]:
+        if len(texto) <= largo:
+            recortes = {texto}
+        elif len(texto) == largo + 1:  # una cifra de más ("28726")
+            recortes = {texto[:i] + texto[i + 1 :] for i in range(len(texto))}
+        else:
+            return set()
+        salida: set[str] = set()
+        for r in recortes:
+            salida.update("".join(p) for p in product(*[(c, *_CONFUSIONES_OCR.get(c, "")) for c in r]))
+        return salida
+
+    return {
+        f
+        for d in variantes(dia, 2)
+        for m in variantes(mes, 2)
+        for a in variantes(anio, 4)
+        if (f := valida(d, m, a)) is not None
+    }
+
+
+class LecturaAmparo:
+    """Vigencia final (todas las fechas posibles si el OCR la dejó ambigua) y
+    suma asegurada leídas de la póliza."""
+
+    def __init__(self, hasta: set[date], valor: float | None) -> None:
+        self.hasta = hasta
+        self.valor = valor
+
+
+# La fila termina donde empiezan otros campos con fecha propia ("FECHA
+# ADJUDICACION : 13/08/2026", fecha de pago): se vio con pólizas reales en
+# las que el OCR dañó una fecha de la fila y la de adjudicación ocupaba su
+# lugar.
+FIN_FILA_RE = re.compile(r"FECHA|ADJUDICACION|PAGO")
+
+
+def _fechas_de_fila(ventana: str, anio_cierre: int) -> list[set[date]]:
+    """Las fechas de la fila EN SU POSICIÓN (desde, hasta): una que no se
+    pueda leer queda como conjunto vacío, no se salta."""
+    fechas = []
+    for m in FECHA_FILA_RE.finditer(ventana):
+        if m.group(1):
+            fechas.append(_fechas_posibles(m.group(3), m.group(2), m.group(1), anio_cierre))
+        else:
+            fechas.append(_fechas_posibles(m.group(4), m.group(5), m.group(6), anio_cierre))
+    return fechas
+
+
+def _leer_fila_seriedad(texto_norm: str, anio_cierre: int, valor_exigido: float) -> LecturaAmparo | None:
+    """La fila del amparo de seriedad con dos fechas (desde, hasta) y una
+    suma asegurada razonable (entre 1/100 y 20 veces el valor exigido: así
+    no se toma la prima ni el presupuesto). Si la fila aparece varias veces
+    (dos lecturas de OCR), se toma la lectura más exigente: todas las fechas
+    posibles y el valor más bajo."""
+    lecturas = []
+    for m in SERIEDAD_FILA_RE.finditer(texto_norm):
+        ventana = texto_norm[m.end() : m.end() + VENTANA_FILA]
+        fin = FIN_FILA_RE.search(ventana)
+        if fin is not None:
+            ventana = ventana[: fin.start()]
+        fechas = _fechas_de_fila(ventana, anio_cierre)
+        valores = [
+            v
+            for v in (_parsear_valor_pesos(x.group(0)) for x in VALOR_FILA_RE.finditer(ventana))
+            if v is not None and valor_exigido / 100 <= v <= valor_exigido * 20
+        ]
+        if len(fechas) >= 2 and fechas[1] and valores:
+            lecturas.append(LecturaAmparo(fechas[1], max(valores)))
+    if not lecturas:
+        return None
+    return LecturaAmparo(set().union(*(l.hasta for l in lecturas)), min(l.valor for l in lecturas))
+
+
+def _con_pista(nombre: str) -> bool:
+    base = _norm(nombre.rsplit("/", 1)[-1])
+    return any(p.upper() in base for p in PISTAS_POLIZA)
 
 
 def _orden_busqueda(nombres: list[str]) -> list[str]:
-    def pista(nombre: str) -> int:
-        base = _norm(nombre.rsplit("/", 1)[-1])
-        return 0 if any(p.upper() in base for p in PISTAS_POLIZA) else 1
+    return sorted(nombres, key=lambda nombre: 0 if _con_pista(nombre) else 1)
 
-    return sorted(nombres, key=pista)
+
+def _tiene_fila_seriedad(texto_norm: str) -> bool:
+    """Hay una fila del amparo de seriedad con sus dos fechas (sin validar
+    aún los valores: eso lo hace _leer_fila_seriedad)."""
+    return any(
+        len(FECHA_FILA_RE.findall(texto_norm[m.end() : m.end() + VENTANA_FILA])) >= 2
+        for m in SERIEDAD_FILA_RE.finditer(texto_norm)
+    )
+
+
+def _es_poliza(texto_norm: str) -> bool:
+    return bool(TITULO_POLIZA_RE.search(texto_norm)) and (
+        bool(CAMPO_VIGENCIA_RE.search(texto_norm)) or _tiene_fila_seriedad(texto_norm)
+    )
 
 
 @memo_por_pdfs
 def encontrar_poliza(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
     """Busca la póliza de garantía de seriedad de la oferta por su título
     interno, sin importar el nombre del archivo. Devuelve (nombre_archivo,
-    texto) o None."""
+    texto) o None.
+
+    Si la póliza es escaneada, a su texto se le suma el del OCR reforzado
+    (el normal pierde las tablas de varias aseguradoras). Entre varios
+    documentos con título de póliza (la carátula y el clausulado, por
+    ejemplo) se prefiere el que trae la fila del amparo de seriedad."""
+    mejor, puntaje_mejor = None, (-1, -1, -1)
+    patron_beneficiario = _beneficiario_re()
     for nombre in _orden_busqueda(list(pdfs.keys())):
         contenido = pdfs[nombre]
         try:
@@ -146,9 +282,31 @@ def encontrar_poliza(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
         except Exception:  # noqa: BLE001
             continue
         texto_norm = _norm(texto)
-        if TITULO_POLIZA_RE.search(texto_norm) and CAMPO_VIGENCIA_RE.search(texto_norm):
+        es_poliza = _es_poliza(texto_norm)
+        if not es_poliza and not (_con_pista(nombre) or SERIEDAD_FILA_RE.search(texto_norm)):
+            continue
+        try:
+            reforzado = texto_ocr_reforzado(contenido, max_paginas=PAGINAS_A_REVISAR)
+        except Exception:  # noqa: BLE001
+            reforzado = ""
+        if reforzado:
+            texto = f"{texto}\n{reforzado}"
+            texto_norm = _norm(texto)
+            es_poliza = es_poliza or _es_poliza(texto_norm)
+        if not es_poliza:
+            continue
+        # La carátula trae la fila del amparo (o sus campos) y a la entidad
+        # como beneficiaria; el clausulado, ninguno de los dos.
+        puntaje = (
+            int(_tiene_fila_seriedad(texto_norm)),
+            int(bool(patron_beneficiario and patron_beneficiario.search(texto_norm))),
+            int(bool(VIGENCIA_CARATULA_RE.search(texto_norm) or VALOR_CARATULA_RE.search(texto_norm))),
+        )
+        if puntaje[:2] == (1, 1):
             return nombre, texto
-    return None
+        if puntaje > puntaje_mejor:
+            mejor, puntaje_mejor = (nombre, texto), puntaje
+    return mejor
 
 
 VALOR_MAXIMO_RAZONABLE_IA = 3
@@ -189,18 +347,57 @@ def _extraer_poliza_con_ia(texto: str) -> dict[str, str]:
     return verificados
 
 
-def _leer_vigencia_y_valor(texto_norm: str) -> tuple[str | None, str | None]:
-    """Devuelve (vigencia_hasta 'dd/mm/aaaa', valor asegurado) leídos de la
-    fila del amparo de seriedad o, si no está, de la carátula de la póliza."""
-    amparo = AMPARO_SERIEDAD_RE.search(texto_norm)
-    if amparo is not None:
-        return amparo.group(2), amparo.group(3)
+def _leer_caratula(texto_norm: str, anio_cierre: int, valor_exigido: float) -> LecturaAmparo | None:
+    """Vigencia y valor total de la carátula (Seguros del Estado), para
+    cuando no se encontró la fila del amparo."""
     vigencia = VIGENCIA_CARATULA_RE.search(texto_norm)
     valor = VALOR_CARATULA_RE.search(texto_norm)
     if vigencia is None or valor is None:
-        return None, None
+        return None
     dia, mes, anio = vigencia.groups()[6:9]
-    return f"{dia}/{mes}/{anio}", valor.group(1)
+    leido = _parsear_valor_pesos(valor.group(1))
+    if leido is None or not (valor_exigido / 100 <= leido <= valor_exigido * 20):
+        # Un valor absurdo (ej. "$522" en una póliza leída con OCR) es otro
+        # campo o un error de lectura: se trata como no leído.
+        return None
+    return LecturaAmparo(_fechas_posibles(dia, mes, anio, anio_cierre), leido)
+
+
+# Encabezado de la carátula de Mundial, que repite la vigencia de la póliza:
+# "VIGENCIA DESDE VIGENCIA HASTA ... 00:00 HORAS DEL | 24/07/2026 |24:00
+# HORAS DEL | 01/12/2026", con el valor en "TOTAL ASEGURADO $ 545.895.454,50".
+# Una póliza de seriedad solo tiene ese amparo, así que es su vigencia.
+VIGENCIA_HORAS_RE = re.compile(
+    r"VIGENCIA\s*DESDE\s*VIGENCIA\s*HASTA.{0,200}?HORAS\s*DEL\W{0,4}(\S{1,3}[/;-]\S{1,3}[/;-]\d{4,5})"
+    r".{0,30}?HORAS\s*DEL\W{0,4}(\S{1,3}[/;-]\S{1,3}[/;-]\d{4,5})"
+)
+TOTAL_ASEGURADO_RE = re.compile(r"TOTAL\s*ASEGURADO\W{0,4}(" + VALOR_FILA_RE.pattern + ")")
+
+
+def _leer_encabezado_horas(texto_norm: str, anio_cierre: int, valor_exigido: float) -> LecturaAmparo | None:
+    hasta: set[date] = set()
+    for m in VIGENCIA_HORAS_RE.finditer(texto_norm):
+        fechas = _fechas_de_fila(m.group(2), anio_cierre)
+        if fechas and fechas[0]:  # una lectura ilegible (otra pasada de OCR) no cuenta
+            hasta |= fechas[0]
+    valores = [
+        v
+        for v in (_parsear_valor_pesos(m.group(1)) for m in TOTAL_ASEGURADO_RE.finditer(texto_norm))
+        if v is not None and valor_exigido / 100 <= v <= valor_exigido * 20
+    ]
+    if not hasta or not valores:
+        return None
+    return LecturaAmparo(hasta, min(valores))
+
+
+def leer_vigencia_y_valor(texto_norm: str, anio_cierre: int, valor_exigido: float) -> LecturaAmparo | None:
+    """La vigencia final y la suma asegurada del amparo de seriedad: de su
+    fila en la póliza o, si no está, de la carátula."""
+    return (
+        _leer_fila_seriedad(texto_norm, anio_cierre, valor_exigido)
+        or _leer_caratula(texto_norm, anio_cierre, valor_exigido)
+        or _leer_encabezado_horas(texto_norm, anio_cierre, valor_exigido)
+    )
 
 
 class ResultadoEvaluacionGarantia:
@@ -275,28 +472,22 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
     lotes_texto = ", ".join(f"Lote {n}" for n in sorted(lotes, key=int))
 
     motivos = []
+    anio_cierre = garantia.fecha_cierre.year
 
     patron_beneficiario = _beneficiario_re()
     beneficiario_ok = bool(patron_beneficiario.search(texto_norm)) if patron_beneficiario else False
-    fecha_hasta_texto, valor_texto = _leer_vigencia_y_valor(texto_norm)
-    if valor_texto is not None:
-        valor_leido = _parsear_valor_pesos(valor_texto)
-        if valor_leido is None or not (
-            valor_exigido / 100 <= valor_leido <= valor_exigido * 20
-        ):
-            # Un valor absurdo (ej. "$522" en una póliza leída con OCR) es otro
-            # campo o un error de lectura: se trata como no leído.
-            fecha_hasta_texto, valor_texto = None, None
+    lectura = leer_vigencia_y_valor(texto_norm, anio_cierre, valor_exigido)
     datos_con_ia = False
-    if not beneficiario_ok or fecha_hasta_texto is None or valor_texto is None:
+    if not beneficiario_ok or lectura is None:
         # Formato no reconocido por las reglas (otra aseguradora, póliza
         # escaneada): el modelo local extrae los datos que falten, y cada uno
         # se acepta solo si aparece en el documento.
         extraidos = _extraer_poliza_con_ia(texto)
         if not beneficiario_ok and extraidos.get("beneficiario"):
             beneficiario_ok = datos_con_ia = True
-        if (fecha_hasta_texto is None or valor_texto is None) and extraidos.get("vigencia_hasta") and extraidos.get("valor"):
-            fecha_hasta_texto, valor_texto = extraidos["vigencia_hasta"], extraidos["valor"]
+        if lectura is None and extraidos.get("vigencia_hasta") and extraidos.get("valor"):
+            dia, mes, anio = extraidos["vigencia_hasta"].split("/")
+            lectura = LecturaAmparo(_fechas_posibles(dia, mes, anio, anio_cierre), _parsear_valor_pesos(extraidos["valor"]))
             datos_con_ia = True
 
     if not beneficiario_ok:
@@ -307,28 +498,30 @@ def evaluar_requisito11(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase) -
             else "no está configurado el beneficiario de la póliza de la entidad: confírmalo manualmente"
         )
 
-    if fecha_hasta_texto is None or valor_texto is None:
+    if lectura is None:
         motivos.append(
             "no se pudieron leer la vigencia y el valor asegurado del amparo de seriedad de la oferta — confirma manualmente"
         )
     else:
-        fecha_hasta = _parsear_fecha_ddmmyyyy(fecha_hasta_texto)
-        # Pólizas escaneadas se leen con OCR, que puede confundir dígitos
-        # ("29/07/2026" -> "15/11/2826"): una fecha fuera de un rango
-        # razonable se trata como ilegible en vez de darla por buena.
-        if fecha_hasta is not None and not (
-            garantia.fecha_cierre.year <= fecha_hasta.year <= garantia.fecha_cierre.year + 2
-        ):
-            fecha_hasta = None
-        if fecha_hasta is None:
+        minima = garantia.fecha_vencimiento
+        if not lectura.hasta:
+            # Pólizas escaneadas: una fecha fuera de un rango razonable
+            # ("15/11/2826") se trata como ilegible en vez de darla por buena.
             motivos.append("no se pudo leer la fecha de vencimiento de la vigencia de la póliza")
-        elif fecha_hasta < garantia.fecha_vencimiento:
+        elif max(lectura.hasta) < minima:
             motivos.append(
-                f"la póliza vence el {fecha_hasta.strftime('%d/%m/%Y')}, antes de la fecha mínima requerida "
-                f"({garantia.fecha_vencimiento.strftime('%d/%m/%Y')})"
+                f"la póliza vence el {max(lectura.hasta).strftime('%d/%m/%Y')}, antes de la fecha mínima requerida "
+                f"({minima.strftime('%d/%m/%Y')})"
+            )
+        elif min(lectura.hasta) < minima:
+            # El OCR dejó la fecha ambigua y no todas sus lecturas cumplen.
+            posibles = ", ".join(f.strftime("%d/%m/%Y") for f in sorted(lectura.hasta))
+            motivos.append(
+                f"no se pudo leer con certeza la fecha de vencimiento de la póliza (puede ser {posibles}; la mínima "
+                f"requerida es {minima.strftime('%d/%m/%Y')}) — confirma manualmente"
             )
 
-        valor_asegurado_poliza = _parsear_valor_pesos(valor_texto)
+        valor_asegurado_poliza = lectura.valor
         # Con datos de IA el tope es más estricto: el modelo podría tomar otro
         # valor del documento (ej. el presupuesto del lote, 10 veces mayor).
         tope = VALOR_MAXIMO_RAZONABLE_IA if datos_con_ia else 20

@@ -1734,3 +1734,86 @@ class CertificadoSeguridadSocialTests(TestCase):
         self.assertEqual((h["certificado_seguridad_social"].parametro, h["certificado_seguridad_social"].valor_pliego),
                          ("seguridad_social_certificado", 1))
         self.assertTrue(h["certificado_seguridad_social"].requiere_decision)
+
+
+class LecturaPolizaTests(TestCase):
+    """Garantía de seriedad (Req 11): la fila del amparo en los formatos
+    reales de las aseguradoras, y los errores del OCR sin aprobar de más."""
+
+    EXIGIDO = 545_895_454.50
+
+    def leer(self, texto):
+        from motor.evaluacion.formato1 import _norm
+        from motor.evaluacion.garantia import leer_vigencia_y_valor
+
+        return leer_vigencia_y_valor(_norm(texto), 2026, self.EXIGIDO)
+
+    def test_valores_con_separadores_del_ocr(self):
+        from motor.evaluacion.garantia import _parsear_valor_pesos
+
+        self.assertEqual(_parsear_valor_pesos("545.895.454,50"), 545_895_454.50)
+        self.assertEqual(_parsear_valor_pesos("$545,895,454.50"), 545_895_454.50)
+        self.assertEqual(_parsear_valor_pesos("545.,895.454,50"), 545_895_454.50)
+        self.assertEqual(_parsear_valor_pesos("545,895"), 545_895)
+
+    def test_fechas_del_ocr(self):
+        from datetime import date
+
+        from motor.evaluacion.garantia import _fechas_posibles
+
+        self.assertEqual(_fechas_posibles("24", "11", "2026", 2026), {date(2026, 11, 24)})
+        # 0 leído como 8, 2 como 7, una cifra de más: solo queda el año razonable.
+        self.assertEqual(_fechas_posibles("24", "11", "2826", 2026), {date(2026, 11, 24)})
+        self.assertEqual(_fechas_posibles("24", "11", "7076", 2026), {date(2026, 11, 24)})
+        self.assertEqual(_fechas_posibles("24", "11", "28726", 2026), {date(2026, 11, 24)})
+        self.assertEqual(_fechas_posibles("31", "18", "2826", 2026), {date(2026, 10, 31)})
+        # Si hubo que corregir, el día también puede estar mal: todas las lecturas.
+        self.assertEqual(_fechas_posibles("18", "11", "2826", 2026), {date(2026, 11, 18), date(2026, 11, 10)})
+
+    def test_formatos_de_aseguradoras(self):
+        from datetime import date
+
+        casos = {
+            "SERIEDAD DE LA OFERTA ---------- COP 545.895.454,50 VIGENCIA DE LA COBERTURA : DESDE LAS 0 HS DEL "
+            "24/07/2026, HASTA LAS 0 HS DEL 24/11/2026 PRIMA DE LA COBERTURA : COP 545.895,00": date(2026, 11, 24),
+            "SERTEDAD OFERTA CO 2026/07/24 2026/11/24 545,895,454.50 COL$ 545,895.45 COL$": date(2026, 11, 24),
+            "SERIEDAD DE LA OFERTA 24-07-2026 11-11-2026 545,895,455.00 545,895,455.00 545,895.00": date(2026, 11, 11),
+            "SERIEDAD DE LA OFERTA 00:00 Horas Del 24/07/2026 24:00 Horas Del 30/12/28026 545.895.454,58": date(2026, 12, 30),
+        }
+        for texto, hasta in casos.items():
+            lectura = self.leer(texto)
+            self.assertEqual(lectura.hasta, {hasta}, texto)
+            self.assertGreaterEqual(lectura.valor, self.EXIGIDO)
+
+    def test_la_fecha_de_adjudicacion_no_es_la_vigencia(self):
+        # El OCR dañó la vigencia hasta ("202€6"): no se toma la fecha que sigue.
+        texto = "SERIEDAD DE LA OFERTA 24/07/2026 24/11/202€6 $545,898,454.50 FECHA ADJUDICACION : 13/08/2026"
+        self.assertIsNone(self.leer(texto))
+        texto = "SERIEDAD DE LA OFERTA 24/07/2076 24/11/2026 $545,895,455.00 FECHA ADJUDICACION : 23/08/2026"
+        self.assertEqual({str(f) for f in self.leer(texto).hasta}, {"2026-11-24"})
+
+    def test_no_toma_la_prima_ni_el_clausulado(self):
+        self.assertIsNone(self.leer("SERIEDAD DE LA OFERTA 24/07/2026 24/11/2026 545.895,00"))
+        self.assertIsNone(self.leer("LA GARANTIA DE SERIEDAD DE LA OFERTA CUBRIRA LA SANCION DERIVADA DEL INCUMPLIMIENTO"))
+
+    def test_encabezado_de_mundial(self):
+        texto = ("VIGENCIA DESDE VIGENCIA HASTA VIGENCIA DEL CERTIFICADO DESDE VIGENCIA DEL CERTIFICADO HASTA "
+                 "00:08 HORAS DEL | 24/07/2826 |24:08 HORAS DEL | 01/12/2826 CONDICIONES PARTICULARES "
+                 "TOTAL ASEGURADO $ 545.895.454,50")
+        lectura = self.leer(texto)
+        self.assertEqual({str(f) for f in lectura.hasta}, {"2026-12-01"})
+
+    def test_beneficiario_con_etiqueta_asegurado(self):
+        from motor import criterios
+        from motor.evaluacion.formato1 import _norm
+        from motor.evaluacion.garantia import _beneficiario_re
+
+        with criterios.usar({"beneficiario_claves": ["ICCU", "INSTITUTO DE CAMINOS"]}):
+            patron = _beneficiario_re()
+            self.assertTrue(patron.search(_norm("ASEGURADO: INSTITUTO DE CAMINOS Y CONSTRUCCIONES DE CUNDINAMARCA - ICCU")))
+            self.assertTrue(patron.search(_norm("BENEFICIARIO INSTITUTO DE CAMINOS Y CONSTRUCCIONES")))
+            # El clausulado nombra al asegurado sin ser la entidad.
+            self.assertFalse(patron.search(_norm(
+                "EL TOMADOR Y/O ASEGURADO SEGÚN CORRESPONDA, SE COMPROMETE A PAGAR LA PRIMA DENTRO DE LOS 30 DÍAS")))
+            # Póliza de otra entidad (se vio en una oferta real).
+            self.assertFalse(patron.search(_norm("ASEGURADO MUNICIPIO DE MANIZALES BENEFICIARIO MUNICIPIO DE MANIZALES")))

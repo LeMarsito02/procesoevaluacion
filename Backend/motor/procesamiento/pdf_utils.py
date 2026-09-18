@@ -49,20 +49,63 @@ OCR_HABILITADO = os.environ.get("OCR_HABILITADO", "1") == "1" and shutil.which("
 _ESTAMPA_FIRMA_RE = re.compile(r"digitally signed by.*?(?:date:[^\n]*)?$", re.IGNORECASE | re.MULTILINE)
 
 
-def _ocr_pagina(page) -> str:
-    imagen = page.to_image(resolution=OCR_RESOLUCION).original
+# OCR reforzado, para documentos cuyas tablas pierde el OCR normal: la
+# imagen en gris y binarizada (se van los fondos de color de las celdas y las
+# líneas claras) y leída como un solo bloque (--psm 6), que conserva las filas
+# de las tablas. Se confirmó con pólizas escaneadas de Seguros Mundial: el OCR
+# normal perdía las etiquetas ASEGURADO/BENEFICIARIO y la fila del amparo
+# (fechas y suma asegurada); el reforzado las lee. Cuesta unos 3 s por página,
+# por eso solo se usa donde hace falta (ver `texto_ocr_reforzado`).
+OCR_REFORZADO_RESOLUCION = 300
+OCR_REFORZADO_UMBRAL = 120
+
+
+def _ocr_pagina(page, reforzado: bool = False) -> str:
+    if reforzado:
+        imagen = page.to_image(resolution=OCR_REFORZADO_RESOLUCION).original.convert("L")
+        imagen = imagen.point(lambda v: 255 if v > OCR_REFORZADO_UMBRAL else 0)
+    else:
+        imagen = page.to_image(resolution=OCR_RESOLUCION).original
     buffer = io.BytesIO()
     imagen.save(buffer, format="PNG")
     del imagen
     entorno = {**os.environ, "OMP_THREAD_LIMIT": "2"}
     salida = subprocess.run(
-        ["tesseract", "stdin", "stdout", "-l", "spa"],
+        ["tesseract", "stdin", "stdout", "-l", "spa", *(["--psm", "6"] if reforzado else [])],
         input=buffer.getvalue(),
         capture_output=True,
         timeout=OCR_TIMEOUT_SEGUNDOS,
         env=entorno,
     )
     return salida.stdout.decode("utf-8", errors="ignore")
+
+
+def texto_ocr_reforzado(contenido: bytes, max_paginas: int = 2) -> str:
+    """Texto de las páginas escaneadas del PDF leído con el OCR reforzado
+    (cacheado en disco). Las páginas digitales no se leen: si ninguna página
+    es escaneada devuelve ""."""
+    if not OCR_HABILITADO:
+        return ""
+    partes = []
+    with abrir_pdf(contenido) as pdf:
+        huella = pdf._huella_contenido
+        for page in pdf.pages[:max_paginas]:
+            try:
+                if not _necesita_ocr(page, page.extract_text() or ""):
+                    continue
+                archivo_cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}_reforzado.txt"
+                if archivo_cache.exists():
+                    partes.append(archivo_cache.read_text(encoding="utf-8"))
+                    continue
+                texto = _ocr_pagina(page, reforzado=True)
+                OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                archivo_cache.write_text(texto, encoding="utf-8")
+                partes.append(texto)
+            except Exception:  # noqa: BLE001
+                continue
+            finally:
+                page.flush_cache()
+    return "\n".join(partes)
 
 
 # Texto ya extraído en este worker para el proponente en curso, por
@@ -111,7 +154,15 @@ OCR_MAXIMO_CARACTERES_TEXTO_DIBUJADO = 1000
 OCR_MINIMO_CURVAS_TEXTO_DIBUJADO = 1000
 
 
+# Fuentes sin tabla de caracteres: pdfminer devuelve "(cid:12)(cid:9)..." en
+# vez de letras (póliza real de P-70). Esas páginas también se leen con OCR.
+_CID_RE = re.compile(r"\(cid:\d+\)")
+OCR_MINIMO_CIDS = 30
+
+
 def _necesita_ocr(page, texto: str) -> bool:
+    if len(_CID_RE.findall(texto)) >= OCR_MINIMO_CIDS:
+        return True
     util = len(_ESTAMPA_FIRMA_RE.sub("", texto).strip())
     if util < OCR_MINIMO_CARACTERES:
         return bool(page.images)
