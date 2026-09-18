@@ -13,6 +13,7 @@ from motor.evaluacion.formato1 import (
     _nombres_coinciden,
     obtener_tipo_proponente,
 )
+from motor.evaluacion.camara_comercio import Empresa, empresas_con_certificado
 from motor.evaluacion.proponente_plural import obtener_personas_a_verificar
 from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
@@ -136,6 +137,25 @@ def _cedulas_por_nombre(certificados: list[Certificado]) -> list[tuple[str, str]
     return pares
 
 
+# Criterio del abogado: a la persona jurídica (por su NIT) solo se le exigen
+# Contraloría y Procuraduría; Policía, RNMC y REDAM son de personas naturales.
+REQUISITOS_PERSONA_JURIDICA = frozenset({14, 15})
+
+# El certificado de una empresa se reconoce por el NIT, no por el nombre:
+# Procuraduría: "LA PERSONA EBR INGENIERIA S.A.S. IDENTIFICADO(A) CON NIT NUMERO 9015001145"
+# Contraloría:  "...DE LA PERSONA JURIDICA... NO. IDENTIFICACION 9018507983"
+# A veces sin espacio: "IDENTIFICADO(A)CON NIT NUMERO 8909340411".
+_NIT_PROCURADURIA_RE = re.compile(r"IDENTIFICAD[OA]\(A\)\s*CON\s+NIT\s+N[UÚ]MERO\s*(\d[\d.\-]*)")
+_NIT_CONTRALORIA_RE = re.compile(r"PERSONA JURIDICA.{0,400}?NO\.?\s*IDENTIFICACION\s*(\d[\d.\-]*)", re.DOTALL)
+
+
+def _nit_del_certificado(requisito: int, texto_norm: str) -> str | None:
+    """Los 9 dígitos del NIT si el certificado es de una persona jurídica."""
+    patron = {15: _NIT_PROCURADURIA_RE, 14: _NIT_CONTRALORIA_RE}.get(requisito)
+    match = patron.search(texto_norm) if patron else None
+    return _solo_digitos(match.group(1))[:9] if match else None
+
+
 class ResultadoEvaluacionAntecedente:
     def __init__(self, cumple: bool, motivo: str | None, archivo: str | None) -> None:
         self.cumple = cumple
@@ -144,11 +164,17 @@ class ResultadoEvaluacionAntecedente:
 
 
 def evaluar_antecedente(
-    pdfs: dict[str, bytes], config: AntecedenteConfig, personas: list[tuple[str, str | None]]
+    pdfs: dict[str, bytes],
+    config: AntecedenteConfig,
+    personas: list[tuple[str, str | None]],
+    empresas: list[Empresa] | None = None,
 ) -> ResultadoEvaluacionAntecedente:
     """Verifica que se haya aportado el certificado de `config.entidad` para
     cada persona en `personas` (representante legal, o representante +
-    suplente del consorcio/UT), y que ninguno reporte novedades."""
+    suplente del consorcio/UT) y, si el requisito aplica a personas
+    jurídicas, para cada empresa en `empresas` (por su NIT). Ninguno puede
+    reportar novedades."""
+    empresas = list(empresas or []) if config.requisito in REQUISITOS_PERSONA_JURIDICA else []
     if not personas:
         return ResultadoEvaluacionAntecedente(
             cumple=False,
@@ -199,6 +225,21 @@ def evaluar_antecedente(
         if not config.frase_cumple_re.search(_norm(texto)):
             faltantes.append(
                 f"el certificado de {config.entidad} de {nombre_persona} no confirma que esté libre de novedades"
+            )
+
+    for empresa in empresas:
+        suyo = next(
+            (c for c in candidatos if _nit_del_certificado(config.requisito, _norm(c.texto)) == empresa.nit), None
+        )
+        if suyo is None:
+            faltantes.append(f"no se aportó el certificado de {config.entidad} de {empresa.nombre} (NIT {empresa.nit})")
+            continue
+        if archivo_evaluado is None:
+            archivo_evaluado = suyo.archivo
+        if not config.frase_cumple_re.search(_norm(suyo.texto)):
+            faltantes.append(
+                f"el certificado de {config.entidad} de {empresa.nombre} (NIT {empresa.nit}) no confirma que esté "
+                "libre de novedades"
             )
 
     cumple = not faltantes
@@ -254,7 +295,12 @@ def _evaluar_proponente_antecedente(
 
     tipo_proponente = obtener_tipo_proponente(pdfs)
     personas = obtener_personas_a_verificar(pdfs, tipo_proponente, proceso.codigo_proceso)
-    resultado = evaluar_antecedente(pdfs, config, personas)
+    empresas = (
+        empresas_con_certificado(pdfs)
+        if config.requisito in REQUISITOS_PERSONA_JURIDICA and tipo_proponente != "persona_natural"
+        else []
+    )
+    resultado = evaluar_antecedente(pdfs, config, personas, empresas)
 
     return finalizar(
         ResultadoRequisito(

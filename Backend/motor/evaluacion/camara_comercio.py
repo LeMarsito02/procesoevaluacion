@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date
 
 from dateutil.relativedelta import relativedelta
@@ -168,8 +169,44 @@ def encontrar_documentos(pdfs: dict[str, bytes], titulo_re: re.Pattern[str], pis
 # el certificado ocupa más páginas (el archivo del formato puede tener más
 # páginas en total sin traer el certificado completo). Los integrantes de un
 # consorcio tienen cada uno su NIT, así que todos se conservan.
-NIT_CERTIFICADO_RE = re.compile(r"\bNIT\.?:?\s*(\d[\d.]{7,}\d)")
+# "NIT: 901500114-5", "NIT : 900439169-6" (Montería deja un espacio antes de
+# los dos puntos), "N.I.T. 901.191.916-8". El primero del certificado es el de
+# la sociedad: los que aparecen después son de terceros (revisor fiscal…).
+NIT_CERTIFICADO_RE = re.compile(r"\b(?:NIT|N\.I\.T)\.?\s*:?\s*(\d[\d.]{7,}\d)")
+RAZON_SOCIAL_RE = re.compile(r"RAZON SOCIAL\s*:\s*([A-Z0-9Ñ&][A-Z0-9Ñ&.,\- ]{2,80}?)\s+(?:NIT|N\.I\.T|SIGLA)\b")
 CODIGO_VERIFICACION_RE = re.compile(r"CODIGO DE VERIFICACION:?\s*([A-Z0-9]{6,})")
+
+
+@dataclass(frozen=True)
+class Empresa:
+    """Persona jurídica del proponente (él mismo, o un integrante del
+    consorcio o unión temporal), tal como la identifica su certificado de
+    existencia."""
+
+    razon_social: str | None
+    nit: str  # 9 dígitos, sin dígito de verificación
+
+    @property
+    def nombre(self) -> str:
+        return self.razon_social or f"la empresa con NIT {self.nit}"
+
+
+@memo_por_pdfs
+def empresas_con_certificado(pdfs: dict[str, bytes]) -> list[Empresa]:
+    """Una por cada certificado de existencia aportado (ya sin copias)."""
+    empresas: dict[str, Empresa] = {}
+    for nombre in encontrar_documentos(pdfs, TITULO_EXISTENCIA_RE, PISTAS_EXISTENCIA):
+        try:
+            texto_norm = _norm(extraer_texto(pdfs[nombre], max_paginas=PAGINAS_PARA_TITULO))
+        except Exception:  # noqa: BLE001
+            continue
+        nit = NIT_CERTIFICADO_RE.search(texto_norm)
+        if not nit:
+            continue
+        digitos = re.sub(r"\D", "", nit.group(1))[:9]
+        razon = RAZON_SOCIAL_RE.search(texto_norm)
+        empresas.setdefault(digitos, Empresa(razon.group(1).strip(" .,") if razon else None, digitos))
+    return list(empresas.values())
 
 
 def _identidad_y_extension(contenido: bytes, titulo_re: re.Pattern[str]) -> tuple[str | None, int]:

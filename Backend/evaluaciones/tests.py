@@ -1188,3 +1188,65 @@ class FacultadesRepresentanteTests(TestCase):
         cumple, motivo = self.evaluar("100 SALARIOS MINIMOS MENSUALES LEGALES VIGENTES", 2_269_370_336)
         self.assertFalse(cumple)
         self.assertIn("salario mínimo", motivo)
+
+
+class AntecedentesEmpresaTests(TestCase):
+    """Criterio del abogado: a cada persona jurídica (por NIT) se le exigen
+    Contraloría y Procuraduría; Policía, RNMC y REDAM no."""
+
+    PROCURADURIA_EMPRESA = (
+        "PROCURADURIA GENERAL DE LA NACION CERTIFICA QUE UNA VEZ CONSULTADO EL SISTEMA DE INFORMACION DE "
+        "REGISTRO DE SANCIONES E INHABILIDADES (SIRI), LA PERSONA CONSTRUCTORA EJEMPLO S.A.S. IDENTIFICADO(A) "
+        "CON NIT NUMERO 9001234565: NO REGISTRA SANCIONES NI INHABILIDADES VIGENTES"
+    )
+    PROCURADURIA_PERSONA = (
+        "PROCURADURIA GENERAL DE LA NACION CERTIFICA QUE EL(LA) SEÑOR(A) JUAN CARLOS PEREZ GOMEZ IDENTIFICADO(A) "
+        "CON CEDULA DE CIUDADANIA NUMERO 79123456: NO REGISTRA SANCIONES NI INHABILIDADES VIGENTES"
+    )
+
+    def evaluar(self, config, textos, empresas):
+        from unittest import mock
+
+        from motor.evaluacion.antecedentes import Certificado, evaluar_antecedente
+
+        certificados = [Certificado(f"c{i}.pdf", t, frozenset({config.requisito})) for i, t in enumerate(textos)]
+        with mock.patch("motor.evaluacion.antecedentes.leer_certificados", return_value=certificados):
+            return evaluar_antecedente({}, config, [("JUAN CARLOS PEREZ GOMEZ", "79123456")], empresas)
+
+    def test_la_empresa_se_reconoce_por_su_nit(self):
+        from motor.evaluacion.antecedentes import CONFIG_PROCURADURIA
+        from motor.evaluacion.camara_comercio import Empresa
+
+        r = self.evaluar(
+            CONFIG_PROCURADURIA,
+            [self.PROCURADURIA_PERSONA, self.PROCURADURIA_EMPRESA],
+            [Empresa("CONSTRUCTORA EJEMPLO S.A.S", "900123456")],
+        )
+        self.assertTrue(r.cumple, r.motivo)
+
+    def test_nit_pegado_al_texto(self):
+        from motor.evaluacion.antecedentes import _nit_del_certificado
+
+        texto = "LA PERSONA LOS EJEMPLOS SAS IDENTIFICADO(A)CON NIT NUMERO 8909340411: NO REGISTRA SANCIONES"
+        self.assertEqual(_nit_del_certificado(15, texto), "890934041")
+
+    def test_falta_el_de_la_empresa(self):
+        from motor.evaluacion.antecedentes import CONFIG_PROCURADURIA
+        from motor.evaluacion.camara_comercio import Empresa
+
+        r = self.evaluar(
+            CONFIG_PROCURADURIA, [self.PROCURADURIA_PERSONA], [Empresa("CONSTRUCTORA EJEMPLO S.A.S", "900123456")]
+        )
+        self.assertFalse(r.cumple)
+        self.assertIn("NIT 900123456", r.motivo)
+
+    def test_a_la_empresa_no_se_le_exige_policia_ni_rnmc(self):
+        from motor.evaluacion.antecedentes import CONFIG_RNMC
+        from motor.evaluacion.camara_comercio import Empresa
+
+        rnmc_persona = (
+            "SISTEMA REGISTRO NACIONAL DE MEDIDAS CORRECTIVAS RNMC EL CIUDADANO CON CEDULA DE CIUDADANIA NO. "
+            "79123456 . NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR."
+        )
+        r = self.evaluar(CONFIG_RNMC, [rnmc_persona], [Empresa("CONSTRUCTORA EJEMPLO S.A.S", "900123456")])
+        self.assertTrue(r.cumple, r.motivo)
