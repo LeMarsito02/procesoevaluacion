@@ -1479,3 +1479,26 @@ class PliegoProcesoTests(BaseEvaluaciones):
         self.assertEqual(a.id, b.id)
         _, r = self.crear_con(a.id, {}, email="abogado@otraentidad.gov.co")
         self.assertEqual(r.status_code, 404)
+
+
+    def test_el_pliego_queda_en_el_expediente(self):
+        import io
+        import json
+        import zipfile
+
+        from evaluaciones.expediente import construir
+        from evaluaciones.models import EstadoExpediente, Evaluacion, Expediente
+
+        a = self.analisis()
+        decisiones = {h: {"decision": "aceptado"} for h in ("vigencia_existencia", "duracion_sociedad", "limitacion_mipyme", "identidad_representante")}
+        _, r = self.crear_con(a.id, decisiones)
+        self.assertEqual(r.status_code, 201, r.content)
+        evaluacion = Evaluacion.objects.get(pk=r.json()[0]["id"])
+        exp = Expediente.objects.create(entidad=evaluacion.entidad, evaluacion=evaluacion, version=1, estado=EstadoExpediente.GENERANDO)
+        construir(exp)
+        exp.refresh_from_db()
+        with exp.archivo.open("rb") as f, zipfile.ZipFile(io.BytesIO(f.read())) as z:
+            self.assertIn("pliego/pliego.pdf", z.namelist())
+            registro = json.loads(z.read("registro.json"))
+        self.assertEqual(registro["pliego"]["sha256"], a.sha256)
+        self.assertEqual(len(registro["pliego"]["ajustes"]), 4)

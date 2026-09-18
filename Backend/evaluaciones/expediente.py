@@ -89,6 +89,14 @@ def construir(expediente: Expediente) -> None:
             agregar(f"informe/{nombre_excel}", excel)
             word, nombre_word = generar_reporte(evaluacion)
             agregar(f"informe/{nombre_word}", word)
+            # El pliego rige la evaluación: se archiva con ella.
+            analisis = proceso.analisis_pliego
+            if analisis is not None:
+                try:
+                    with analisis.archivo.open("rb") as f:
+                        agregar(f"pliego/{_seguro(analisis.nombre_archivo, 150)}", f.read())
+                except OSError as exc:
+                    avisos.append(f"No se pudo incluir el pliego ({exc}).")
 
             resultados = defaultdict(dict)
             for r in Resultado.objects.filter(evaluacion=evaluacion):
@@ -189,6 +197,17 @@ def construir(expediente: Expediente) -> None:
                         {"nombre": evaluacion.plantilla.nombre, "version": evaluacion.plantilla.version} if evaluacion.plantilla_id else "base del sistema"
                     ),
                 },
+                "pliego": (
+                    {
+                        "archivo": analisis.nombre_archivo,
+                        "sha256": analisis.sha256,
+                        "paginas": analisis.paginas,
+                        "documento_tipo": analisis.documento_tipo,
+                        "ajustes": proceso.ajustes_pliego,
+                    }
+                    if analisis is not None
+                    else None
+                ),
                 "avisos": avisos,
                 "proponentes": registro_proponentes,
             }
