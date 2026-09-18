@@ -142,9 +142,18 @@ def secciones(paginas: list[Pagina]) -> list[Seccion]:
 
 
 def codigo_documento_tipo(paginas: list[Pagina]) -> str | None:
-    """Código del documento tipo de Colombia Compra Eficiente, ej. CCE-EICP-GI-11."""
+    """Código del documento tipo de Colombia Compra Eficiente (ej.
+    CCE-EICP-GI-11) o, si el pliego no lo trae, su nombre tal como aparece en
+    el encabezado ("LICITACIÓN DE OBRA PÚBLICA DE INFRAESTRUCTURA SOCIAL")."""
     for p in paginas[:5]:
         m = re.search(r"C[oó]digo\s+(CCE-[A-Z0-9\-]+)", p.texto)
         if m:
             return m.group(1)
+    if len(paginas) >= 3:
+        repetidas = _lineas_repetidas(paginas)
+        for linea in paginas[1].texto.splitlines()[:4]:
+            limpia = linea.strip()
+            if limpia in repetidas and not re.fullmatch(r"DOCUMENTO BASE|PLIEGO DE CONDICIONES", limpia, re.IGNORECASE) \
+                    and len(limpia) > 15 and limpia.upper() == limpia:
+                return limpia[:80]
     return None

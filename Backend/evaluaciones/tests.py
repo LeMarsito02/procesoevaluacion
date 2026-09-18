@@ -1642,3 +1642,42 @@ class SalarioMinimoTests(BaseEvaluaciones):
                        content_type="application/json", headers={"X-CSRFToken": s.csrf})
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(s.get("/api/plataforma/salarios-minimos").json()[0]["ano"], 2027)
+
+
+class NombresOfertasDriveTests(TestCase):
+    """Las ofertas llegan nombradas "P1 Nombre" o, como las descarga el SECOP II
+    y las numera la entidad, "110. CONSORCIO ASF.zip"."""
+
+    def test_formatos_reconocidos(self):
+        from motor.integrations.drive import _parse_nombre
+
+        self.assertEqual(_parse_nombre("P1 JJAB SAS.zip"), (1, "JJAB SAS"))
+        self.assertEqual(_parse_nombre("P-03 - Consorcio Ejemplo.rar"), (3, "Consorcio Ejemplo"))
+        self.assertEqual(_parse_nombre("110. CONSORCIO ASF..zip"), (110, "CONSORCIO ASF"))
+        self.assertEqual(_parse_nombre("7) OBRAS SAS.zip"), (7, "OBRAS SAS"))
+
+    def test_un_pdf_numerado_no_es_una_oferta(self):
+        from motor.integrations.drive import _parse_nombre
+
+        self.assertIsNone(_parse_nombre("2026 informe.pdf"))
+        self.assertIsNone(_parse_nombre("Mostrar mensaje.pdf"))
+
+    def test_las_subcarpetas_no_se_mezclan_con_las_ofertas_de_la_raiz(self):
+        from unittest import mock
+
+        from motor.integrations import drive
+
+        archivos = [
+            {"id": "a", "name": "1. OBRAS SAS.zip", "profundidad": 0, "carpeta": ""},
+            {"id": "b", "name": "2. CONSORCIO X.zip", "profundidad": 0, "carpeta": ""},
+            {"id": "c", "name": "1. OBRAS SAS.zip", "profundidad": 1, "carpeta": "SOBRE ECONOMICO"},
+        ]
+        import pathlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(drive, "CACHE_LISTADOS_DIR", pathlib.Path(tmp)), \
+                mock.patch.object(drive, "get_drive_service"), mock.patch.object(drive, "_listar_archivos_recursivo", return_value=archivos), \
+                mock.patch.object(drive, "_solo_cache", return_value=False):
+            r = drive.list_proponentes("1k6QaO1v0bEbnhKnT2edkavswCpK3zzYc_prueba")
+        self.assertEqual([p.drive_file_id for p in r.proponentes], ["a", "b"])
+        self.assertIn("SOBRE ECONOMICO/1. OBRAS SAS.zip (subcarpeta: no se usa)", r.no_reconocidos)

@@ -26,9 +26,13 @@ from motor.parsers.documento_base import build_proceso
 FECHA_CIERRE = date.fromisoformat(os.environ.get("MEDICION_FECHA_CIERRE", "2026-01-01"))
 from scratch_comparar import API, DOC_BASE, DRIVE_FOLDER, emparejar_proponentes, nuestro_veredicto
 
-RESULTADOS = ".scratch/medicion_resultados.json"
-TIEMPOS = ".scratch/medicion_tiempos.json"
-COMPARACION = ".scratch/medicion_comparacion.json"
+# Otro proceso: MEDICION_DIR (dónde guardar) y MEDICION_GROUND_TRUTH (el
+# informe de los abogados ya convertido; sin él, solo se evalúa y se resume).
+DIR = os.environ.get("MEDICION_DIR", ".scratch")
+RESULTADOS = f"{DIR}/medicion_resultados.json"
+TIEMPOS = f"{DIR}/medicion_tiempos.json"
+COMPARACION = f"{DIR}/medicion_comparacion.json"
+GROUND_TRUTH = os.environ.get("MEDICION_GROUND_TRUTH", ".scratch/ground_truth.json")
 CONCURRENCIA = 2
 # RUT (Requisito 13): el abogado indicó ignorarlo; no se evalúa ni se mide.
 REQUISITOS_IGNORADOS = {13}
@@ -161,16 +165,48 @@ def main():
         proceso = build_proceso(os.environ.get("MEDICION_CODIGO_PROCESO", ""), FECHA_CIERRE, f.read())
     proceso_json = json.loads(proceso.model_dump_json())
     r = list_proponentes(DRIVE_FOLDER)
-    with open(".scratch/ground_truth.json") as f:
-        ground_truth = json.load(f)
-    mapeo = emparejar_proponentes(r.proponentes, ground_truth)
+    ground_truth = _cargar(GROUND_TRUTH, None) if os.environ.get("MEDICION_SIN_REFERENCIA") != "1" else None
+    if ground_truth is None:
+        mapeo = {p.hoja: i for i, p in enumerate(r.proponentes)}
+    elif ground_truth and "hoja" in ground_truth[0]:
+        # Informes sin nombres: se empareja por la hoja (P-01, P-02…).
+        por_hoja = {g["hoja"]: i for i, g in enumerate(ground_truth)}
+        mapeo = {p.hoja: por_hoja[p.hoja] for p in r.proponentes if p.hoja in por_hoja}
+    else:
+        mapeo = emparejar_proponentes(r.proponentes, ground_truth)
     nombres = {p.hoja: p.nombre_proponente for p in r.proponentes}
     print(f"Proponentes emparejados con el informe: {len(mapeo)} / {len(r.proponentes)}", flush=True)
     if "--solo-comparar" not in sys.argv:
         resultados, tiempos = evaluar(proceso_json, r.proponentes, mapeo)
     else:
         resultados, tiempos = _cargar(RESULTADOS, {}), _cargar(TIEMPOS, {})
-    resumen(comparar(resultados, ground_truth, mapeo, nombres), tiempos)
+    if ground_truth is None:
+        resumen_sin_referencia(resultados, tiempos)
+    else:
+        resumen(comparar(resultados, ground_truth, mapeo, nombres), tiempos)
+
+
+def resumen_sin_referencia(resultados, tiempos):
+    """Sin informe de los abogados: qué dijo el programa, cuánto tardó y dónde falló."""
+    items = [x for lista in resultados.values() for x in lista if x["requisito"] not in REQUISITOS_IGNORADOS]
+    conteo = collections.Counter(nuestro_veredicto(x) for x in items)
+    total = max(len(items), 1)
+    print(f"\n=== {len(resultados)} proponentes · {len(items)} verificaciones ===")
+    print("Veredictos del programa:", dict(conteo))
+    print(f"A revisión humana: {conteo['NO'] + conteo['ERROR']} ({100 * (conteo['NO'] + conteo['ERROR']) / total:.1f}%)")
+    print("\nA revisión por requisito:")
+    for req in range(1, 30):
+        del_req = [x for x in items if x["requisito"] == req]
+        if del_req:
+            n = sum(nuestro_veredicto(x) in ("NO", "ERROR") for x in del_req)
+            print(f"  Req {req:2d}: {n}/{len(del_req)} ({100 * n / len(del_req):.0f}%)")
+    errores = [(h, x["requisito"], (x.get("error") or "")[:90]) for h, lista in resultados.items() for x in lista if x.get("error")]
+    print(f"\nErrores de ejecución: {len(errores)}")
+    for e in errores[:15]:
+        print("  ", e)
+    if tiempos:
+        seg = list(tiempos.values())
+        print(f"\nTiempo por proponente: promedio {sum(seg) / len(seg):.0f}s, máximo {max(seg):.0f}s")
 
 
 if __name__ == "__main__":

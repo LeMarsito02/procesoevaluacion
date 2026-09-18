@@ -32,7 +32,12 @@ def _solo_cache() -> bool:
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 # "p1 EMPRESA UNO SAS", "P-2 EMPRESA DOS SAS", "p 3 - EMPRESA TRES S.A.S." (extensión ya removida)
+# "P1 Nombre", "P-01 - Nombre" o, como las descarga el SECOP II y las numera
+# la entidad, "110. CONSORCIO ASF.zip". Sin la "P" solo se acepta un
+# comprimido, para que un PDF como "2026 informe.pdf" no pase por oferta.
 PROPONENTE_NAME_RE = re.compile(r"^[Pp]\s*-?\s*(\d+)\s*[-–.]?\s+(.+)$")
+PROPONENTE_NUMERADO_RE = re.compile(r"^(\d{1,3})\s*[.)\-–]\s*(.+)$")
+EXTENSIONES_OFERTA = (".zip", ".rar", ".7z")
 
 
 class DriveConfigError(RuntimeError):
@@ -189,13 +194,16 @@ def extract_folder_id(url_or_id: str) -> str:
 
 
 def _parse_nombre(nombre_archivo: str) -> tuple[int, str] | None:
-    base = nombre_archivo
-    if base.lower().endswith(".zip"):
-        base = base[: -len(".zip")]
+    base = nombre_archivo.strip()
+    comprimido = base.lower().endswith(EXTENSIONES_OFERTA)
+    if comprimido:
+        base = base.rsplit(".", 1)[0]
     match = PROPONENTE_NAME_RE.match(base.strip())
+    if not match and comprimido:
+        match = PROPONENTE_NUMERADO_RE.match(base.strip())
     if not match:
         return None
-    return int(match.group(1)), match.group(2).strip()
+    return int(match.group(1)), match.group(2).strip(" .")
 
 
 @dataclass
@@ -230,10 +238,11 @@ def _listar_hijos(service, folder_id: str) -> list[dict]:
     return archivos
 
 
-def _listar_archivos_recursivo(service, folder_id: str, _profundidad: int = 0) -> list[dict]:
+def _listar_archivos_recursivo(service, folder_id: str, _profundidad: int = 0, _ruta: str = "") -> list[dict]:
     """Lista los archivos de una carpeta de Drive, bajando también a las
     subcarpetas (ej. cuando los zips de los proponentes están dentro de una
-    subcarpeta como "Propuestas" en vez de estar sueltos en la raíz)."""
+    subcarpeta como "Propuestas" en vez de estar sueltos en la raíz). Cada
+    archivo lleva su profundidad y la subcarpeta donde está."""
     if _profundidad > MAX_PROFUNDIDAD_CARPETAS:
         return []
 
@@ -241,9 +250,10 @@ def _listar_archivos_recursivo(service, folder_id: str, _profundidad: int = 0) -
     archivos: list[dict] = []
     for hijo in hijos:
         if hijo.get("mimeType") == FOLDER_MIME_TYPE:
-            archivos.extend(_listar_archivos_recursivo(service, hijo["id"], _profundidad + 1))
+            ruta = f"{_ruta}/{hijo['name']}" if _ruta else hijo["name"]
+            archivos.extend(_listar_archivos_recursivo(service, hijo["id"], _profundidad + 1, ruta))
         else:
-            archivos.append(hijo)
+            archivos.append({**hijo, "profundidad": _profundidad, "carpeta": _ruta})
     return archivos
 
 
@@ -279,10 +289,17 @@ def list_proponentes(carpeta_drive: str) -> ProponentesResult:
             archivos = json.loads(cache_listado.read_text())
 
     result = ProponentesResult()
+    # Las ofertas son las del nivel más alto que tenga alguna: si están en la
+    # raíz, las subcarpetas (sobre económico, subsanaciones…) no se mezclan.
+    niveles = [a.get("profundidad", 0) for a in archivos if _parse_nombre(a["name"]) is not None]
+    nivel = min(niveles) if niveles else 0
     for archivo in archivos:
         parsed = _parse_nombre(archivo["name"])
         if parsed is None:
             result.no_reconocidos.append(archivo["name"])
+            continue
+        if archivo.get("profundidad", 0) != nivel:
+            result.no_reconocidos.append(f"{archivo.get('carpeta') or ''}/{archivo['name']} (subcarpeta: no se usa)".lstrip("/"))
             continue
         numero_orden, nombre_proponente = parsed
         result.proponentes.append(

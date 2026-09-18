@@ -12,10 +12,10 @@ pkill -9 -f "uvicorn config.asgi:application" 2>/dev/null
 # El trabajador de la fila compite por CPU y RAM: se detiene durante la medición.
 pkill -TERM -f "manage.py trabajar_fila" 2>/dev/null
 sleep 2
-DRIVE_SOLO_CACHE=1 MAX_WORKERS=${MAX_WORKERS:-2} nohup uvicorn config.asgi:application --port 8000 > .scratch/backend_medicion.log 2>&1 &
+DRIVE_SOLO_CACHE=${DRIVE_SOLO_CACHE:-1} MAX_WORKERS=${MAX_WORKERS:-2} nohup uvicorn config.asgi:application --port 8000 > .scratch/backend_medicion.log 2>&1 &
 for i in $(seq 1 60); do curl -s http://localhost:8000/api/health > /dev/null && break; sleep 2; done
 inicio=$(date +%s)
-DRIVE_SOLO_CACHE=1 python3 -u scratch_medicion.py
+DRIVE_SOLO_CACHE=${DRIVE_SOLO_CACHE:-1} python3 -u scratch_medicion.py
 echo "TIEMPO TOTAL (reloj): $(( ($(date +%s) - inicio) / 60 )) min"
 pkill -9 -f "uvicorn config.asgi:application" 2>/dev/null
 pkill -9 -f "multiprocessing.spawn|multiprocessing.forkserver" 2>/dev/null

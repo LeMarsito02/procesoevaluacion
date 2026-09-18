@@ -342,6 +342,8 @@ _FORMATOS_JURIDICOS: tuple[tuple[str, str], ...] = (
     ("SEGURIDAD SOCIAL", "juridica.seguridad_social"),
 )
 _FORMATOS_OTROS: tuple[tuple[str, str], ...] = (
+    ("CAPACIDAD RESIDUAL", "financiera"),
+    ("FACTOR DE CALIDAD", "puntaje"),
     ("EXPERIENCIA", "técnica"),
     ("PERSONAL CLAVE", "técnica"),
     ("FORMACION ACADEMICA", "técnica"),
@@ -499,6 +501,7 @@ def comparar(extraccion: Extraccion, definicion: criterios.DefinicionEvaluacion)
         cubre = verificaciones_de(o.cita)
         if norm(o.cita)[:80] in citadas or (cubre and all(v in en_plantilla for v in cubre)):
             continue
+        citadas.add(norm(o.cita)[:80])  # la misma oración puede obligar dos veces
         hallazgos.append(Hallazgo(
             id=f"obligacion_{i}", tipo="obligacion", titulo=o.seccion,
             detalle="El pliego impone esta obligación y ninguna verificación automática la cubre: léala al revisar.",
