@@ -1681,3 +1681,25 @@ class NombresOfertasDriveTests(TestCase):
             r = drive.list_proponentes("1k6QaO1v0bEbnhKnT2edkavswCpK3zzYc_prueba")
         self.assertEqual([p.drive_file_id for p in r.proponentes], ["a", "b"])
         self.assertIn("SOBRE ECONOMICO/1. OBRAS SAS.zip (subcarpeta: no se usa)", r.no_reconocidos)
+
+
+class DocumentoBaseObjetoUnicoTests(TestCase):
+    """Pliegos de obra de un solo objeto, sin tabla de lotes."""
+
+    def test_objeto_unico(self):
+        from unittest import mock
+
+        from motor.parsers.documento_base import _objeto_unico
+
+        tabla = [
+            ["Objeto del proyecto", "Plazo del contrato", "", "Valor presupuesto", "", "", "Lugar(es) de"],
+            ["", "", "", "oficial (pesos incluido IVA)", "", "", "ejecución"],
+            ["CONSTRUCCIÓN DE LA INSTITUCIÓN EDUCATIVA DEL MUNICIPIO", "DOCE (12) MESES", "$5.458.954.545,00", "", "", "Municipio de Ejemplo", ""],
+        ]
+        pagina = mock.Mock()
+        pagina.extract_tables.return_value = [tabla]
+        pdf = mock.Mock(pages=[pagina])
+        lote = _objeto_unico(pdf, 0)
+        self.assertEqual((lote.numero, lote.plazo_meses, lote.valor_presupuesto), ("ÚNICO", 12, 5_458_954_545.0))
+        self.assertEqual(lote.objeto, "CONSTRUCCIÓN DE LA INSTITUCIÓN EDUCATIVA DEL MUNICIPIO")
+        self.assertEqual(lote.lugar_ejecucion, "Municipio de Ejemplo")

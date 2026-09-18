@@ -58,7 +58,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 45
+VERSION_LOGICA = 46
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -481,7 +481,13 @@ def evaluar_formato1(pdf_bytes: bytes, proceso: ProcesoDocumentoBase) -> Resulta
 
     texto_norm = _norm(texto_completo)
 
-    lotes_encontrados = [lote.numero for lote in proceso.lotes if _lote_mencionado(texto_norm, lote.numero)]
+    # Un proceso de un solo objeto (obra pública sin lotes) no tiene lote que
+    # la carta deba mencionar.
+    sin_lotes = not any(re.search(r"\d", lote.numero) for lote in proceso.lotes)
+    if sin_lotes:
+        lotes_encontrados = [lote.numero for lote in proceso.lotes]
+    else:
+        lotes_encontrados = [lote.numero for lote in proceso.lotes if _lote_mencionado(texto_norm, lote.numero)]
 
     variantes = _codigo_variantes(proceso.codigo_proceso)
     numero_proceso_ok = any(patron.search(texto_norm) for patron in variantes)
@@ -527,7 +533,7 @@ def evaluar_formato1(pdf_bytes: bytes, proceso: ProcesoDocumentoBase) -> Resulta
         firma_confirmada = None
 
     motivos = []
-    if not lotes_encontrados:
+    if not lotes_encontrados and not sin_lotes:
         motivos.append("no menciona ninguno de los lotes del Documento Base")
     if not numero_proceso_ok:
         motivos.append(f"no menciona el número de proceso ({proceso.codigo_proceso})")

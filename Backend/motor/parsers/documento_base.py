@@ -127,10 +127,50 @@ def _find_budget_rows(pdf: pdfplumber.PDF) -> tuple[str, list[ParsedLote]]:
         ):
             break
 
+    if not lotes:
+        unico = _objeto_unico(pdf, heading_page_idx)
+        if unico is not None:
+            lotes.append(unico)
+            objeto_general = objeto_general or unico.objeto
+
     for lote in lotes:
         lote.lugar_ejecucion = lote.lugar_ejecucion or None
 
     return objeto_general, lotes
+
+
+_DINERO_CELDA_RE = re.compile(r"\$\s*\d[\d.,]*")
+
+
+def _objeto_unico(pdf: pdfplumber.PDF, desde: int) -> ParsedLote | None:
+    """Pliegos de un solo objeto (sin lotes), como los de obra pública: una
+    tabla "Objeto del proyecto | Plazo | Valor presupuesto oficial | Lugar".
+    Las columnas de los datos no siempre calzan con las del encabezado, así
+    que cada dato se reconoce por su forma: el valor por el signo $, el plazo
+    por los meses, el objeto como el texto más largo y el lugar, lo que queda."""
+    # Se empieza en la primera página que nombra la sección (puede ser el índice).
+    for i in range(desde, min(desde + 8, len(pdf.pages))):
+        for table in pdf.pages[i].extract_tables():
+            texto = _strip_accents(" ".join(c or "" for fila in table for c in fila).upper())
+            if "OBJETO" not in texto or "PRESUPUESTO" not in texto:
+                continue
+            for row in table:
+                celdas = [_norm(c) for c in row if c and _norm(c)]
+                valor = next((c for c in celdas if _DINERO_CELDA_RE.search(c)), None)
+                if valor is None:
+                    continue
+                plazo = next((c for c in celdas if re.search(r"\bMES", _strip_accents(c.upper()))), None)
+                resto = [c for c in celdas if c not in (valor, plazo)]
+                objeto = max(resto, key=len) if resto else ""
+                lugar = next((c for c in resto if c != objeto), None)
+                return ParsedLote(
+                    numero="ÚNICO",
+                    objeto=objeto,
+                    plazo_meses=_parse_months(plazo),
+                    valor_presupuesto=_parse_money(_DINERO_CELDA_RE.search(valor).group(0)),
+                    lugar_ejecucion=lugar,
+                )
+    return None
 
 
 def _row_condicion(row: list[str | None]) -> str:
