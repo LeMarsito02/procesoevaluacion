@@ -164,6 +164,8 @@ def main():
     with open(DOC_BASE, "rb") as f:
         proceso = build_proceso(os.environ.get("MEDICION_CODIGO_PROCESO", ""), FECHA_CIERRE, f.read())
     proceso_json = json.loads(proceso.model_dump_json())
+    if os.environ.get("MEDICION_PLIEGO"):
+        proceso_json["criterios"] = definicion_con_pliego(os.environ["MEDICION_PLIEGO"])
     r = list_proponentes(DRIVE_FOLDER)
     ground_truth = _cargar(GROUND_TRUTH, None) if os.environ.get("MEDICION_SIN_REFERENCIA") != "1" else None
     if ground_truth is None:
@@ -184,6 +186,30 @@ def main():
         resumen_sin_referencia(resultados, tiempos)
     else:
         resumen(comparar(resultados, ground_truth, mapeo, nombres), tiempos)
+
+
+def definicion_con_pliego(ruta: str) -> dict:
+    """La definición del sistema con TODOS los ajustes que propone el análisis
+    del pliego aceptados, como si la persona los hubiera aplicado."""
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    import django
+
+    django.setup()
+    from evaluaciones.pliego import aplicar_ajustes
+    from motor import criterios
+    from motor.pliego import analisis, lectura
+
+    with open(ruta, "rb") as f:
+        extraccion = analisis.extraer(lectura.leer_paginas(f.read()))
+    definicion = criterios.definicion_sistema("juridica")
+    ajustes = [
+        {"decision": "aceptado", "hallazgo": h.model_dump(mode="json")}
+        for h in analisis.comparar(extraccion, definicion)
+        if h.requiere_decision
+    ]
+    for a in ajustes:
+        print(f"Ajuste del pliego aplicado: {a['hallazgo']['titulo']}", flush=True)
+    return aplicar_ajustes(definicion, ajustes).model_dump(mode="json")
 
 
 def resumen_sin_referencia(resultados, tiempos):
