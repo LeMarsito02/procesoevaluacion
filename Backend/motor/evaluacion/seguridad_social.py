@@ -17,6 +17,7 @@ from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.evaluacion.proponente_plural import datos_formato2, encontrar_formato2
 from motor.llm.cliente import solo_digitos
+from motor.evaluacion.antecedentes import FORMULARIO_SECOP_RE
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.procesamiento.pdf_utils import abrir_pdf, extraer_texto, texto_pagina
 from motor.procesamiento.zip_utils import extraer_pdfs
@@ -30,10 +31,13 @@ PAGINAS_A_REVISAR = 2
 # Variantes reales: "FORMATO 5 - PAGOS DE SEGURIDAD SOCIAL Y APORTES
 # LEGALES" (sin "AL SISTEMA") y "FORMATO NO. 5 – CERTIFICACION DE PAGOS DE
 # SEGURIDAD SOCIAL".
+# El número cambia según el pliego tipo: es el Formato 5 en el de
+# interventoría y el Formato 6 en el de obra pública (allí el 5 es "Capacidad
+# residual"). Se reconoce por el título, con cualquier número.
 TITULO_FORMATO5_RE = re.compile(
-    r"FORMATO\s*(?:NO\.?\s*)?5\b.{0,40}?PAGOS?\s+(?:AL\s+SISTEMA\s+)?DE\s+SEGURIDAD\s*SOCIAL"
+    r"FORMATO\s*(?:NO\.?\s*)?\d{1,2}\b.{0,40}?PAGOS?\s+(?:AL\s+SISTEMA\s+)?DE\s+SEGURIDAD\s*SOCIAL"
 )
-PISTAS_FORMATO5 = ("formato 5", "seguridad social", "seg social", "parafiscales")
+PISTAS_FORMATO5 = ("seguridad social", "seg social", "parafiscales", "formato 5", "formato 6")
 
 
 def _orden_busqueda(nombres: list[str]) -> list[str]:
@@ -51,8 +55,29 @@ def encontrar_formato5(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
             texto = extraer_texto(contenido, max_paginas=PAGINAS_A_REVISAR)
         except Exception:  # noqa: BLE001
             continue
-        if TITULO_FORMATO5_RE.search(_norm(texto)):
+        texto_norm = _norm(texto)
+        if TITULO_FORMATO5_RE.search(texto_norm) and not FORMULARIO_SECOP_RE.search(texto_norm):
             return nombre, texto
+    return None
+
+
+# Hay proponentes que no usan el formato del pliego sino una certificación
+# propia con el mismo contenido: "CERTIFICACION DE PAGOS DE SEGURIDAD SOCIAL Y
+# APORTES PARAFISCALES - ARTICULO 50 DE LA LEY 789 DE 2002".
+CERTIFICACION_PROPIA_RE = re.compile(
+    r"CERTIFICACION\s+(?:DE\s+)?(?:PAGOS?|CUMPLIMIENTO)\s+(?:AL\s+SISTEMA\s+)?(?:DE\s+)?(?:APORTES\s+(?:AL\s+SISTEMA\s+)?(?:DE\s+)?)?"
+    r"SEGURIDAD\s*SOCIAL|ARTICULO\s+50\s+DE\s+LA\s+LEY\s+789"
+)
+
+
+def _certificacion_propia(pdfs: dict[str, bytes]) -> str | None:
+    for nombre in _orden_busqueda(list(pdfs.keys())):
+        try:
+            texto_norm = _norm(extraer_texto(pdfs[nombre], max_paginas=PAGINAS_A_REVISAR))
+        except Exception:  # noqa: BLE001
+            continue
+        if CERTIFICACION_PROPIA_RE.search(texto_norm) and not FORMULARIO_SECOP_RE.search(texto_norm):
+            return nombre
     return None
 
 
@@ -107,7 +132,10 @@ def certificados_formato5(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
                 for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_FORMATO5]):
                     texto = texto_pagina(page)
                     page.flush_cache()
-                    if TITULO_FORMATO5_RE.search(_norm(texto)):
+                    texto_norm = _norm(texto)
+                    # El formulario de preguntas del SECOP cita el nombre del
+                    # formato en el enunciado; no es el formato.
+                    if TITULO_FORMATO5_RE.search(texto_norm) and not FORMULARIO_SECOP_RE.search(texto_norm):
                         if actual is not None:
                             certificados.append((nombre, "\n".join(actual)))
                         actual = [texto]
@@ -182,7 +210,7 @@ def _evaluar_formato5_plural(pdfs: dict[str, bytes], codigo_proceso: str | None)
     if len(nits_validos) >= integrantes:
         return ResultadoEvaluacionSegSocial(cumple=True, motivo=None, archivo=archivo)
     motivo = (
-        f"el consorcio/unión temporal tiene {integrantes} integrantes pero solo se confirmó el Formato 5 de "
+        f"el consorcio/unión temporal tiene {integrantes} integrantes pero solo se confirmó el formato de seguridad social de "
         f"{len(nits_validos)}"
     )
     if problemas:
@@ -226,9 +254,21 @@ def evaluar_requisito12(
     verificar el nombre exacto de quien firma."""
     encontrado = encontrar_formato5(pdfs)
     if encontrado is None:
+        propia = _certificacion_propia(pdfs)
+        if propia is not None:
+            # Si se acepta en lugar del formato del pliego es criterio jurídico:
+            # queda para revisión, pero diciendo exactamente qué se encontró.
+            return ResultadoEvaluacionSegSocial(
+                cumple=False,
+                motivo=(
+                    f"aportó una certificación propia de pagos de seguridad social ('{propia}') en lugar del formato "
+                    "del pliego — confirma si se acepta y quién la firma"
+                ),
+                archivo=propia,
+            )
         return ResultadoEvaluacionSegSocial(
             cumple=False,
-            motivo="No se encontró el Formato 5 (Pagos de Seguridad Social y Aportes Legales) por título dentro de los documentos del proponente.",
+            motivo="No se encontró el formato de Pagos de Seguridad Social y Aportes Legales por título dentro de los documentos del proponente.",
             archivo=None,
         )
 
@@ -250,7 +290,7 @@ def evaluar_requisito12(
     if representante is None:
         return ResultadoEvaluacionSegSocial(
             cumple=False,
-            motivo="Se encontró el Formato 5, pero no se pudo identificar al representante legal (Formato 1) para confirmar su firma — revisa manualmente.",
+            motivo="Se encontró el formato de seguridad social, pero no se pudo identificar al representante legal (Formato 1) para confirmar su firma — revisa manualmente.",
             archivo=archivo,
         )
 
