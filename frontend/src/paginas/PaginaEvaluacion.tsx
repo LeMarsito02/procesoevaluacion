@@ -3,6 +3,7 @@ import type { ResultadoRequisito } from '../api'
 import Icono from '../components/Icono'
 import AntecedentesProponente from '../components/AntecedentesProponente'
 import DocumentosFinales from '../components/DocumentosFinales'
+import PliegoProceso from '../components/PliegoProceso'
 import PanelProponente from '../components/PanelProponente'
 import PasoDatos from '../components/PasoDatos'
 import PasoEvaluacion from '../components/PasoEvaluacion'
@@ -364,6 +365,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           }
           onVolver={null}
           onEvaluar={confirmarDatos}
+          antesDeAcciones={<PliegoProceso evaluacionId={id} pliego={inicial.pliego} />}
         />
       )}
 

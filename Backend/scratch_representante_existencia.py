@@ -26,22 +26,33 @@ ENCABEZADO_PAGINA_RE = re.compile(
     r"(?:\s*VERIFIQUE EL CONTENIDO.{0,300}?(?:GENERADA AL MOMENTO DE SU EXPEDICION|ELECTRONICOS[^.]*\.))?",
     re.DOTALL,
 )
-SECCION_NOMBRAMIENTOS_RE = re.compile(r"NOMBRAMIENTOS?\s+(?:DE\s+)?REPRESENTANTES? LEGAL(?:ES)?(.{0,3000})", re.DOTALL)
+SECCION_REPRESENTANTES_RE = re.compile(r"REPRESENTANTES? LEGAL(?:ES)?")
+TABLA_RE = re.compile(r"CARGO\s+NOMBRE\s+(?:DE\s+)?IDENTIFICACION")
+# Una fila: cargo, nombre, documento. En la Cámara de Bogotá el cargo sale
+# partido ("REPRESENTANTE <nombre> C.C. NO. 123 LEGAL"), por eso "LEGAL" y
+# "SUPLENTE" pueden venir después del número.
 FILA_RE = re.compile(
-    r"\b(GERENTE(?: GENERAL)?|REPRESENTANTE LEGAL(?: PRINCIPAL)?|PRESIDENTE|DIRECTOR(?:A)? EJECUTIV[OA])"
-    r"(?!\s+SUPLENTE)\s+([A-ZÑ][A-ZÑ ]{5,60}?)\s+(?:C\.?\s*C\.?|CEDULA DE CIUDADANIA)\s*(?:NO\.?|N[°º]\.?)?\s*(\d[\d.]{5,})"
+    r"(GERENTE(?:\s+GENERAL)?|REPRESENTANTE(?:\s+LEGAL)?(?:\s+PRINCIPAL)?|PRESIDENTE|DIRECTOR[A]?\s+EJECUTIV[OA])"
+    r"\s+([A-ZÑ][A-ZÑ ]{5,60}?)\s+(?:C\.?\s*[CE]\.?|CEDULA DE (?:CIUDADANIA|EXTRANJERIA))\s*(?:NO\.?|N[°º]\.?)?\s*(\d[\d.]{4,})"
+    r"(\s+\S+(?:\s+\S+)?)?"
 )
 
 
 def representante(texto_norm: str) -> tuple[str, str] | None:
-    seccion = SECCION_NOMBRAMIENTOS_RE.search(texto_norm)
-    if not seccion:
-        return None
-    limpio = ENCABEZADO_PAGINA_RE.sub(" ", seccion.group(1))
-    fila = FILA_RE.search(limpio)
-    if not fila:
-        return None
-    return re.sub(r"\s+", " ", fila.group(2)).strip(), re.sub(r"\D", "", fila.group(3))
+    """Representante legal principal: la primera fila de la tabla de
+    nombramientos de representantes legales que no sea de un suplente."""
+    limpio = ENCABEZADO_PAGINA_RE.sub(" ", texto_norm)
+    for seccion in SECCION_REPRESENTANTES_RE.finditer(limpio):
+        tabla = TABLA_RE.search(limpio, seccion.end(), seccion.end() + 1500)
+        if not tabla:
+            continue
+        for fila in FILA_RE.finditer(limpio, tabla.end(), tabla.end() + 1500):
+            cargo, cola = fila.group(1), fila.group(4) or ""
+            if "SUPLENTE" in cargo or "SUPLENTE" in cola or "SUPLENTE" in fila.group(2):
+                continue
+            nombre = re.sub(r"\s+", " ", fila.group(2)).strip()
+            return nombre, re.sub(r"\D", "", fila.group(3)).lstrip("0")
+    return None
 
 
 def main() -> None:

@@ -91,7 +91,7 @@ function Stepper({ lista, paso, pasosDisponibles, onIr }: PropsPasos) {
               aria-current={estado === 'active' ? 'step' : undefined}
             >
               <span className="step-dot">{estado === 'done' ? <Icono nombre="check" tam={13} grosor={3} /> : i + 1}</span>
-              {p.nombre}
+              <span className="step-nombre">{p.nombre}</span>
             </button>
           </div>
         )

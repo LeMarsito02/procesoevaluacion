@@ -16,6 +16,8 @@ export interface InfoRequisito {
   grupo: GrupoRequisito
   pistas?: string[]
   personalizado?: boolean
+  // Exigencia del pliego que revisa una persona (el programa no la verifica solo).
+  manual?: boolean
 }
 
 export const GRUPOS: Record<GrupoRequisito, string> = {

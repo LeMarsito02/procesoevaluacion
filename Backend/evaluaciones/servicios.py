@@ -298,9 +298,17 @@ def plantilla_activa(entidad_id: UUID, tipo: str) -> PlantillaEvaluacion | None:
 
 
 def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
+    """La evaluación de la entidad (su plantilla) con los ajustes del pliego de
+    este proceso que una persona aceptó."""
+    from evaluaciones.pliego import aplicar_ajustes
+
     if evaluacion.plantilla_id:
-        return criterios.DefinicionEvaluacion.model_validate(evaluacion.plantilla.definicion)
-    return criterios.definicion_sistema(evaluacion.tipo)
+        definicion = criterios.DefinicionEvaluacion.model_validate(evaluacion.plantilla.definicion)
+    else:
+        definicion = criterios.definicion_sistema(evaluacion.tipo)
+    if evaluacion.tipo == "juridica" and evaluacion.proceso.ajustes_pliego:
+        definicion = aplicar_ajustes(definicion, evaluacion.proceso.ajustes_pliego)
+    return definicion
 
 
 def catalogo(definicion: criterios.DefinicionEvaluacion) -> list[dict]:
@@ -318,6 +326,7 @@ def catalogo(definicion: criterios.DefinicionEvaluacion) -> list[dict]:
                 "grupo": r.grupo,
                 "pistas": pistas,
                 "personalizado": r.verificacion == criterios.PERSONALIZADO,
+                "manual": r.verificacion == criterios.MANUAL,
             }
         )
     return salida

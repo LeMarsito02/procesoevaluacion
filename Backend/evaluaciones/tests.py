@@ -1250,3 +1250,232 @@ class AntecedentesEmpresaTests(TestCase):
         )
         r = self.evaluar(CONFIG_RNMC, [rnmc_persona], [Empresa("CONSTRUCTORA EJEMPLO S.A.S", "900123456")])
         self.assertTrue(r.cumple, r.motivo)
+
+
+class IntegrantesNaturalesTests(TestCase):
+    """Criterio del abogado: al integrante persona natural de un consorcio se
+    le piden todos los antecedentes menos el REDAM."""
+
+    def test_se_agregan_sin_repetir_al_representante(self):
+        from motor.evaluacion.antecedentes import _con_integrantes_naturales
+        from motor.evaluacion.proponente_plural import Integrante
+
+        personas = [("JUAN CARLOS PEREZ GOMEZ", "79123456")]
+        integrantes = [
+            Integrante("CONSTRUCTORA EJEMPLO S.A.S", "900123456-5", False),
+            Integrante("MARIA LUISA TORRES DIAZ", "52111222", True),
+            Integrante("JUAN CARLOS PEREZ GOMEZ", "79.123.456", True),  # también es el representante
+        ]
+        self.assertEqual(
+            _con_integrantes_naturales(personas, integrantes),
+            [("JUAN CARLOS PEREZ GOMEZ", "79123456"), ("MARIA LUISA TORRES DIAZ", "52111222")],
+        )
+
+    def test_el_redam_no_se_le_pide_al_integrante(self):
+        from motor.evaluacion.antecedentes import REQUISITOS_INTEGRANTE_NATURAL
+
+        self.assertNotIn(5, REQUISITOS_INTEGRANTE_NATURAL)
+
+    def test_forma_societaria(self):
+        from motor.evaluacion.proponente_plural import MARCA_PERSONA_JURIDICA_RE
+
+        for empresa in ("INJERR S.A.S", "PC PROYECCION E INGENIERIA SAS", "SESAC S.A", "CODIPRO LTDA.", "UG21 SL SUCURSAL EN COLOMBIA"):
+            self.assertIsNotNone(MARCA_PERSONA_JURIDICA_RE.search(empresa), empresa)
+        for persona in ("GERMAN ALONSO PUENTES GORDO", "MARTA EUGENIA GARCIA BETANCUR", "ARCELIA ARIAS DIAZ"):
+            self.assertIsNone(MARCA_PERSONA_JURIDICA_RE.search(persona), persona)
+
+
+# --- El pliego de cada proceso ---
+def _pagina(numero: int, *lineas: str) -> "object":
+    from motor.pliego.lectura import Pagina
+
+    encabezado = ["DOCUMENTO BASE", f"Código CCE-EJEMPLO-01 Página {numero} de 4"]
+    return Pagina(numero, "\n".join([*encabezado, *lineas, str(numero), "Código CCE-EJEMPLO-01 Versión 1"]))
+
+
+PLIEGO_DE_PRUEBA = [
+    _pagina(1, "CAPÍTULO I. INFORMACIÓN GENERAL ..................... 1", "2.3 LIMITACIÓN A MIPYME ................ 2",
+            "3.3.2 PERSONAS JURÍDICAS ................ 3", "3.4 SEGURIDAD SOCIAL .................... 3",
+            "8.1 GARANTÍA DE SERIEDAD ................ 4"),
+    _pagina(2, "CAPÍTULO II. ELABORACIÓN Y PRESENTACIÓN DE LA OFERTA", "2.3 LIMITACIÓN A MIPYME",
+            "El presente proceso se limita a Mipyme: únicamente podrán participar Mipyme domiciliadas en Colombia."),
+    _pagina(3, "CAPÍTULO III. REQUISITOS HABILITANTES Y SU VERIFICACIÓN", "3.2 CAPACIDAD JURÍDICA",
+            "E. Presentar el certificado del Registro de Deudores Alimentarios Morosos – REDAM en los términos de la Ley",
+            "2097 de 2021",
+            "La Entidad debe consultar los Antecedentes Judiciales en línea en los registros de las bases de datos.",
+            "3.3.2 PERSONAS JURÍDICAS",
+            "a. Fecha de expedición del certificado no mayor a treinta (30) días calendario anteriores a la fecha de cierre.",
+            "c. Las personas jurídicas deberán acreditar que su duración no será inferior a la del plazo del contrato y un año más.",
+            "III. Fotocopia del documento de identificación del representante legal."),
+    _pagina(4, "3.4 CERTIFICACIÓN DE PAGOS AL SISTEMA DE SEGURIDAD SOCIAL",
+            "El proponente acreditará el pago de aportes de seguridad social.",
+            "CAPÍTULO XI. LISTA DE ANEXOS", "11.2 FORMATOS", "1. Formato 1 – Carta de presentación de la oferta",
+            "2. Formato 3 – Experiencia", "3. Formato 14 – Acreditación de Mipyme"),
+]
+
+
+class LecturaPliegoTests(TestCase):
+    def test_secciones_sin_indice_ni_encabezados(self):
+        from motor.pliego.lectura import secciones
+
+        s = {x.numero: x for x in secciones(PLIEGO_DE_PRUEBA)}
+        self.assertIn("3.3.2", s)
+        self.assertEqual(s["3.3.2"].pagina, 3)
+        self.assertNotIn("Página", s["3.2"].texto)  # encabezado repetido fuera
+        self.assertEqual(sum(1 for x in secciones(PLIEGO_DE_PRUEBA) if x.numero == "2.3"), 1)  # el índice no cuenta
+
+    def test_no_borra_contenido_que_parece_numero_de_pagina(self):
+        """"2097 de 2021" es parte de "Ley 2097 de 2021", no un "página 2 de 4"."""
+        from motor.pliego.lectura import secciones
+
+        s = {x.numero: x for x in secciones(PLIEGO_DE_PRUEBA)}
+        self.assertIn("2097 de 2021", s["3.2"].texto)
+
+
+class AnalisisPliegoTests(TestCase):
+    def hallazgos(self, definicion=None):
+        from motor import criterios
+        from motor.pliego.analisis import comparar, extraer
+
+        return {h.id: h for h in comparar(extraer(PLIEGO_DE_PRUEBA), definicion or criterios.definicion_sistema("juridica"))}
+
+    def test_detecta_lo_que_cambia_la_evaluacion(self):
+        h = self.hallazgos()
+        self.assertEqual(h["vigencia_existencia"].tipo, "ajuste_parametro")
+        self.assertEqual((h["vigencia_existencia"].parametro, h["vigencia_existencia"].valor_pliego), ("camara_dias", 30))
+        self.assertEqual(h["vigencia_existencia"].pagina, 3)
+        self.assertIn("treinta (30) días", h["vigencia_existencia"].cita)
+        for requisito in ("duracion_sociedad", "identidad_representante", "limitacion_mipyme"):
+            self.assertEqual(h[requisito].tipo, "requisito_nuevo", requisito)
+            self.assertTrue(h[requisito].requiere_decision)
+        self.assertEqual(h["consulta_antecedentes_entidad"].tipo, "aclaracion")
+        self.assertFalse(h["consulta_antecedentes_entidad"].requiere_decision)
+
+    def test_formatos_y_alcance(self):
+        h = self.hallazgos()
+        tipos = {x.titulo: x.tipo for x in h.values() if x.id.startswith("formato_")}
+        self.assertEqual(tipos.get("Formato 3 – Experiencia"), "fuera_de_alcance")
+        self.assertNotIn("Formato 1 – Carta de presentación de la oferta", tipos)  # ya lo revisa la plantilla
+
+    def test_sin_limitacion_mipyme_no_pide_nada(self):
+        from motor.pliego.analisis import comparar, extraer
+        from motor import criterios
+
+        paginas = list(PLIEGO_DE_PRUEBA)
+        paginas[1] = _pagina(2, "CAPÍTULO II. ELABORACIÓN", "2.3 LIMITACIÓN A MIPYME",
+                             "El presente procedimiento de selección no es susceptible de limitarse a Mipyme.")
+        h = {x.id: x for x in comparar(extraer(paginas), criterios.definicion_sistema("juridica"))}
+        self.assertEqual(h["limitacion_mipyme"].tipo, "informativo")
+
+    def test_si_la_plantilla_ya_usa_30_dias_no_hay_ajuste(self):
+        from motor import criterios
+
+        definicion = criterios.definicion_sistema("juridica")
+        definicion.parametros = {"camara_dias": 30}
+        self.assertNotIn("vigencia_existencia", self.hallazgos(definicion))
+
+    def test_aplicar_ajustes_aceptados(self):
+        from evaluaciones.pliego import aplicar_ajustes
+        from motor import criterios
+
+        h = self.hallazgos()
+        ajustes = [
+            {"id": "vigencia_existencia", "decision": "aceptado", "hallazgo": h["vigencia_existencia"].model_dump()},
+            {"id": "duracion_sociedad", "decision": "aceptado", "hallazgo": h["duracion_sociedad"].model_dump()},
+            {"id": "identidad_representante", "decision": "rechazado", "nota": "No aplica", "hallazgo": h["identidad_representante"].model_dump()},
+        ]
+        base = criterios.definicion_sistema("juridica")
+        ajustada = aplicar_ajustes(base, ajustes)
+        self.assertEqual(ajustada.parametros["camara_dias"], 30)
+        nuevos = ajustada.requisitos[len(base.requisitos):]
+        self.assertEqual([(r.titulo, r.verificacion) for r in nuevos], [("Duración de la sociedad", criterios.MANUAL)])
+        self.assertEqual(nuevos[0].numero, max(r.numero for r in base.requisitos) + 1)
+
+    def test_la_verificacion_manual_queda_pendiente(self):
+        from datetime import date
+
+        from motor import criterios
+        from motor.esquemas.proceso import Proponente
+        from motor.evaluacion.todos import evaluar_requisito
+
+        req = criterios.RequisitoDefinicion(numero=19, titulo="Duración de la sociedad", corto="Duración",
+                                            verificacion=criterios.MANUAL, verifica="Plazo del contrato y un año más")
+        proponente = Proponente(numero_orden=1, hoja="P-01", nombre_proponente="Ejemplo", nombre_archivo="p1.zip", drive_file_id="x")
+        r = evaluar_requisito(proponente, None, req)
+        self.assertFalse(r.cumple)
+        self.assertIn("Verificación manual", r.motivo)
+        self.assertEqual(r.requisito, 19)
+
+    def test_vigencia_en_dias(self):
+        from datetime import date
+
+        from motor import criterios
+        from motor.evaluacion.camara_comercio import limite_expedicion_camara
+
+        with criterios.usar({"camara_dias": 30}):
+            self.assertEqual(limite_expedicion_camara(date(2026, 8, 20))[0], date(2026, 7, 21))
+        self.assertEqual(limite_expedicion_camara(date(2026, 8, 20))[0], date(2026, 7, 20))  # 1 mes
+
+
+class PliegoProcesoTests(BaseEvaluaciones):
+    """El proceso se crea con el pliego analizado y lo que la persona decidió."""
+
+    def analisis(self, entidad=None):
+        from motor.pliego.analisis import extraer
+
+        with mock.patch("evaluaciones.pliego.leer", return_value=extraer(PLIEGO_DE_PRUEBA)):
+            from evaluaciones import pliego
+
+            a, _ = pliego.analizar((entidad or self.entidad1).id, b"%PDF-prueba", "pliego.pdf", self.jefe)
+        return a
+
+    def crear_con(self, analisis_id, decisiones, email="jefe@entidad.gov.co"):
+        c = Cliente()
+        c.entrar(email)
+        datos = {"documento_base": DOCUMENTO_BASE, "carpeta_drive": "x", "proponentes": PROPONENTES,
+                 "analisis_pliego_id": str(analisis_id), "decisiones_pliego": decisiones}
+        return c, c.post("/api/evaluaciones/procesos", datos)
+
+    def test_no_se_crea_sin_decidir_todo(self):
+        _, r = self.crear_con(self.analisis().id, {"vigencia_existencia": {"decision": "aceptado"}})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Falta decidir", r.json()["detail"])
+
+    def test_rechazar_exige_razon(self):
+        a = self.analisis()
+        decisiones = {h: {"decision": "aceptado"} for h in ("vigencia_existencia", "duracion_sociedad", "limitacion_mipyme")}
+        decisiones["identidad_representante"] = {"decision": "rechazado", "nota": ""}
+        _, r = self.crear_con(a.id, decisiones)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Explique", r.json()["detail"])
+
+    def test_los_ajustes_llegan_a_la_evaluacion_y_al_reporte(self):
+        from evaluaciones.models import Evaluacion
+        from evaluaciones.reporte import generar_reporte
+
+        a = self.analisis()
+        decisiones = {h: {"decision": "aceptado"} for h in ("vigencia_existencia", "duracion_sociedad", "limitacion_mipyme")}
+        decisiones["identidad_representante"] = {"decision": "rechazado", "nota": "La cédula se revisa con el RUP."}
+        c, r = self.crear_con(a.id, decisiones)
+        self.assertEqual(r.status_code, 201, r.content)
+        evaluacion = Evaluacion.objects.get(pk=r.json()[0]["id"])
+        definicion = servicios.definicion_de(evaluacion)
+        self.assertEqual(definicion.parametros["camara_dias"], 30)
+        self.assertIn("Duración de la sociedad", [x.titulo for x in definicion.requisitos])
+        self.assertNotIn("Documento de identidad del representante legal", [x.titulo for x in definicion.requisitos])
+        detalle = c.get(f"/api/evaluaciones/{evaluacion.id}").json()
+        self.assertEqual(detalle["pliego"]["nombre_archivo"], "pliego.pdf")
+        self.assertIn("Duración de la sociedad", [x["titulo"] for x in detalle["catalogo"]])
+        contenido, _ = generar_reporte(evaluacion)
+        self.assertGreater(len(contenido), 1000)
+
+    def test_mismo_pdf_se_reutiliza_y_otra_entidad_no_lo_ve(self):
+        from evaluaciones import pliego
+
+        a = self.analisis()
+        with mock.patch("evaluaciones.pliego.leer", side_effect=AssertionError("no debía releerse")):
+            b, reutilizado = pliego.analizar(self.entidad1.id, b"%PDF-prueba", "otro-nombre.pdf", self.jefe)
+        self.assertTrue(reutilizado)
+        self.assertEqual(a.id, b.id)
+        _, r = self.crear_con(a.id, {}, email="abogado@otraentidad.gov.co")
+        self.assertEqual(r.status_code, 404)

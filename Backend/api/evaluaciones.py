@@ -17,8 +17,10 @@ from cuentas.correo import enviar_asignacion
 from cuentas.models import Entidad, Rol, TipoArea, Usuario
 from cuentas.seguridad import auditar, requiere_rol, sesion_activa
 from evaluaciones import expediente, servicios
+from evaluaciones import pliego as pliego_servicio
 from evaluaciones.tipos import MENSAJE_EN_PREPARACION, TIPOS
 from evaluaciones.models import (
+    AnalisisPliego,
     EstadoEvaluacion,
     EstadoTrabajo,
     PlantillaEvaluacion,
@@ -136,6 +138,11 @@ class CrearProcesoIn(Schema):
     sin_responsable: bool = False
     # Responsable por tipo (tiene prioridad): {"juridica": id, "tecnica": null = sin asignar}.
     responsables: dict[str, UUID | None] | None = None
+    # Análisis del pliego (lo devuelve /procesos/analizar) y la decisión sobre
+    # cada hallazgo que cambia la evaluación: {id: {"decision": "aceptado" |
+    # "rechazado", "nota": "..."}}.
+    analisis_pliego_id: UUID | None = None
+    decisiones_pliego: dict[str, dict] = {}
 
 
 class ProponenteOut(Schema):
@@ -168,6 +175,9 @@ class EvaluacionDetalleOut(Schema):
     revisiones: list[RevisionOut]
     # Requisitos de esta evaluación según la plantilla de la entidad.
     catalogo: list[dict]
+    # Pliego del proceso: {nombre_archivo, paginas, documento_tipo, ajustes,
+    # aclaraciones} o None si el proceso se creó sin analizarlo.
+    pliego: dict | None = None
 
 
 class AsignarIn(Schema):
@@ -328,6 +338,15 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
     if not datos.proponentes:
         raise HttpError(400, "El proceso no tiene proponentes. Revise la carpeta de Drive.")
 
+    analisis = None
+    ajustes: list[dict] = []
+    if datos.analisis_pliego_id is not None:
+        analisis = get_object_or_404(AnalisisPliego.objects.filter(entidad=entidad), pk=datos.analisis_pliego_id)
+        try:
+            ajustes = pliego_servicio.decidir(analisis, datos.decisiones_pliego, usuario)
+        except ValueError as exc:
+            raise HttpError(400, str(exc)) from exc
+
     gestiona = usuario.es_superadmin or usuario.rol in (Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA)
     responsables: dict[str, Usuario | None] = {}
     for tipo in tipos:
@@ -358,6 +377,8 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
                 documento_base=doc.model_dump(mode="json"),
                 carpeta_drive=datos.carpeta_drive.strip(),
                 proponentes_no_reconocidos=datos.proponentes_no_reconocidos,
+                analisis_pliego=analisis,
+                ajustes_pliego=ajustes,
                 creado_por=usuario,
             )
             Proponente.objects.bulk_create(
@@ -398,6 +419,8 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
                 proponentes=len(datos.proponentes),
                 tipos=tipos,
                 responsables={t: (r.email if r else None) for t, r in responsables.items()},
+                pliego=analisis.nombre_archivo if analisis else None,
+                ajustes_pliego={a["id"]: a["decision"] for a in ajustes},
             )
     except IntegrityError as exc:
         raise HttpError(409, f"Ya existe un proceso con el código {doc.codigo_proceso} en esa entidad.") from exc
@@ -554,7 +577,26 @@ def detalle(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionDetalleOut:
             )
             for r in revisiones
         ],
+        pliego=_pliego_out(proceso),
     )
+
+
+def _pliego_out(proceso: Proceso) -> dict | None:
+    analisis = proceso.analisis_pliego
+    if analisis is None:
+        return None
+    try:
+        vigentes = pliego_servicio.hallazgos(analisis)
+    except Exception:  # noqa: BLE001
+        vigentes = []
+    return {
+        "nombre_archivo": analisis.nombre_archivo,
+        "paginas": analisis.paginas,
+        "documento_tipo": analisis.documento_tipo,
+        "ajustes": proceso.ajustes_pliego,
+        # Lo que no cambia la evaluación pero hay que tener presente al revisar.
+        "aclaraciones": [h.model_dump(mode="json") for h in vigentes if h.tipo in ("aclaracion", "informativo")],
+    }
 
 
 @router.put("/{evaluacion_id}/documento-base", response=ProcesoDocumentoBase)

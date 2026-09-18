@@ -1,5 +1,5 @@
 /** API de procesos y evaluaciones guardados en el servidor. */
-import type { AnalisisResponse, ProcesoDocumentoBase, Proponente, ResultadoRequisito } from './api'
+import type { AnalisisResponse, DecisionPliego, HallazgoPliego, ProcesoDocumentoBase, Proponente, ResultadoRequisito } from './api'
 import type { InfoRequisito } from './requisitos'
 import { detalleError, enviarJson, ErrorApi, pedir, pedirJson } from './http'
 
@@ -89,7 +89,28 @@ export interface EvaluacionDetalle {
   resultados: ResultadoRequisito[]
   revisiones: RevisionGuardada[]
   catalogo: InfoRequisito[]
+  pliego: PliegoProceso | null
 }
+
+/** Decisión tomada al crear el proceso sobre un hallazgo del pliego. */
+export interface AjustePliego {
+  id: string
+  decision: 'aceptado' | 'rechazado'
+  nota: string
+  por: string
+  en: string
+  hallazgo: HallazgoPliego
+}
+
+export interface PliegoProceso {
+  nombre_archivo: string
+  paginas: number
+  documento_tipo: string
+  ajustes: AjustePliego[]
+  aclaraciones: HallazgoPliego[]
+}
+
+export const urlPliego = (evaluacionId: string) => `/api/evaluaciones/${evaluacionId}/pliego`
 
 export interface MiembroCarga extends Persona {
   rol: string
@@ -115,6 +136,8 @@ export const crearProceso = (datos: {
   responsable_id?: string | null
   sin_responsable?: boolean
   responsables?: Record<string, string | null>
+  analisis_pliego_id?: string | null
+  decisiones_pliego?: Record<string, DecisionPliego>
 }) => enviarJson<EvaluacionResumen[]>('/api/evaluaciones/procesos', 'POST', datos)
 
 export const guardarDocumentoBase = (id: string, doc: ProcesoDocumentoBase) =>

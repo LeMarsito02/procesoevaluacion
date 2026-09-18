@@ -7,6 +7,8 @@ MiEvaluador» (con la razón y el documento soporte) o «Validado manualmente po
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 import io
 from collections import defaultdict
 from dataclasses import dataclass
@@ -189,6 +191,45 @@ def _titulo(doc, texto: str, nivel: int = 1):
 
 
 # --- Reporte ---
+def _seccion_pliego(doc, proceso) -> None:
+    """Qué se ajustó de la evaluación por lo que dice el pliego de este proceso,
+    con la cita, la página y quién lo decidió."""
+    analisis = proceso.analisis_pliego
+    _titulo(doc, "Ajustes derivados del pliego", nivel=2)
+    if analisis is None:
+        _parrafo(doc, "El proceso se creó sin análisis del pliego: la evaluación aplica la plantilla de la entidad sin ajustes.")
+        return
+    tipo = f" (documento tipo {analisis.documento_tipo})" if analisis.documento_tipo else ""
+    _parrafo(
+        doc,
+        f"El sistema leyó completo el pliego del proceso, «{analisis.nombre_archivo}», de {analisis.paginas} páginas{tipo}, "
+        "y lo comparó con la plantilla de evaluación de la entidad. Cada diferencia fue presentada al evaluador con la cita "
+        "literal y la página del pliego, y se aplicó solo lo que este aceptó.",
+    )
+    ajustes = proceso.ajustes_pliego or []
+    if not ajustes:
+        _parrafo(doc, "El pliego no exigió ajustes a la evaluación de la entidad.")
+    else:
+        filas = []
+        for a in ajustes:
+            h = a["hallazgo"]
+            if a["decision"] == "aceptado":
+                decision = "Aplicado"
+                if h.get("parametro"):
+                    decision += f": {h.get('valor_plantilla')} → {h.get('valor_pliego_texto') or h.get('valor_pliego')}"
+                elif h.get("tipo") == "requisito_nuevo":
+                    decision += ": requisito agregado"
+            else:
+                decision = f"No aplicado. Razón: {a.get('nota') or '—'}"
+            filas.append([
+                h["titulo"],
+                f"«{h['cita']}» ({h['seccion']}, pág. {h['pagina']})",
+                decision,
+                f"{a['por']}, {fecha_larga(datetime.fromisoformat(a['en']))}",
+            ])
+        _tabla(doc, ["Exigencia del pliego", "Texto del pliego", "Decisión", "Decidió"], filas, [3.4, 7.0, 3.6, 2.6])
+
+
 def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
     evaluacion = Evaluacion.objects.select_related(
         "entidad", "proceso__creado_por", "responsable", "asignada_por", "aprobada_por", "plantilla"
@@ -309,6 +350,7 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
         "incorporó al expediente, indicando la persona consultada y la fecha de expedición del certificado.",
     ):
         _parrafo(doc, texto)
+    _seccion_pliego(doc, proceso)
 
     # 4. Resumen
     proponentes = list(proceso.proponentes.all().order_by("numero_orden"))

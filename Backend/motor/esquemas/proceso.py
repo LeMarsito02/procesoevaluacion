@@ -59,6 +59,11 @@ class AnalisisResponse(BaseModel):
         default_factory=list, description="Archivos de la carpeta de Drive cuyo nombre no siguió el patrón pN <nombre>"
     )
     drive_error: str | None = Field(default=None, description="Motivo por el que no se pudo leer la carpeta de Drive")
+    # Lectura completa del pliego y lo que exige frente a la evaluación de la
+    # entidad: {id, nombre_archivo, paginas, documento_tipo, reutilizado,
+    # hallazgos, secciones}. None si no se pudo analizar (ver pliego_error).
+    pliego: dict | None = None
+    pliego_error: str | None = None
 
 
 class ResultadoRequisito(BaseModel):

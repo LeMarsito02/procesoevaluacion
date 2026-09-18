@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from dateutil.relativedelta import relativedelta
 
@@ -101,6 +101,17 @@ def _tiene_fecha_expedicion(texto_norm: str) -> bool:
         or _FECHA_MES_TEXTO_RE.search(texto_norm)
         or _FECHA_TRAS_CODIGO_VERIFICACION_RE.search(texto_norm)
     )
+
+
+def limite_expedicion_camara(fecha_cierre: date) -> tuple[date, str]:
+    """(fecha de expedición más antigua aceptada, el plazo en palabras). Los
+    pliegos tipo lo fijan en días calendario ("no mayor a treinta (30) días"):
+    con el parámetro "camara_dias" se cuentan días exactos; sin él, meses."""
+    dias = criterios.valor("camara_dias")
+    if dias:
+        return fecha_cierre - timedelta(days=dias), f"{dias} días calendario"
+    meses = criterios.valor("camara_meses")
+    return fecha_cierre - relativedelta(months=meses), f"{meses} {'mes' if meses == 1 else 'meses'}"
 
 
 def _parsear_fecha_expedicion(texto_norm: str) -> date | None:
@@ -288,19 +299,18 @@ def _evaluar_vigencia_documentos(
             archivo=None,
         )
 
+    limite, plazo = limite_expedicion_camara(fecha_cierre)
     motivos = []
     for nombre in encontrados:
         texto_norm = _norm(_texto_encabezado(pdfs, nombre))
         fecha = _parsear_fecha_expedicion(texto_norm)
         if fecha is None:
-            meses = criterios.valor("camara_meses")
             motivos.append(
-                f"no se pudo leer la fecha de expedición de '{nombre}' — confirma manualmente que no supere "
-                f"{meses} {'mes' if meses == 1 else 'meses'}"
+                f"no se pudo leer la fecha de expedición de '{nombre}' — confirma manualmente que no supere {plazo}"
             )
-        elif fecha < fecha_cierre - relativedelta(months=criterios.valor("camara_meses")):
+        elif fecha < limite:
             motivos.append(
-                f"'{nombre}' fue expedido el {fecha.strftime('%d/%m/%Y')}, hace más de {criterios.valor('camara_meses')} {'mes' if criterios.valor('camara_meses') == 1 else 'meses'} "
+                f"'{nombre}' fue expedido el {fecha.strftime('%d/%m/%Y')}, hace más de {plazo} "
                 f"contado desde la fecha de cierre ({fecha_cierre.strftime('%d/%m/%Y')})"
             )
 

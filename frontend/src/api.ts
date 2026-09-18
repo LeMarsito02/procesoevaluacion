@@ -44,6 +44,50 @@ export interface AnalisisResponse {
   proponentes: Proponente[]
   proponentes_no_reconocidos: string[]
   drive_error: string | null
+  pliego: AnalisisPliego | null
+  pliego_error: string | null
+}
+
+export type TipoHallazgo = 'ajuste_parametro' | 'requisito_nuevo' | 'aclaracion' | 'informativo' | 'fuera_de_alcance'
+
+/** Algo que dice el pliego frente a la forma de evaluar de la entidad, con su prueba literal. */
+export interface HallazgoPliego {
+  id: string
+  tipo: TipoHallazgo
+  titulo: string
+  detalle: string
+  seccion: string
+  pagina: number
+  cita: string
+  verificacion: string | null
+  parametro: string | null
+  valor_plantilla: string | number | string[] | null
+  valor_pliego: string | number | string[] | null
+  valor_pliego_texto: string | null
+  requiere_decision: boolean
+}
+
+export interface SeccionPliego {
+  numero: string
+  titulo: string
+  pagina: number
+  ambito: string
+  verificaciones: string[]
+}
+
+export interface AnalisisPliego {
+  id: string
+  nombre_archivo: string
+  paginas: number
+  documento_tipo: string
+  reutilizado: boolean
+  hallazgos: HallazgoPliego[]
+  secciones: SeccionPliego[]
+}
+
+export interface DecisionPliego {
+  decision: 'aceptado' | 'rechazado'
+  nota: string
 }
 
 export interface ResultadoRequisito {
@@ -77,6 +121,7 @@ export async function analizarDocumentoBase(
   fechaCierre: string,
   archivo: File,
   carpetaDrive: string,
+  entidadId?: string | null,
 ): Promise<AnalisisResponse> {
   const formData = new FormData()
   formData.append('codigo_proceso', codigoProceso)
@@ -85,6 +130,7 @@ export async function analizarDocumentoBase(
   if (carpetaDrive.trim()) {
     formData.append('carpeta_drive', carpetaDrive.trim())
   }
+  if (entidadId) formData.append('entidad_id', entidadId)
 
   const res = await pedir(`/api/procesos/analizar`, {
     method: 'POST',
@@ -100,3 +146,13 @@ export async function analizarDocumentoBase(
 }
 
 const extractErrorDetail = detalleError
+
+/** Solo el pliego, cuando la entidad se elige después (superadministrador). */
+export async function analizarPliego(archivo: File, entidadId: string | null): Promise<AnalisisPliego> {
+  const formData = new FormData()
+  formData.append('archivo', archivo)
+  if (entidadId) formData.append('entidad_id', entidadId)
+  const res = await pedir('/api/procesos/pliego', { method: 'POST', body: formData })
+  if (!res.ok) throw new Error(await extractErrorDetail(res))
+  return res.json()
+}

@@ -130,6 +130,15 @@ def evaluar_requisito(
 ) -> ResultadoRequisito:
     if req.verificacion == criterios.PERSONALIZADO:
         return evaluar_requisito_personalizado(proponente, proceso, req)
+    if req.verificacion == criterios.MANUAL:
+        return ResultadoRequisito(
+            hoja=proponente.hoja,
+            numero_orden=proponente.numero_orden,
+            nombre_proponente=proponente.nombre_proponente,
+            requisito=req.numero,
+            cumple=False,
+            motivo=f"Verificación manual que exige el pliego: {req.verifica}",
+        )
     interno = criterios.VERIFICACIONES[req.verificacion].numero_interno
     resultado = EVALUADORES_POR_REQUISITO[interno](proponente, proceso)
     # Los resultados cacheados son objetos compartidos: se copia antes de renumerar.

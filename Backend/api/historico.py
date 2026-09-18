@@ -239,6 +239,16 @@ def aportar_documento(
     return 201, _aportado_out(doc)
 
 
+@router.get("/{evaluacion_id}/pliego")
+def ver_pliego(request: HttpRequest, evaluacion_id: UUID) -> FileResponse:
+    """El pliego con el que se creó el proceso (se conserva, como el expediente)."""
+    evaluacion = _evaluacion(request.auth, evaluacion_id)
+    analisis = evaluacion.proceso.analisis_pliego
+    if analisis is None:
+        raise HttpError(404, "Este proceso se creó sin analizar el pliego.")
+    return FileResponse(analisis.archivo.open("rb"), content_type="application/pdf", filename=analisis.nombre_archivo)
+
+
 @router.get("/{evaluacion_id}/aportados/{documento_id}/archivo")
 def ver_aportado(request: HttpRequest, evaluacion_id: UUID, documento_id: UUID) -> FileResponse:
     evaluacion = _evaluacion(request.auth, evaluacion_id)

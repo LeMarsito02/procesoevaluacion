@@ -82,6 +82,7 @@ async function blob(ruta: string): Promise<{ blob: Blob; nombre: string | null }
 
 export const archivoAportado = (ev: string, id: string) => blob(`${base(ev)}/aportados/${id}/archivo`)
 export const descargarReporteWord = (ev: string) => blob(`${base(ev)}/reporte`)
+export const archivoPliego = (ev: string) => blob(`${base(ev)}/pliego`)
 export const listarExpedientes = (ev: string) => pedirJson<ExpedienteInfo[]>(`${base(ev)}/expedientes`)
 export const regenerarExpediente = (ev: string) => enviarJson<ExpedienteInfo>(`${base(ev)}/expedientes`, 'POST')
 export const descargarExpediente = (ev: string, id: string) => blob(`${base(ev)}/expedientes/${id}/archivo`)

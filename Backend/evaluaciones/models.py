@@ -23,6 +23,12 @@ class Proceso(models.Model):
     documento_base = models.JSONField()
     carpeta_drive = models.CharField(max_length=500, blank=True)
     proponentes_no_reconocidos = models.JSONField(default=list, blank=True)
+    # Análisis del pliego con el que se creó el proceso y lo que decidió la
+    # persona sobre cada hallazgo: [{id, decision, por, por_id, en, nota, hallazgo}].
+    analisis_pliego = models.ForeignKey(
+        "AnalisisPliego", on_delete=models.PROTECT, null=True, blank=True, related_name="procesos"
+    )
+    ajustes_pliego = models.JSONField(default=list, blank=True)
     # Retención: fecha en que se borraron las copias de los documentos de los
     # proponentes (se conservan resultados, decisiones e informes).
     documentos_eliminados_en = models.DateTimeField(null=True, blank=True)
@@ -331,3 +337,36 @@ class Expediente(models.Model):
     class Meta:
         ordering = ["-version"]
         constraints = [models.UniqueConstraint(fields=["evaluacion", "version"], name="expediente_version_unica")]
+
+
+def _ruta_pliego(instance: "AnalisisPliego", filename: str) -> str:
+    return f"pliegos/{instance.entidad_id}/{instance.sha256}.pdf"
+
+
+class AnalisisPliego(models.Model):
+    """Lectura completa de un pliego para una entidad. Se identifica por la
+    huella SHA-256 del PDF: si la entidad vuelve a subir el mismo pliego, se
+    reutiliza en vez de leerlo otra vez. Lo que se guarda es independiente de
+    la plantilla de la entidad; la comparación con ella se hace al crear cada
+    proceso."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    sha256 = models.CharField(max_length=64)
+    nombre_archivo = models.CharField(max_length=300)
+    archivo = models.FileField(upload_to=_ruta_pliego, max_length=300)
+    paginas = models.PositiveIntegerField()
+    documento_tipo = models.CharField(max_length=80, blank=True)
+    # motor.pliego.analisis.Extraccion
+    extraccion = models.JSONField()
+    version = models.PositiveIntegerField()
+    creado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-creado_en"]
+        constraints = [models.UniqueConstraint(fields=["entidad", "sha256"], name="pliego_unico_por_entidad")]
+
+    def __str__(self) -> str:
+        return self.nombre_archivo

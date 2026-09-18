@@ -518,3 +518,37 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 .falta-certificado { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .falta-certificado .enlace { font-size: 11.5px; }
 .datos-consulta { gap: 10px; }
+
+/* --- Lo que exige el pliego --- */
+.pliego-resumen { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); font-size: 14px; }
+.hallazgos { display: flex; flex-direction: column; gap: 12px; }
+.hallazgo { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.hallazgo p { margin: 0; color: var(--ink-2); }
+.hallazgo[data-decision='aceptado'] { border-color: #bfe9df; background: var(--ok-soft); }
+.hallazgo[data-decision='rechazado'] { border-color: #f3c6c1; background: var(--bad-soft); }
+.hallazgo-cabeza { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cita-pliego { margin: 4px 0 0; padding: 8px 12px; border-left: 3px solid var(--brand); background: var(--brand-soft); border-radius: 0 8px 8px 0; font-size: 13px; color: var(--ink); }
+.cita-pliego footer { margin-top: 4px; font-size: 12px; color: var(--ink-3); }
+.decision-botones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.plegable { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--ink); display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.lista-simple { margin: 12px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.check-linea { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; cursor: pointer; }
+.check-linea input { margin-top: 3px; }
+@media (max-width: 640px) {
+  .decision-botones .btn { flex: 1 1 100%; justify-content: center; }
+}
+
+/* En pantallas angostas los pasos no caben junto al logo: solo el número,
+   y el nombre únicamente del paso actual. */
+@media (max-width: 760px) {
+  .topbar-inner { padding: 10px 16px; gap: 12px; }
+  .stepper { min-width: 0; gap: 2px; }
+  .step { padding: 4px; }
+  .step:not([data-state='active']) .step-nombre { display: none; }
+  .step[data-state='active'] { padding-right: 10px; min-width: 0; }
+  .step[data-state='active'] .step-nombre { overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }
+  .step-sep { width: 8px; }
+}
+@media (max-width: 480px) {
+  .brand-text { display: none; }
+}

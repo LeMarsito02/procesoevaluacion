@@ -13,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import atexit
 from datetime import date
+from uuid import UUID
 
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.http import HttpRequest
 from ninja import File, Form, NinjaAPI, Router
@@ -26,6 +28,7 @@ from api.configuracion import router as configuracion_router
 from api.equipo import equipo, plataforma
 from api.evaluaciones import router as evaluaciones_router
 from cuentas.seguridad import sesion_activa
+from evaluaciones import pliego as pliego_servicio
 from evaluaciones.permisos import puede_crear_procesos
 from motor.esquemas.proceso import (
     AnalisisResponse,
@@ -38,6 +41,7 @@ from motor.esquemas.proceso import (
 from motor.evaluacion.todos import EVALUADORES_POR_REQUISITO, EvaluadorProponente
 from motor.integrations.drive import DriveAccessError, DriveConfigError, list_proponentes
 from motor.parsers.documento_base import build_proceso
+from motor.pliego import lectura
 from api.ejecucion import evaluar_todos_en_proceso as _evaluar_todos_en_proceso
 from motor.workers import BrokenProcessPool, detener_pool, obtener_pool
 
@@ -76,6 +80,8 @@ async def analizar_documento_base(
     fecha_cierre: Form[date],
     archivo: File[UploadedFile],
     carpeta_drive: Form[str | None] = None,
+    # Solo para el superadministrador, que elige en qué entidad crea el proceso.
+    entidad_id: Form[UUID | None] = None,
 ) -> AnalisisResponse:
     if not puede_crear_procesos(request.auth):
         raise HttpError(403, "Su rol no permite crear procesos.")
@@ -91,6 +97,8 @@ async def analizar_documento_base(
         proceso = await asyncio.to_thread(build_proceso, codigo_proceso.strip(), fecha_cierre, pdf_bytes)
     except Exception as exc:  # noqa: BLE001
         raise HttpError(422, f"No se pudo analizar el Documento Base: {exc}") from exc
+
+    pliego, pliego_error = await _analizar_pliego(request, pdf_bytes, archivo.name or "pliego.pdf", entidad_id)
 
     proponentes: list[Proponente] = []
     no_reconocidos: list[str] = []
@@ -108,7 +116,65 @@ async def analizar_documento_base(
         proponentes=proponentes,
         proponentes_no_reconocidos=no_reconocidos,
         drive_error=drive_error,
+        pliego=pliego,
+        pliego_error=pliego_error,
     )
+
+
+@procesos.post("/pliego", throttle=[AuthRateThrottle(settings.LIMITES_API["pesado"])])
+async def analizar_pliego(
+    request: HttpRequest, archivo: File[UploadedFile], entidad_id: Form[UUID | None] = None
+) -> dict:
+    """Solo el pliego, cuando la entidad se elige después de leer el documento
+    base (el superadministrador). Si el mismo PDF ya se leyó, se reutiliza."""
+    if not puede_crear_procesos(request.auth):
+        raise HttpError(403, "Su rol no permite crear procesos.")
+    contenido = archivo.read()
+    if not contenido:
+        raise HttpError(400, "El archivo PDF está vacío.")
+    pliego, error = await _analizar_pliego(request, contenido, archivo.name or "pliego.pdf", entidad_id)
+    if pliego is None:
+        raise HttpError(422, error or "No se pudo analizar el pliego.")
+    return pliego
+
+
+async def _analizar_pliego(
+    request: HttpRequest, pdf_bytes: bytes, nombre: str, entidad_id: UUID | None
+) -> tuple[dict | None, str | None]:
+    """Lee el pliego completo (o reutiliza la lectura del mismo PDF) y lo
+    compara con la evaluación de la entidad. La lectura corre en otro hilo; la
+    base de datos solo se toca desde el hilo de la petición, que es el que
+    tiene fijada la entidad para el aislamiento."""
+    usuario = request.auth
+    entidad = usuario.entidad_id if not usuario.es_superadmin else entidad_id
+    if entidad is None:
+        return None, "Elija la entidad para analizar el pliego contra su forma de evaluar."
+    try:
+        sha = lectura.huella(pdf_bytes)
+        analisis = await sync_to_async(pliego_servicio.vigente)(entidad, sha)
+        reutilizado = analisis is not None
+        if analisis is None:
+            extraccion = await asyncio.to_thread(pliego_servicio.leer, pdf_bytes)
+            analisis = await sync_to_async(pliego_servicio.guardar)(entidad, pdf_bytes, nombre, extraccion, usuario)
+        hallazgos = await sync_to_async(pliego_servicio.hallazgos)(analisis)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"No se pudo analizar el pliego completo: {exc}"
+    from motor import criterios
+
+    secciones = [
+        {**s, "verificaciones": [criterios.VERIFICACIONES[v].titulo for v in s["verificaciones"] if v in criterios.VERIFICACIONES]}
+        for s in analisis.extraccion["secciones"]
+        if s["ambito"] == "juridica"
+    ]
+    return {
+        "id": str(analisis.id),
+        "nombre_archivo": analisis.nombre_archivo,
+        "paginas": analisis.paginas,
+        "documento_tipo": analisis.documento_tipo,
+        "reutilizado": reutilizado,
+        "hallazgos": [h.model_dump(mode="json") for h in hallazgos],
+        "secciones": secciones,
+    }, None
 
 
 async def _evaluar_en_proceso(

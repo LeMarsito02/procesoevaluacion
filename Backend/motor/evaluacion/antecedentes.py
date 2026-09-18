@@ -14,7 +14,12 @@ from motor.evaluacion.formato1 import (
     obtener_tipo_proponente,
 )
 from motor.evaluacion.camara_comercio import Empresa, empresas_con_certificado
-from motor.evaluacion.proponente_plural import obtener_personas_a_verificar
+from motor.evaluacion.proponente_plural import (
+    Integrante,
+    datos_formato2,
+    integrantes_formato2,
+    obtener_personas_a_verificar,
+)
 from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.pdf_utils import abrir_pdf, texto_pagina
@@ -156,6 +161,38 @@ def _nit_del_certificado(requisito: int, texto_norm: str) -> str | None:
     return _solo_digitos(match.group(1))[:9] if match else None
 
 
+# A cada integrante persona natural de un consorcio se le piden todos menos el
+# REDAM; el REDAM solo si además es representante o suplente del consorcio, y
+# en ese caso ya está entre las personas a verificar.
+REQUISITOS_INTEGRANTE_NATURAL = frozenset({14, 15, 16, 17})
+
+
+def _puede_tener_integrantes_naturales(pdfs: dict[str, bytes], codigo_proceso: str | None) -> bool:
+    """Solo vale la pena leer los integrantes (con el modelo local) si el
+    Formato 2 tiene más integrantes que empresas con certificado de existencia,
+    o si no se pudieron contar."""
+    formato2 = datos_formato2(pdfs, codigo_proceso)
+    integrantes = len(formato2[1].porcentajes) if formato2 else 0
+    return integrantes == 0 or integrantes > len(empresas_con_certificado(pdfs))
+
+
+def _con_integrantes_naturales(
+    personas: list[tuple[str, str | None]], integrantes: list[Integrante]
+) -> list[tuple[str, str | None]]:
+    todas = list(personas)
+    for integrante in integrantes:
+        if not integrante.persona_natural:
+            continue
+        cedula = _solo_digitos(integrante.identificacion) if integrante.identificacion else None
+        repetida = any(
+            _nombres_coinciden(integrante.nombre, nombre) or (cedula and c and _solo_digitos(c) == cedula)
+            for nombre, c in todas
+        )
+        if not repetida:
+            todas.append((integrante.nombre, integrante.identificacion))
+    return todas
+
+
 class ResultadoEvaluacionAntecedente:
     def __init__(self, cumple: bool, motivo: str | None, archivo: str | None) -> None:
         self.cumple = cumple
@@ -295,6 +332,12 @@ def _evaluar_proponente_antecedente(
 
     tipo_proponente = obtener_tipo_proponente(pdfs)
     personas = obtener_personas_a_verificar(pdfs, tipo_proponente, proceso.codigo_proceso)
+    if (
+        tipo_proponente in ("consorcio", "union_temporal")
+        and config.requisito in REQUISITOS_INTEGRANTE_NATURAL
+        and _puede_tener_integrantes_naturales(pdfs, proceso.codigo_proceso)
+    ):
+        personas = _con_integrantes_naturales(personas, integrantes_formato2(pdfs, proceso.codigo_proceso))
     empresas = (
         empresas_con_certificado(pdfs)
         if config.requisito in REQUISITOS_PERSONA_JURIDICA and tipo_proponente != "persona_natural"

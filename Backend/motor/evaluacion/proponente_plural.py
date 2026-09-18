@@ -340,6 +340,139 @@ def evaluar_requisito4(
     return ResultadoEvaluacionPlural(cumple=cumple, motivo=motivo, datos=datos, archivo_formato2=archivo_formato2)
 
 
+# Una persona jurídica siempre lleva su forma societaria en el nombre; lo que
+# queda sin ella es una persona natural (lo usual: una empresa y un ingeniero).
+MARCA_PERSONA_JURIDICA_RE = re.compile(
+    r"S\.\s?A\.\s?S|\bSAS\b|\bS\.\s?A\b|\bLTDA\b|\bLIMITADA\b|\bE\.\s?U\b|\bS\.?\s?EN\s?C\b"
+    r"|\bSUCURSAL\b|\bSOCIEDAD\b|\bCORPORACION\b|\bFUNDACION\b|\bCOOPERATIVA\b|\bS\.\s?L\b|\bINC\b|\bBIC\b"
+)
+
+
+@dataclass(frozen=True)
+class Integrante:
+    nombre: str
+    identificacion: str | None
+    persona_natural: bool
+
+
+_INSTRUCCION_INTEGRANTES = (
+    "Este es el documento de conformación de un consorcio o unión temporal. Lista TODOS sus integrantes, con el "
+    "nombre completo tal como aparece (razón social si es empresa) y su número de identificación (NIT o cédula) si "
+    'aparece. Responde JSON: {"integrantes": [{"nombre": str, "identificacion": str|null}]}'
+)
+
+
+_PORCENTAJE_CELDA_RE = re.compile(r"^\s*(\d{1,3}(?:[.,]\d+)?)\s*%\s*$")
+_NIT_CELDA_RE = re.compile(r"\bN\.?I\.?T\.?\s*(?:NO\.?|N[°º])?\s*:?\s*(\d[\d.\s]{6,}\d(?:\s*[-–]\s*\d)?)")
+
+
+# NIT pegado al final del nombre sin la palabra "NIT": "V2 INGENIERIA S.A.S. 900.657.246-1".
+_NIT_FINAL_RE = re.compile(r"\s(\d{3}\.?\d{3}\.?\d{3}\s*[-–]\s*\d)\s*$")
+
+
+def _celda_del_nombre(celdas: list[str]) -> str:
+    """Si la fila trae otras columnas (actividades a cargo de cada integrante),
+    la celda del nombre es la que tiene forma societaria o NIT; si ninguna la
+    tiene, la más corta con forma de nombre de persona (2 a 6 palabras sin
+    números). Si no se puede elegir, se unen."""
+    if len(celdas) <= 1:
+        return celdas[0] if celdas else ""
+    con_marca = [c for c in celdas if MARCA_PERSONA_JURIDICA_RE.search(c) or _NIT_CELDA_RE.search(c)]
+    if len(con_marca) == 1:
+        return con_marca[0]
+    persona = [c for c in celdas if 2 <= len(c.split()) <= 6 and not re.search(r"\d", c)]
+    if persona:
+        return min(persona, key=len)
+    return " ".join(celdas)
+
+
+def _integrantes_de_tabla(contenido: bytes) -> list[Integrante]:
+    """Integrantes leídos de la tabla "Nombre del integrante / Compromiso (%)"
+    por coordenadas (pdfplumber). Cada fila con porcentaje abre un integrante;
+    las filas siguientes sin porcentaje son el resto de su nombre (renglones
+    partidos) o su NIT. Vacía si no hay tabla legible."""
+    from motor.procesamiento.pdf_utils import abrir_pdf
+
+    with abrir_pdf(contenido) as pdf:
+        for page in pdf.pages[:PAGINAS_A_REVISAR]:
+            for tabla in page.extract_tables():
+                filas = [[re.sub(r"\s+", " ", c or "").strip() for c in fila] for fila in tabla]
+                if not any("NOMBRE DEL INTEGRANTE" in _norm(" ".join(f)) for f in filas):
+                    continue
+                crudos: list[dict] = []
+                for fila in filas:
+                    celdas = [c for c in fila if c]
+                    texto = _norm(" ".join(celdas))
+                    if not celdas or "NOMBRE DEL INTEGRANTE" in texto or re.match(r"^(?:TOTAL|\(%\))", texto):
+                        continue
+                    porcentaje = next((c for c in celdas if _PORCENTAJE_CELDA_RE.match(c)), None)
+                    otras = [_norm(c) for c in celdas if not _PORCENTAJE_CELDA_RE.match(c)]
+                    resto = _celda_del_nombre(otras)
+                    nit = _NIT_CELDA_RE.search(resto) or _NIT_FINAL_RE.search(resto)
+                    nombre = _NIT_FINAL_RE.sub("", _NIT_CELDA_RE.sub("", resto)).strip(" .,:-")
+                    if porcentaje is not None:
+                        crudos.append({"nombre": nombre, "nit": nit.group(1) if nit else None})
+                    elif crudos:
+                        if nombre and not crudos[-1]["nit"] and not nit:
+                            crudos[-1]["nombre"] = f"{crudos[-1]['nombre']} {nombre}".strip()
+                        if nit and not crudos[-1]["nit"]:
+                            crudos[-1]["nit"] = nit.group(1)
+                integrantes = [
+                    Integrante(re.sub(r"\s+", " ", c["nombre"]), c["nit"], not MARCA_PERSONA_JURIDICA_RE.search(c["nombre"]) and not c["nit"])
+                    for c in crudos
+                    if len(c["nombre"].split()) >= 2
+                ]
+                if len(integrantes) >= 2:
+                    return integrantes
+            page.flush_cache()
+    return []
+
+
+@memo_por_pdfs
+def integrantes_formato2(pdfs: dict[str, bytes], codigo_proceso: str | None = None) -> list[Integrante]:
+    """Integrantes del consorcio o unión temporal según su Formato 2. Primero
+    se lee la tabla de integrantes por coordenadas; si no se puede, el modelo
+    local, y cada nombre suyo se acepta solo si todas sus palabras están en la
+    tabla. Si ninguno funciona, devuelve una lista vacía."""
+    encontrado = encontrar_formato2(pdfs, codigo_proceso)
+    if encontrado is None:
+        return []
+    archivo, texto = encontrado
+    try:
+        de_tabla = _integrantes_de_tabla(pdfs[archivo])
+    except Exception:  # noqa: BLE001
+        de_tabla = []
+    if de_tabla:
+        return de_tabla
+    # Respaldo: el modelo local (lento en CPU, por eso solo si la tabla no se leyó).
+    # Cada nombre se verifica contra la tabla de integrantes, no contra todo el
+    # documento: el representante del consorcio y el nombre del propio
+    # consorcio también aparecen en él y el modelo a veces los lista.
+    tabla = TABLA_INTEGRANTES_RE.search(_norm(texto))
+    referencia = tabla.group(1) if tabla else texto
+    # Se le manda el documento completo: con solo la tabla (que sale mezclada
+    # por el diseño a dos columnas) partía mal los nombres.
+    respuesta = consultar_json(_INSTRUCCION_INTEGRANTES, texto)
+    lista = respuesta.get("integrantes") if isinstance(respuesta, dict) else None
+    if not isinstance(lista, list):
+        return []
+    integrantes: list[Integrante] = []
+    for dato in lista:
+        if not isinstance(dato, dict):
+            continue
+        nombre = dato.get("nombre")
+        if not isinstance(nombre, str) or len(nombre.split()) < 2 or not aparece_en_texto(nombre, referencia):
+            continue
+        if re.match(r"\s*(?:CONSORCIO|UNION TEMPORAL)\b", _norm(nombre)) or "%" in nombre:
+            continue
+        nombre = re.sub(r"\s+", " ", _norm(nombre)).strip(" .,")
+        identificacion = dato.get("identificacion")
+        if not (isinstance(identificacion, str) and aparece_en_texto(identificacion, texto, numerico=True)):
+            identificacion = None
+        integrantes.append(Integrante(nombre, identificacion, not MARCA_PERSONA_JURIDICA_RE.search(nombre)))
+    return integrantes
+
+
 @memo_por_pdfs
 def obtener_personas_a_verificar(
     pdfs: dict[str, bytes], tipo_proponente: str | None, codigo_proceso: str | None = None

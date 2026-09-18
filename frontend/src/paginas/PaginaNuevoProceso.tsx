@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { analizarDocumentoBase, type Proponente } from '../api'
+import { analizarDocumentoBase, analizarPliego, type AnalisisPliego, type DecisionPliego, type Proponente } from '../api'
 import PasoDatos from '../components/PasoDatos'
 import PasoNuevo from '../components/PasoNuevo'
+import PasoPliego from '../components/PasoPliego'
 import Topbar from '../components/Topbar'
 import { PASOS_NUEVO, type Paso } from '../pasos'
 import { propsDatos, useDatosProceso } from '../datosProceso'
@@ -12,7 +13,7 @@ import { useSesion } from '../sesion'
 import QuienEvalua from './QuienEvalua'
 import { SELECCION_INICIAL, type SeleccionTipos } from './seleccionTipos'
 
-/** Asistente: Documento Base y carpeta de Drive → datos del proceso → crear. */
+/** Asistente: Documento Base y carpeta de Drive → datos del proceso → lo que exige el pliego → crear. */
 export default function PaginaNuevoProceso() {
   const [paso, setPaso] = useState<Paso>('nuevo')
   const [codigoProceso, setCodigoProceso] = useState('')
@@ -26,6 +27,14 @@ export default function PaginaNuevoProceso() {
   const [driveError, setDriveError] = useState<string | null>(null)
   const [creando, setCreando] = useState(false)
   const [errorCrear, setErrorCrear] = useState<string | null>(null)
+  // Análisis del pliego contra la plantilla de la entidad (para el superadmin
+  // se hace cuando ya eligió la entidad) y la decisión sobre cada hallazgo.
+  const [pliego, setPliego] = useState<AnalisisPliego | null>(null)
+  const [pliegoEntidad, setPliegoEntidad] = useState<string | null>(null)
+  const [pliegoError, setPliegoError] = useState<string | null>(null)
+  const [analizandoPliego, setAnalizandoPliego] = useState(false)
+  const [decisiones, setDecisiones] = useState<Record<string, DecisionPliego>>({})
+  const [sinPliego, setSinPliego] = useState(false)
   const datos = useDatosProceso()
   const { usuario } = useSesion()!
   const esSuper = usuario.rol === 'superadmin'
@@ -43,11 +52,35 @@ export default function PaginaNuevoProceso() {
       setProponentes(r.proponentes)
       setNoReconocidos(r.proponentes_no_reconocidos)
       setDriveError(r.drive_error)
+      setPliego(r.pliego)
+      setPliegoEntidad(r.pliego ? entidadId : null)
+      setPliegoError(r.pliego_error)
+      setDecisiones({})
+      setSinPliego(false)
       setPaso('datos')
     } catch (err) {
       setError(mensajeDe(err, 'No se pudo leer el Documento Base. Verifique que sea el PDF correcto.'))
     } finally {
       setAnalizando(false)
+    }
+  }
+
+  async function irAlPliego() {
+    setPaso('pliego')
+    // El superadmin eligió la entidad después de leer el documento: se compara con la suya.
+    if (archivo && (!pliego || pliegoEntidad !== entidadId)) {
+      setAnalizandoPliego(true)
+      setPliegoError(null)
+      try {
+        setPliego(await analizarPliego(archivo, esSuper ? entidadId : null))
+        setPliegoEntidad(entidadId)
+        setDecisiones({})
+      } catch (err) {
+        setPliego(null)
+        setPliegoError(mensajeDe(err, 'No se pudo leer el pliego.'))
+      } finally {
+        setAnalizandoPliego(false)
+      }
     }
   }
 
@@ -62,6 +95,8 @@ export default function PaginaNuevoProceso() {
         proponentes_no_reconocidos: noReconocidos,
         tipos: tiposElegidos.map(([clave]) => clave),
         entidad_id: esSuper ? entidadId : null,
+        analisis_pliego_id: pliego?.id ?? null,
+        decisiones_pliego: pliego ? decisiones : {},
         // El evaluador queda a cargo de lo que crea; los demás eligen por tipo.
         ...(usuario.rol === 'evaluador'
           ? {}
@@ -82,6 +117,7 @@ export default function PaginaNuevoProceso() {
 
   const disponibles = new Set<Paso>(['nuevo'])
   if (proponentes.length || datos.lotes.length) disponibles.add('datos')
+  if (paso === 'pliego') disponibles.add('pliego')
 
   return (
     <>
@@ -106,6 +142,34 @@ export default function PaginaNuevoProceso() {
           onAnalizar={analizar}
           onCancelar={() => navegar('/')}
         />
+      ) : paso === 'pliego' ? (
+        <>
+          {errorCrear && (
+            <div className="page" style={{ paddingBottom: 0 }}>
+              <div className="callout callout-bad" role="alert">
+                {errorCrear}
+              </div>
+            </div>
+          )}
+          <PasoPliego
+            pliego={pliego}
+            cargando={analizandoPliego}
+            error={pliegoError}
+            decisiones={decisiones}
+            onDecidir={(id, d) => setDecisiones((prev) => ({ ...prev, [id]: d }))}
+            onReintentar={() => {
+              setPliego(null)
+              setPliegoEntidad(null)
+              void irAlPliego()
+            }}
+            sinPliegoConfirmado={sinPliego}
+            onConfirmarSinPliego={setSinPliego}
+            ocupado={creando}
+            textoAccion={`Crear proceso con ${proponentes.length} proponentes`}
+            onVolver={() => setPaso('datos')}
+            onCrear={crear}
+          />
+        </>
       ) : (
         <>
           {errorCrear && (
@@ -123,12 +187,12 @@ export default function PaginaNuevoProceso() {
             noReconocidos={noReconocidos}
             driveError={driveError}
             hayResultados={false}
-            textoAccion={`Crear proceso con ${proponentes.length} proponentes`}
-            ocupado={creando}
+            textoAccion="Continuar: lo que exige el pliego"
+            ocupado={analizandoPliego}
             deshabilitado={(esSuper && !entidadId) || tiposElegidos.length === 0}
             antesDeAcciones={<QuienEvalua entidadId={entidadId} seleccion={seleccion} onEntidad={setEntidadId} onSeleccion={setSeleccion} />}
             onVolver={() => setPaso('nuevo')}
-            onEvaluar={crear}
+            onEvaluar={irAlPliego}
           />
         </>
       )}

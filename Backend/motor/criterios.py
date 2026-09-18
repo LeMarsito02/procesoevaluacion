@@ -119,6 +119,18 @@ PARAMETROS: dict[str, Parametro] = {
             ("juridica.sanciones_rup",),
         ),
         Parametro(
+            "camara_dias",
+            "Vigencia de los certificados de Cámara de Comercio en días",
+            "Días calendario antes del cierre (los pliegos tipo dicen \"no mayor a treinta (30) días\"). Si se "
+            "indica, reemplaza a la vigencia en meses.",
+            0,
+            "entero",
+            0,
+            365,
+            "días",
+            ("juridica.existencia", "juridica.rup"),
+        ),
+        Parametro(
             "smmlv",
             "Salario mínimo mensual legal vigente",
             "Del año del proceso. Los certificados de Cámara de Comercio suelen expresar el límite de cuantía del "
@@ -274,6 +286,9 @@ VERIFICACIONES: dict[str, Verificacion] = {
 
 VERIFICACION_POR_NUMERO_INTERNO = {v.numero_interno: v for v in VERIFICACIONES.values()}
 PERSONALIZADO = "personalizado"
+# Exigencia del pliego que el motor no sabe revisar: queda en la evaluación
+# como pendiente de una persona, para que nunca se pase por alto.
+MANUAL = "manual"
 
 
 # --- Requisitos nuevos armados con bloques ---
@@ -331,6 +346,9 @@ class RequisitoDefinicion(BaseModel):
         if self.verificacion == PERSONALIZADO:
             if self.config is None:
                 raise ValueError(f"El requisito {self.numero} necesita su configuración de bloques.")
+        elif self.verificacion == MANUAL:
+            if not self.verifica.strip():
+                raise ValueError(f"El requisito {self.numero} necesita decir qué se verifica.")
         elif self.verificacion not in VERIFICACIONES:
             raise ValueError(f"Verificación desconocida: {self.verificacion}")
         if self.grupo not in GRUPOS:
