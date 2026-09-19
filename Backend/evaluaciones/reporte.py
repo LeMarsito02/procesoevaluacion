@@ -24,6 +24,7 @@ from docx.shared import Cm, Pt, RGBColor
 
 from evaluaciones import servicios
 from evaluaciones.models import DocumentoAportado, EstadoEvaluacion, Evaluacion, PersonaVerificada, Resultado, Revision
+from motor import criterios
 from motor.esquemas.proceso import ProcesoDocumentoBase, ResultadoRequisito
 
 AZUL = RGBColor(0x00, 0x14, 0x3C)
@@ -230,14 +231,43 @@ def _seccion_pliego(doc, proceso) -> None:
         _tabla(doc, ["Exigencia del pliego", "Texto del pliego", "Decisión", "Decidió"], filas, [3.4, 7.0, 3.6, 2.6])
 
 
+def notas_del_pliego(proceso, definicion) -> dict[int, str]:
+    """Por requisito, lo que cambió debido al pliego (aceptado por el
+    evaluador), con la sección y la página: "Debido al pliego (3.4, pág.
+    12): 1 mes → 30 días"."""
+    notas: dict[int, list[str]] = defaultdict(list)
+    for a in proceso.ajustes_pliego or []:
+        if a.get("decision") != "aceptado":
+            continue
+        h = a["hallazgo"]
+        donde = f"{h.get('seccion') or 'pliego'}, pág. {h.get('pagina')}"
+        propuesto = h.get("requisito_propuesto") or {}
+        if h.get("parametro"):
+            cambio = f"{h.get('valor_plantilla')} → {h.get('valor_pliego_texto') or h.get('valor_pliego')}"
+            numeros = [r.numero for r in definicion.requisitos if r.verificacion == h.get("verificacion")]
+        elif h.get("tipo") == "requisito_nuevo":
+            cambio = "requisito exigido por el pliego"
+            numeros = [r.numero for r in definicion.requisitos
+                       if r.titulo == (propuesto.get("titulo") or "")[:200] or
+                       (propuesto.get("verificacion") not in (None, criterios.MANUAL, criterios.PERSONALIZADO)
+                        and r.verificacion == propuesto.get("verificacion"))][:1]
+        else:
+            continue
+        for n in numeros:
+            notas[n].append(f"Debido al pliego ({donde}): {cambio}.")
+    return {n: " ".join(dict.fromkeys(v)) for n, v in notas.items()}
+
+
 def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
     evaluacion = Evaluacion.objects.select_related(
         "entidad", "proceso__creado_por", "responsable", "asignada_por", "aprobada_por", "plantilla"
     ).get(pk=evaluacion.pk)
     proceso = evaluacion.proceso
     documento_base = ProcesoDocumentoBase.model_validate(proceso.documento_base)
-    catalogo = servicios.catalogo(servicios.definicion_de(evaluacion))
+    definicion = servicios.definicion_de(evaluacion)
+    catalogo = servicios.catalogo(definicion)
     info = {c["numero"]: c for c in catalogo}
+    por_pliego = notas_del_pliego(proceso, definicion)
     orden = [c["numero"] for c in catalogo]
     tipo = evaluacion.get_tipo_display().lower()
     caracter = {"juridica": "jurídico", "tecnica": "técnico", "financiera": "financiero"}.get(evaluacion.tipo, tipo)
@@ -423,6 +453,8 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
                 continue
             v = validacion(r, revisiones.get((p.id, n)), info[n]["verifica"])
             detalle = f"{v.forma}. {v.detalle}"
+            if n in por_pliego:
+                detalle += f" {por_pliego[n]}"
             for d in aportados[(p.id, n)]:
                 detalle += (
                     f" Certificado consultado y aportado por {d.subido_por.nombre_completo if d.subido_por else 'el evaluador'}"

@@ -1515,6 +1515,14 @@ class PliegoProcesoTests(BaseEvaluaciones):
         self.assertIn("Duración de la sociedad", [x["titulo"] for x in detalle["catalogo"]])
         contenido, _ = generar_reporte(evaluacion)
         self.assertGreater(len(contenido), 1000)
+        from evaluaciones.reporte import notas_del_pliego
+
+        notas = notas_del_pliego(evaluacion.proceso, definicion)
+        existencia = next(x.numero for x in definicion.requisitos if x.verificacion == "juridica.existencia")
+        duracion = next(x.numero for x in definicion.requisitos if x.titulo == "Duración de la sociedad")
+        self.assertIn("Debido al pliego", notas[existencia])
+        self.assertIn("30 días", notas[existencia])
+        self.assertIn("pág.", notas[duracion])
 
     def test_mismo_pdf_se_reutiliza_y_otra_entidad_no_lo_ve(self):
         from evaluaciones import pliego
