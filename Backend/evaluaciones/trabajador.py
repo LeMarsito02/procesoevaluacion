@@ -17,6 +17,7 @@ from django.utils import timezone
 from api.ejecucion import evaluar_todos_en_proceso
 from cuentas.correo import enviar_evaluacion_terminada
 from evaluaciones.expediente import atender_pendientes
+from evaluaciones.pliego import atender_lecturas_pendientes
 from evaluaciones.models import EstadoTrabajo, Trabajador, Trabajo
 from evaluaciones.servicios import (
     PENDIENTES,
@@ -139,8 +140,19 @@ async def trabajar(capacidad: int, una_vez: bool = False) -> None:
             except TimeoutError:
                 pass
 
+    async def pliegos():
+        # Lectura profunda del pliego con la IA local: minutos por pliego, en
+        # su propio hilo, de a uno (el modelo ocupa la GPU).
+        while not detener.is_set():
+            await sync_to_async(atender_lecturas_pendientes, thread_sensitive=False)()
+            try:
+                await asyncio.wait_for(detener.wait(), 5)
+            except TimeoutError:
+                pass
+
     tarea_latidos = asyncio.create_task(latidos())
     tarea_expedientes = asyncio.create_task(expedientes()) if not una_vez else None
+    tarea_pliegos = asyncio.create_task(pliegos()) if not una_vez else None
     try:
         await asyncio.gather(*(cupo() for _ in range(capacidad)))
     finally:
@@ -148,6 +160,8 @@ async def trabajar(capacidad: int, una_vez: bool = False) -> None:
         await tarea_latidos
         if tarea_expedientes is not None:
             await tarea_expedientes
+        if tarea_pliegos is not None:
+            await tarea_pliegos
         await sync_to_async(_retirar)(trabajador_id)
         detener_pool()
         log.info("Trabajador %s detenido", trabajador_id)

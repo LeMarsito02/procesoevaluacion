@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { AnalisisPliego, DecisionPliego, HallazgoPliego } from '../api'
+import { Fragment, useState } from 'react'
+import type { AnalisisPliego, DecisionPliego, HallazgoPliego, LecturaIA, RequisitoDelPliego } from '../api'
 import Icono from './Icono'
 
 interface Props {
@@ -21,6 +21,23 @@ interface Props {
 const ETIQUETA: Record<string, string> = {
   ajuste_parametro: 'Cambia un valor',
   requisito_nuevo: 'Requisito que su plantilla no evalúa',
+  requisito_no_exigido: 'Su plantilla lo evalúa, el pliego no lo pide',
+}
+
+// Cómo se verifica cada requisito del pliego (chip de la tabla).
+const ESTADO_REQUISITO: Record<RequisitoDelPliego['estado'], { texto: string; pill: string }> = {
+  motor: { texto: 'Automático', pill: 'cumple' },
+  motor_nuevo: { texto: 'Automático al aplicarlo', pill: 'cumple' },
+  documento: { texto: 'Se busca el documento', pill: 'revisar' },
+  revision: { texto: 'Revisión de una persona', pill: 'error' },
+  extranjeros: { texto: 'Solo extranjeros', pill: 'no_aplica' },
+}
+
+const PARA_QUIEN: Record<string, string> = {
+  persona_natural: 'persona natural',
+  persona_juridica: 'persona jurídica',
+  plural: 'consorcio o unión temporal',
+  extranjero: 'extranjero',
 }
 
 /** Qué exige el pliego frente a la forma de evaluar de la entidad. Nada se
@@ -37,7 +54,10 @@ export default function PasoPliego(p: Props) {
   const obligaciones = hallazgos.filter((h) => h.tipo === 'obligacion')
   const fuera = hallazgos.filter((h) => h.tipo === 'fuera_de_alcance')
   const listos = porDecidir.filter((h) => decisionCompleta(p.decisiones[h.id])).length
-  const puedeCrear = p.pliego ? listos === porDecidir.length : p.sinPliegoConfirmado
+  const ia = p.pliego?.lectura_ia
+  const iaLeyendo = !!ia && (ia.estado === 'pendiente' || ia.estado === 'leyendo')
+  // Mientras la IA lee pueden aparecer requisitos nuevos: se espera a que termine.
+  const puedeCrear = p.pliego ? !iaLeyendo && listos === porDecidir.length : p.sinPliegoConfirmado
 
   return (
     <main className="page">
@@ -86,6 +106,8 @@ export default function PasoPliego(p: Props) {
             </span>
             {p.pliego.reutilizado && <span className="tag">Ya se había analizado: se reutilizó</span>}
           </div>
+
+          {ia && <AvisoLectura ia={ia} />}
 
           {sinEstructura && (
             <div className="callout callout-bad" role="alert" style={{ marginTop: 16 }}>
@@ -136,6 +158,8 @@ export default function PasoPliego(p: Props) {
               </div>
             </section>
           )}
+
+          {p.pliego.requisitos.length > 0 && <TablaRequisitos requisitos={p.pliego.requisitos} />}
 
           <section className="card" style={{ marginTop: 16 }}>
             <button type="button" className="plegable" onClick={() => setVerCobertura((v) => !v)} aria-expanded={verCobertura}>
@@ -226,6 +250,11 @@ export default function PasoPliego(p: Props) {
           {p.textoAccion} <Icono nombre="flecha" />
         </button>
       </div>
+      {iaLeyendo && (
+        <p className="small muted" style={{ textAlign: 'right', marginTop: 6 }}>
+          Podrá crear el proceso cuando termine la lectura del pliego.
+        </p>
+      )}
     </main>
   )
 }
@@ -275,7 +304,7 @@ function HallazgoDecidible({
           aria-pressed={decision?.decision === 'aceptado'}
           onClick={() => onDecidir({ decision: 'aceptado', nota: '' })}
         >
-          <Icono nombre="check" tam={14} /> Aplicar en este proceso
+          <Icono nombre="check" tam={14} /> {h.tipo === 'requisito_no_exigido' ? 'No evaluarlo en este proceso' : 'Aplicar en este proceso'}
         </button>
         <button
           type="button"
@@ -283,12 +312,14 @@ function HallazgoDecidible({
           aria-pressed={decision?.decision === 'rechazado'}
           onClick={() => onDecidir({ decision: 'rechazado', nota: decision?.nota ?? '' })}
         >
-          No aplicar
+          {h.tipo === 'requisito_no_exigido' ? 'Mantenerlo' : 'No aplicar'}
         </button>
       </div>
       {decision?.decision === 'rechazado' && (
         <div className="field" style={{ marginTop: 8 }}>
-          <label htmlFor={`nota-${h.id}`}>¿Por qué no se aplica? (queda en el reporte)</label>
+          <label htmlFor={`nota-${h.id}`}>
+            {h.tipo === 'requisito_no_exigido' ? '¿Por qué se mantiene si el pliego no lo pide?' : '¿Por qué no se aplica?'} (queda en el reporte)
+          </label>
           <textarea
             id={`nota-${h.id}`}
             className="input"
@@ -300,5 +331,136 @@ function HallazgoDecidible({
         </div>
       )}
     </div>
+  )
+}
+
+/** Avance de la lectura completa del pliego con la IA local. */
+function AvisoLectura({ ia }: { ia: LecturaIA }) {
+  if (ia.estado === 'pendiente' || ia.estado === 'leyendo') {
+    return (
+      <div className="callout callout-info" style={{ marginTop: 16 }} aria-live="polite">
+        <span className="spinner oscuro" />
+        <div style={{ flex: 1 }}>
+          <strong>La IA está leyendo el pliego completo</strong> para sacar cada requisito jurídico que exige, aunque no
+          esté en su plantilla. {ia.estado === 'pendiente' ? 'En cola…' : `${ia.progreso} %`}
+          <div className="barra" style={{ marginTop: 8 }}>
+            <div style={{ width: `${Math.max(ia.progreso, 3)}%` }} data-animada="true" />
+          </div>
+          <span className="small muted">Puede revisar lo de abajo mientras tanto; al terminar se agregan los hallazgos nuevos.</span>
+        </div>
+      </div>
+    )
+  }
+  if (ia.estado === 'listo') {
+    return (
+      <div className="callout callout-ok" style={{ marginTop: 16 }}>
+        <Icono nombre="check" />
+        <div>
+          La IA leyó el pliego completo: encontró <strong>{ia.requisitos}</strong> requisitos jurídicos. Todos están abajo,
+          con la cita y la página del pliego.
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="callout callout-warn" role="alert" style={{ marginTop: 16 }}>
+      <Icono nombre="alerta" />
+      <div>
+        <strong>No se pudo hacer la lectura profunda con IA</strong>
+        {ia.estado === 'no_disponible' ? ' (el servicio de IA no está disponible)' : ia.error ? ` (${ia.error})` : ''}. Se
+        compararon las reglas conocidas del pliego con su plantilla; lea el pliego por si exige algo más.
+      </div>
+    </div>
+  )
+}
+
+/** Cada requisito jurídico que exige el pliego y cómo se verificará. */
+function TablaRequisitos({ requisitos }: { requisitos: RequisitoDelPliego[] }) {
+  const [ver, setVer] = useState(true)
+  const [abierto, setAbierto] = useState<string | null>(null)
+  const cuenta = (e: RequisitoDelPliego['estado']) => requisitos.filter((r) => r.estado === e).length
+  const automaticos = cuenta('motor') + cuenta('motor_nuevo')
+  return (
+    <section className="card" style={{ marginTop: 16 }}>
+      <button type="button" className="plegable" onClick={() => setVer((v) => !v)} aria-expanded={ver}>
+        <Icono nombre={ver ? 'menos' : 'mas'} tam={15} /> Requisitos jurídicos que exige el pliego ({requisitos.length})
+      </button>
+      {ver && (
+        <>
+          <p className="small muted" style={{ marginTop: 8 }}>
+            {automaticos} automáticos · {cuenta('documento')} con búsqueda del documento · {cuenta('revision')} para revisión
+            {cuenta('extranjeros') > 0 && <> · {cuenta('extranjeros')} solo para extranjeros</>}. Haga clic en uno para ver la
+            cita del pliego.
+          </p>
+          <div className="tabla-wrap" style={{ marginTop: 8 }}>
+            <table className="tabla">
+              <thead>
+                <tr>
+                  <th>Requisito</th>
+                  <th>Documento</th>
+                  <th>Vigencia</th>
+                  <th>Pág.</th>
+                  <th>Cómo se verifica</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requisitos.map((r) => {
+                  const estado = ESTADO_REQUISITO[r.estado]
+                  const vigencia = r.vigencia_dias
+                    ? `${r.vigencia_dias} días`
+                    : r.vigencia_meses
+                      ? `${r.vigencia_meses} ${r.vigencia_meses === 1 ? 'mes' : 'meses'}`
+                      : '—'
+                  const abiertoEste = abierto === r.id
+                  return (
+                    <Fragment key={r.id}>
+                      <tr onClick={() => setAbierto(abiertoEste ? null : r.id)} style={{ cursor: 'pointer' }} aria-expanded={abiertoEste}>
+                        <td>
+                          {r.requisito}
+                          {r.aplica_a.length > 0 && (
+                            <div className="small muted">Aplica a: {r.aplica_a.map((a) => PARA_QUIEN[a] ?? a).join(', ')}</div>
+                          )}
+                        </td>
+                        <td className="small">
+                          {r.documento ?? '—'}
+                          {r.expide && <div className="muted">Expide: {r.expide}</div>}
+                        </td>
+                        <td className="small">{vigencia}</td>
+                        <td className="num">{r.pagina}</td>
+                        <td className="small">
+                          <span className="pill" data-estado={estado.pill} title={r.como}>
+                            <span className="dot" /> {estado.texto}
+                          </span>
+                        </td>
+                      </tr>
+                      {abiertoEste && (
+                        <tr>
+                          <td colSpan={5}>
+                            <p className="small">{r.como}.</p>
+                            {r.condiciones.length > 0 && (
+                              <ul className="lista-simple small">
+                                {r.condiciones.map((c) => (
+                                  <li key={c}>{c}</li>
+                                ))}
+                              </ul>
+                            )}
+                            <blockquote className="cita-pliego">
+                              «{r.cita}»
+                              <footer>
+                                {r.seccion} · pág. {r.pagina}
+                              </footer>
+                            </blockquote>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
   )
 }

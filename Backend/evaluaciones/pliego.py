@@ -2,16 +2,24 @@
 frente a la evaluación de la entidad y ajustes que una persona aceptó."""
 from __future__ import annotations
 
+import logging
+from datetime import timedelta
 from uuid import UUID
 
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from evaluaciones.models import AnalisisPliego
 from motor import criterios
 from motor.pliego import analisis as motor_analisis
-from motor.pliego import lectura
+from motor.pliego import lector_ia, lectura
+
+log = logging.getLogger("mievaluador.pliego")
+# Una lectura "leyendo" sin terminar en este tiempo se da por caída (el
+# trabajador se detuvo) y vuelve a quedar pendiente.
+LECTURA_CAIDA = timedelta(minutes=45)
 
 DECISIONES = ("aceptado", "rechazado")
 
@@ -21,6 +29,10 @@ def vigente(entidad_id: UUID, sha: str) -> AnalisisPliego | None:
     con la versión vigente del analizador."""
     existente = AnalisisPliego.objects.filter(entidad_id=entidad_id, sha256=sha).first()
     if existente is not None and existente.version == motor_analisis.VERSION_ANALISIS:
+        if existente.version_ia != lector_ia.VERSION and existente.estado_ia not in ("pendiente", "leyendo"):
+            # La forma de leer con IA mejoró: se vuelve a leer en el trabajador.
+            existente.estado_ia, existente.progreso_ia = "pendiente", 0
+            existente.save(update_fields=["estado_ia", "progreso_ia"])
         return existente
     return None
 
@@ -47,6 +59,8 @@ def guardar(
         if existente is not None:  # el analizador cambió: se relee el mismo PDF
             for campo, valor in datos.items():
                 setattr(existente, campo, valor)
+            if existente.version_ia != lector_ia.VERSION:
+                existente.estado_ia, existente.progreso_ia = "pendiente", 0
             existente.save()
             return existente
         nuevo = AnalisisPliego(entidad_id=entidad_id, sha256=sha, creado_por=usuario, **datos)
@@ -73,9 +87,84 @@ def definicion_plantilla(entidad_id: UUID, tipo: str = "juridica") -> criterios.
     return criterios.definicion_sistema(tipo)
 
 
+def requisitos_ia(analisis: AnalisisPliego) -> list[lector_ia.RequisitoPliego]:
+    if analisis.estado_ia != "listo":
+        return []
+    return [lector_ia.RequisitoPliego.model_validate(r) for r in analisis.requisitos_ia]
+
+
 def hallazgos(analisis: AnalisisPliego, tipo: str = "juridica") -> list[motor_analisis.Hallazgo]:
     extraccion = motor_analisis.Extraccion.model_validate(analisis.extraccion)
-    return motor_analisis.comparar(extraccion, definicion_plantilla(analisis.entidad_id, tipo))
+    return motor_analisis.comparar(extraccion, definicion_plantilla(analisis.entidad_id, tipo), requisitos_ia(analisis))
+
+
+def mapa(analisis: AnalisisPliego, tipo: str = "juridica") -> list[dict]:
+    """Cada requisito jurídico que el pliego exige y cómo se verificará."""
+    return motor_analisis.mapa_de_requisitos(requisitos_ia(analisis), definicion_plantilla(analisis.entidad_id, tipo))
+
+
+def estado_lectura(analisis: AnalisisPliego) -> dict:
+    return {
+        "estado": analisis.estado_ia,
+        "progreso": analisis.progreso_ia,
+        "modelo": analisis.modelo_ia or lector_ia.MODELO,
+        "requisitos": len(analisis.requisitos_ia or []),
+        "error": analisis.error_ia,
+    }
+
+
+# --- Lectura profunda con IA (la hace el trabajador de la fila) -------------
+def reclamar_lectura() -> AnalisisPliego | None:
+    limite = timezone.now() - LECTURA_CAIDA
+    with transaction.atomic():
+        analisis = (
+            AnalisisPliego.objects.select_for_update(skip_locked=True)
+            .filter(Q(estado_ia="pendiente") | Q(estado_ia="leyendo", ia_iniciada__lt=limite))
+            .order_by("creado_en")
+            .first()
+        )
+        if analisis is None:
+            return None
+        analisis.estado_ia, analisis.progreso_ia, analisis.error_ia = "leyendo", 0, ""
+        analisis.ia_iniciada, analisis.modelo_ia = timezone.now(), lector_ia.MODELO
+        analisis.save(update_fields=["estado_ia", "progreso_ia", "error_ia", "ia_iniciada", "modelo_ia"])
+        return analisis
+
+
+def leer_con_ia(analisis: AnalisisPliego) -> None:
+    if not lector_ia.disponible():
+        AnalisisPliego.objects.filter(pk=analisis.pk).update(
+            estado_ia="no_disponible",
+            error_ia="La IA local no está disponible (Ollama apagado o deshabilitado): se usa solo la lectura por reglas.",
+        )
+        return
+    contenido = analisis.archivo.read()
+    paginas = lectura.leer_paginas(contenido)
+    extraccion = motor_analisis.Extraccion.model_validate(analisis.extraccion)
+    ambitos = {s.numero: s.ambito for s in extraccion.secciones}
+
+    def progreso(hechos: int, total: int) -> None:
+        AnalisisPliego.objects.filter(pk=analisis.pk).update(progreso_ia=min(99, int(100 * hechos / max(total, 1))))
+
+    requisitos = lector_ia.leer(lectura.secciones(paginas), ambitos, paginas, progreso)
+    AnalisisPliego.objects.filter(pk=analisis.pk).update(
+        estado_ia="listo", progreso_ia=100, requisitos_ia=[r.model_dump(mode="json") for r in requisitos],
+        version_ia=lector_ia.VERSION, ia_terminada=timezone.now(),
+    )
+    log.info("Pliego %s leído con IA: %d requisitos jurídicos", analisis.nombre_archivo, len(requisitos))
+
+
+def atender_lecturas_pendientes() -> int:
+    """Lee con IA los pliegos pendientes (lo llama el trabajador de la fila)."""
+    n = 0
+    while (analisis := reclamar_lectura()) is not None:
+        try:
+            leer_con_ia(analisis)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Falló la lectura con IA del pliego %s", analisis.pk)
+            AnalisisPliego.objects.filter(pk=analisis.pk).update(estado_ia="error", error_ia=str(exc)[:2000])
+        n += 1
+    return n
 
 
 def decidir(analisis: AnalisisPliego, decisiones: dict[str, dict], usuario) -> list[dict]:
@@ -117,9 +206,10 @@ def aplicar_ajustes(definicion: criterios.DefinicionEvaluacion, ajustes: list[di
     aceptados = [a["hallazgo"] for a in ajustes if a.get("decision") == "aceptado"]
     if not aceptados:
         return definicion
+    quitar = {h["verificacion"] for h in aceptados if h["tipo"] == "requisito_no_exigido" and h.get("verificacion")}
     datos = definicion.model_dump()
     parametros = dict(datos.get("parametros") or {})
-    requisitos = list(datos.get("requisitos") or [])
+    requisitos = [r for r in (datos.get("requisitos") or []) if r["verificacion"] not in quitar]
     presentes = {r["verificacion"] for r in requisitos}
     siguiente = max((r["numero"] for r in requisitos), default=0) + 1
     for h in aceptados:
@@ -128,7 +218,7 @@ def aplicar_ajustes(definicion: criterios.DefinicionEvaluacion, ajustes: list[di
         elif h["tipo"] == "requisito_nuevo" and h.get("requisito_propuesto"):
             propuesto = h["requisito_propuesto"]
             verificacion = propuesto.get("verificacion") or criterios.MANUAL
-            if verificacion != criterios.MANUAL and verificacion in presentes:
+            if verificacion not in (criterios.MANUAL, criterios.PERSONALIZADO) and verificacion in presentes:
                 continue
             requisitos.append({
                 "numero": siguiente,
@@ -137,6 +227,7 @@ def aplicar_ajustes(definicion: criterios.DefinicionEvaluacion, ajustes: list[di
                 "grupo": "adicionales",
                 "verificacion": verificacion,
                 "verifica": propuesto.get("verifica", "")[:1000],
+                **({"config": propuesto["config"]} if propuesto.get("config") else {}),
             })
             presentes.add(verificacion)
             siguiente += 1

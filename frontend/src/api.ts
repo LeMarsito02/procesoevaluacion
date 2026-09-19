@@ -48,7 +48,14 @@ export interface AnalisisResponse {
   pliego_error: string | null
 }
 
-export type TipoHallazgo = 'ajuste_parametro' | 'requisito_nuevo' | 'aclaracion' | 'informativo' | 'fuera_de_alcance' | 'obligacion'
+export type TipoHallazgo =
+  | 'ajuste_parametro'
+  | 'requisito_nuevo'
+  | 'requisito_no_exigido'
+  | 'aclaracion'
+  | 'informativo'
+  | 'fuera_de_alcance'
+  | 'obligacion'
 
 /** Algo que dice el pliego frente a la forma de evaluar de la entidad, con su prueba literal. */
 export interface HallazgoPliego {
@@ -75,6 +82,34 @@ export interface SeccionPliego {
   verificaciones: string[]
 }
 
+/** Lectura profunda del pliego con la IA local (corre en el trabajador). */
+export interface LecturaIA {
+  estado: 'pendiente' | 'leyendo' | 'listo' | 'error' | 'no_disponible'
+  progreso: number
+  modelo: string
+  requisitos: number
+  error: string
+}
+
+/** Un requisito jurídico que exige el pliego y cómo se verificará. */
+export interface RequisitoDelPliego {
+  id: string
+  requisito: string
+  documento: string | null
+  expide: string | null
+  aplica_a: string[]
+  vigencia_dias: number | null
+  vigencia_meses: number | null
+  condiciones: string[]
+  cita: string
+  seccion: string
+  pagina: number
+  verificacion: string | null
+  como: string
+  estado: 'motor' | 'motor_nuevo' | 'documento' | 'revision' | 'extranjeros'
+  parametros: Record<string, number>
+}
+
 export interface AnalisisPliego {
   id: string
   nombre_archivo: string
@@ -83,6 +118,8 @@ export interface AnalisisPliego {
   reutilizado: boolean
   hallazgos: HallazgoPliego[]
   secciones: SeccionPliego[]
+  lectura_ia: LecturaIA
+  requisitos: RequisitoDelPliego[]
 }
 
 export interface DecisionPliego {
@@ -148,6 +185,14 @@ export async function analizarDocumentoBase(
 const extractErrorDetail = detalleError
 
 /** Solo el pliego, cuando la entidad se elige después (superadministrador). */
+/** El análisis del pliego con el avance de la lectura con IA. */
+export async function consultarPliego(id: string, entidadId: string | null): Promise<AnalisisPliego> {
+  const q = entidadId ? `?entidad_id=${encodeURIComponent(entidadId)}` : ''
+  const res = await pedir(`/api/procesos/pliego/${id}${q}`)
+  if (!res.ok) throw new Error(await extractErrorDetail(res))
+  return res.json()
+}
+
 export async function analizarPliego(archivo: File, entidadId: string | null): Promise<AnalisisPliego> {
   const formData = new FormData()
   formData.append('archivo', archivo)

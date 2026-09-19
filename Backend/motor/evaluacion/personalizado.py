@@ -124,6 +124,8 @@ def _faltas(config: ConfigPersonalizado, texto: str, fecha_cierre: date, persona
         elif b.tipo == "menciona_proponente":
             if not _menciona(nombre_proponente, texto):
                 faltas.append(f"no menciona al proponente ({nombre_proponente})")
+        elif b.tipo == "confirmar":
+            faltas.append(f"confirma lo que exige el pliego: {' / '.join(b.frases)}")
     return faltas
 
 

@@ -128,7 +128,9 @@ class Extraccion(BaseModel):
     obligaciones: list[Exigencia] = Field(default_factory=list)
 
 
-TipoHallazgo = Literal["ajuste_parametro", "requisito_nuevo", "aclaracion", "informativo", "fuera_de_alcance", "obligacion"]
+TipoHallazgo = Literal[
+    "ajuste_parametro", "requisito_nuevo", "requisito_no_exigido", "aclaracion", "informativo", "fuera_de_alcance", "obligacion"
+]
 
 
 class Hallazgo(BaseModel):
@@ -367,8 +369,140 @@ _FORMATOS_OTROS: tuple[tuple[str, str], ...] = (
 )
 
 
-def comparar(extraccion: Extraccion, definicion: criterios.DefinicionEvaluacion) -> list[Hallazgo]:
-    """Hallazgos del pliego frente a la definición jurídica de la entidad."""
+# Requisitos de la plantilla que se dan por exigidos aunque la lectura no los
+# nombre: la carta y el aval hacen parte del Formato 1 que todo pliego pide.
+_SIEMPRE_EXIGIDOS = {"juridica.carta", "juridica.aval_ingeniero", "juridica.copnia_antecedentes", "juridica.rut"}
+# Por debajo de esto la lectura con IA no es suficiente para decir que el
+# pliego NO pide algo.
+MINIMO_REQUISITOS_PARA_NO_EXIGIDOS = 8
+
+
+def _hallazgos_de_requisitos(requisitos, previos, en_plantilla, parametros, definicion) -> list[Hallazgo]:
+    from motor.pliego.catalogo import config_desde_pliego, parametros_de
+    from motor.pliego.lector_ia import es_de_extranjeros
+
+    hallazgos: list[Hallazgo] = []
+    ids = {h.id for h in previos}
+    # Lo que solo aplica a extranjeros va junto, como aclaración: no se le
+    # exige a un proponente nacional.
+    extranjeros = [r for r in requisitos if es_de_extranjeros(r)]
+    requisitos = [r for r in requisitos if not es_de_extranjeros(r)]
+    if extranjeros:
+        primero = extranjeros[0]
+        hallazgos.append(Hallazgo(
+            id="ia_extranjeros", tipo="aclaracion", titulo="Requisitos para proponentes extranjeros",
+            detalle="Si un proponente o integrante es extranjero, el pliego además exige: "
+                    + "; ".join(dict.fromkeys(r.requisito.rstrip(".") for r in extranjeros)) + ".",
+            seccion=primero.seccion, pagina=primero.pagina, cita=primero.cita,
+        ))
+    ajustados = {h.parametro for h in previos if h.parametro}
+    nuevos_motor = {h.verificacion for h in previos if h.tipo == "requisito_nuevo" and h.verificacion}
+    for r in requisitos:
+        cita, seccion, pagina = r.cita, r.seccion, r.pagina
+        if r.verificacion:
+            ver = criterios.VERIFICACIONES[r.verificacion]
+            # a) El pliego fija un valor (vigencia) distinto al de la plantilla.
+            for clave, valor in parametros_de(r).items():
+                if clave in ajustados or parametros.get(clave) == valor:
+                    continue
+                ajustados.add(clave)
+                p = criterios.PARAMETROS[clave]
+                unidad = p.unidad or ""
+                hallazgos.append(Hallazgo(
+                    id=f"ia_param_{clave}", tipo="ajuste_parametro", titulo=f"{ver.titulo}: {p.nombre.lower()}",
+                    detalle=f"El pliego exige {valor} {unidad} para «{r.requisito}»; su plantilla usa {parametros.get(clave)}.",
+                    seccion=seccion, pagina=pagina, cita=cita, verificacion=r.verificacion, parametro=clave,
+                    valor_plantilla=parametros.get(clave), valor_pliego=valor, valor_pliego_texto=f"{valor} {unidad}".strip(),
+                    requiere_decision=True,
+                ))
+            # b) El motor sabe verificarlo pero la plantilla no lo tiene.
+            if r.verificacion not in en_plantilla and r.verificacion not in nuevos_motor:
+                nuevos_motor.add(r.verificacion)
+                hallazgos.append(Hallazgo(
+                    id=f"ia_falta_{r.verificacion}", tipo="requisito_nuevo", titulo=ver.titulo,
+                    detalle=f"El pliego exige «{r.requisito}» y la evaluación de la entidad no lo verifica. El motor sabe verificarlo.",
+                    seccion=seccion, pagina=pagina, cita=cita, verificacion=r.verificacion, requiere_decision=True,
+                    requisito_propuesto={"verificacion": r.verificacion, "titulo": ver.titulo, "corto": ver.corto},
+                ))
+            continue
+        # c) El motor no lo tiene: verificación del documento armada desde el pliego.
+        hid = f"ia_{r.id}"
+        if hid in ids:
+            continue
+        config = config_desde_pliego(r)
+        titulo = r.requisito[:200]
+        if config:
+            hallazgos.append(Hallazgo(
+                id=hid, tipo="requisito_nuevo", titulo=titulo,
+                detalle=(f"El pliego exige «{r.requisito}»"
+                         + (f" (se acredita con {r.documento})" if r.documento else "")
+                         + ". Se verificará buscando el documento en la oferta"
+                         + (" y su vigencia" if any(b["tipo"] == "vigencia_maxima" for b in config["bloques"]) else "")
+                         + (". Las demás condiciones quedan para que una persona las confirme." if r.condiciones else ".")),
+                seccion=seccion, pagina=pagina, cita=cita, verificacion=criterios.PERSONALIZADO, requiere_decision=True,
+                requisito_propuesto={"verificacion": criterios.PERSONALIZADO, "titulo": titulo, "corto": _corto(r),
+                                     "verifica": f"{cita} (pliego, {seccion}, pág. {pagina})", "config": config},
+            ))
+        else:
+            hallazgos.append(Hallazgo(
+                id=hid, tipo="requisito_nuevo", titulo=titulo,
+                detalle=f"El pliego exige «{r.requisito}» y no hay un documento que el programa pueda buscar: lo revisa una persona.",
+                seccion=seccion, pagina=pagina, cita=cita, requiere_decision=True,
+                requisito_propuesto={"titulo": titulo, "corto": _corto(r), "verifica": f"{cita} (pliego, {seccion}, pág. {pagina})"},
+            ))
+        ids.add(hid)
+
+    # d) La plantilla verifica algo que el pliego no pide (solo si la lectura
+    # fue suficiente para afirmarlo).
+    if len(requisitos) >= MINIMO_REQUISITOS_PARA_NO_EXIGIDOS:
+        pedidas = {r.verificacion for r in requisitos if r.verificacion}
+        for req in definicion.requisitos:
+            v = req.verificacion
+            if v in pedidas or v in _SIEMPRE_EXIGIDOS or v not in criterios.VERIFICACIONES:
+                continue
+            hallazgos.append(Hallazgo(
+                id=f"no_exigido_{v}", tipo="requisito_no_exigido", titulo=req.titulo,
+                detalle=("Su plantilla verifica este requisito, pero en la lectura completa del pliego no aparece como "
+                         "exigido. Si se confirma, no se evalúa en este proceso."),
+                seccion="—", pagina=1, cita="(no aparece en el pliego)", verificacion=v, requiere_decision=True,
+            ))
+    return hallazgos
+
+
+def _corto(r) -> str:
+    base = (r.documento or r.requisito).strip()
+    return re.sub(r"\s+", " ", base)[:20]
+
+
+def mapa_de_requisitos(requisitos, definicion: criterios.DefinicionEvaluacion) -> list[dict]:
+    """Cada requisito jurídico del pliego y cómo se verificará, para mostrarlo."""
+    from motor.pliego.catalogo import config_desde_pliego, parametros_de
+
+    from motor.pliego.lector_ia import es_de_extranjeros
+
+    en_plantilla = {r.verificacion for r in definicion.requisitos}
+    salida = []
+    for r in requisitos:
+        if es_de_extranjeros(r):
+            como, estado = "Solo si el proponente es extranjero: lo revisa una persona", "extranjeros"
+        elif r.verificacion and r.verificacion in en_plantilla:
+            como, estado = f"Lo verifica el programa: {criterios.VERIFICACIONES[r.verificacion].titulo}", "motor"
+        elif r.verificacion:
+            como, estado = f"El programa sabe verificarlo ({criterios.VERIFICACIONES[r.verificacion].titulo}); falta agregarlo", "motor_nuevo"
+        elif config_desde_pliego(r):
+            como, estado = "Se busca el documento en la oferta (verificación armada desde el pliego)", "documento"
+        else:
+            como, estado = "Lo revisa una persona", "revision"
+        salida.append({**r.model_dump(), "como": como, "estado": estado, "parametros": parametros_de(r) if r.verificacion else {}})
+    return salida
+
+
+def comparar(
+    extraccion: Extraccion, definicion: criterios.DefinicionEvaluacion, requisitos: list | None = None
+) -> list[Hallazgo]:
+    """Hallazgos del pliego frente a la definición jurídica de la entidad. Con
+    `requisitos` (la lectura completa con IA, motor.pliego.lector_ia), además
+    todo lo que el pliego exige y la evaluación no cubre, o al revés."""
     hallazgos: list[Hallazgo] = []
     en_plantilla = {r.verificacion for r in definicion.requisitos}
     parametros = {**{k: p.defecto for k, p in criterios.PARAMETROS.items()}, **definicion.parametros}
@@ -525,6 +659,10 @@ def comparar(extraccion: Extraccion, definicion: criterios.DefinicionEvaluacion)
                      "Formato del pliego que no corresponde a ninguna verificación jurídica: confirme si aplica."),
             seccion=f.seccion, pagina=f.pagina, cita=f.cita,
         ))
+
+    # 5b. Lectura completa con IA: cada requisito jurídico del pliego.
+    if requisitos:
+        hallazgos += _hallazgos_de_requisitos(requisitos, hallazgos, en_plantilla, parametros, definicion)
 
     # 6. Red de seguridad: obligaciones del pliego que nada de lo anterior cubre.
     citadas = {norm(h.cita)[:80] for h in hallazgos} | {norm(e.cita)[:80] for e in extraccion.exigencias}

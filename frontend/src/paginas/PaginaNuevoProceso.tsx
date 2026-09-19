@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { analizarDocumentoBase, analizarPliego, type AnalisisPliego, type DecisionPliego, type Proponente } from '../api'
+import { useEffect, useState } from 'react'
+import { analizarDocumentoBase, analizarPliego, consultarPliego, type AnalisisPliego, type DecisionPliego, type Proponente } from '../api'
 import PasoDatos from '../components/PasoDatos'
 import PasoNuevo from '../components/PasoNuevo'
 import PasoPliego from '../components/PasoPliego'
@@ -41,6 +41,28 @@ export default function PaginaNuevoProceso() {
   const [entidadId, setEntidadId] = useState<string | null>(esSuper ? null : (usuario.entidad?.id ?? null))
   const [seleccion, setSeleccion] = useState<SeleccionTipos>(SELECCION_INICIAL)
   const tiposElegidos = Object.entries(seleccion).filter(([, s]) => s.incluir)
+
+  // Mientras la IA lee el pliego completo, se consulta su avance; al terminar
+  // llegan los hallazgos nuevos (las decisiones ya tomadas se conservan).
+  const pliegoLeyendo = pliego != null && ['pendiente', 'leyendo'].includes(pliego.lectura_ia.estado)
+  const pliegoId = pliego?.id
+  useEffect(() => {
+    if (!pliegoLeyendo || !pliegoId) return
+    let vivo = true
+    const id = pliegoId
+    const t = window.setInterval(async () => {
+      try {
+        const nuevo = await consultarPliego(id, esSuper ? pliegoEntidad : null)
+        if (vivo) setPliego((actual) => (actual && actual.id === id ? { ...nuevo, reutilizado: actual.reutilizado } : actual))
+      } catch {
+        // Un fallo de red momentáneo no detiene la consulta.
+      }
+    }, 4000)
+    return () => {
+      vivo = false
+      window.clearInterval(t)
+    }
+  }, [pliegoLeyendo, pliegoId, esSuper, pliegoEntidad])
 
   async function analizar() {
     if (!archivo) return

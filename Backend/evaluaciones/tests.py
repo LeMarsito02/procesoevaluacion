@@ -2026,3 +2026,243 @@ class RequisitosDelPliegoTests(TestCase):
         como_pedir = "LOS INTERESADOS MANIFESTARAN SU INTENCION DE LIMITAR LAS CONVOCATORIAS A MIPYME EN LA SECCION MENSAJES"
         self.assertIsNone(_MIPYME_SI_RE.search(como_pedir))
         self.assertTrue(_MIPYME_SI_RE.search("EL PRESENTE PROCESO SE LIMITA A MIPYME COLOMBIANAS"))
+
+
+def _requisito_pliego(**campos):
+    from motor.pliego.lector_ia import RequisitoPliego
+
+    base = {"id": "x", "requisito": "Requisito de prueba", "cita": "cita de prueba del pliego", "seccion": "3.1 Prueba", "pagina": 5}
+    return RequisitoPliego(**{**base, **campos})
+
+
+class LectorPliegoIATests(TestCase):
+    """La lectura del pliego con la IA local: nada que no esté en el pliego,
+    sin repetidos, y cada requisito con su forma de verificarse."""
+
+    def trozo(self, texto):
+        from motor.pliego.lector_ia import Trozo
+
+        return Trozo(seccion="3.4 Capacidad jurídica", titulo="Capacidad jurídica", texto=texto, pagina=12)
+
+    def test_la_cita_debe_estar_en_el_pliego(self):
+        from motor.pliego.lector_ia import _limpiar
+
+        trozo = self.trozo("El proponente debe aportar el certificado de antecedentes fiscales expedido por la Contraloría.")
+        bueno = {"requisito": "Certificado de antecedentes fiscales", "documento": "Certificado de la Contraloría",
+                 "cita": "debe aportar el certificado de antecedentes fiscales expedido por la Contraloría",
+                 "aplica_a": ["persona_juridica", "inventado"], "vigencia_dias": "30"}
+        r = _limpiar(bueno, trozo, lambda cita, pagina: pagina)
+        self.assertIsNotNone(r)
+        self.assertEqual(r.aplica_a, ["persona_juridica"])
+        self.assertEqual(r.vigencia_dias, 30)
+        self.assertEqual(r.pagina, 12)
+        inventado = {**bueno, "cita": "el proponente debe aportar la licencia ambiental vigente del proyecto"}
+        self.assertIsNone(_limpiar(inventado, trozo, lambda cita, pagina: pagina))
+
+    def test_se_descarta_lo_que_no_es_requisito_juridico(self):
+        from motor.pliego.lector_ia import _limpiar
+
+        texto = "El proponente debe acreditar una capacidad residual igual o superior a la del proceso."
+        crudo = {"requisito": "Capacidad residual del proponente", "cita": "debe acreditar una capacidad residual igual o superior"}
+        self.assertIsNone(_limpiar(crudo, self.trozo(texto), lambda cita, pagina: pagina))
+
+    def test_une_repetidos(self):
+        from motor.pliego.lector_ia import _sin_repetidos
+
+        a = _requisito_pliego(id="a", requisito="Certificado de existencia y representación legal", condiciones=["expedido por la Cámara"])
+        b = _requisito_pliego(id="b", requisito="Certificado de existencia y representación legal vigente", vigencia_dias=30,
+                              condiciones=["no mayor a 30 días"])
+        c = _requisito_pliego(id="c", requisito="Garantía de seriedad de la oferta")
+        unicos = _sin_repetidos([a, b, c])
+        self.assertEqual([u.id for u in unicos], ["a", "c"])
+        self.assertEqual(unicos[0].vigencia_dias, 30)
+        self.assertEqual(unicos[0].condiciones, ["expedido por la Cámara", "no mayor a 30 días"])
+
+    def test_trozos_solo_juridicos(self):
+        from motor.pliego.lector_ia import trozos
+        from motor.pliego.lectura import Seccion
+
+        secciones = [
+            Seccion(numero="3.1", titulo="Capacidad jurídica", texto="x " * 3000, pagina=10),
+            Seccion(numero="4.1", titulo="Experiencia", texto="y " * 500, pagina=20),
+            Seccion(numero="1.2", titulo="Garantía de seriedad de la oferta", texto="z " * 200, pagina=4),
+        ]
+        ambitos = {"3.1": "juridica", "4.1": "tecnica", "1.2": "general"}
+        lista = trozos(secciones, ambitos, largo=2000)
+        self.assertEqual({t.seccion for t in lista}, {"3.1 Capacidad jurídica", "1.2 Garantía de seriedad de la oferta"})
+        self.assertGreaterEqual(sum(t.seccion.startswith("3.1") for t in lista), 3)  # la sección larga se parte
+
+    def test_si_la_ia_no_responde_no_queda_como_leido(self):
+        import requests
+
+        from motor.pliego import lector_ia
+        from motor.pliego.lectura import Seccion
+
+        secciones = [Seccion(numero="3.1", titulo="Capacidad jurídica", texto="El proponente debe aportar " * 50, pagina=10)]
+        with mock.patch.object(lector_ia, "_preguntar", side_effect=requests.ConnectionError("apagado")):
+            with self.assertRaises(RuntimeError):
+                lector_ia.leer(secciones, {"3.1": "juridica"}, [])
+
+    def test_lectura_completa_con_respuesta_de_la_ia(self):
+        import json
+
+        from motor.pliego import lector_ia
+        from motor.pliego.lectura import Pagina, Seccion
+
+        texto = ("Cada integrante debe presentar el certificado del Registro de Deudores Alimentarios Morosos REDAM "
+                 "expedido dentro de los 30 días anteriores al cierre.")
+        respuesta = json.dumps({"requisitos": [{
+            "requisito": "Certificado del REDAM de cada integrante", "documento": "Certificado REDAM",
+            "cita": "debe presentar el certificado del Registro de Deudores Alimentarios Morosos REDAM", "vigencia_dias": 30,
+        }]})
+        secciones = [Seccion(numero="3.2", titulo="Documentos jurídicos", texto=texto, pagina=8)]
+        with mock.patch.object(lector_ia, "_preguntar", return_value=respuesta):
+            requisitos = lector_ia.leer(secciones, {"3.2": "juridica"}, [Pagina(numero=8, texto=texto)])
+        self.assertEqual(len(requisitos), 1)
+        self.assertEqual(requisitos[0].verificacion, "juridica.redam")
+
+
+class CatalogoPliegoTests(TestCase):
+    """Cómo se verifica cada requisito que el pliego exige."""
+
+    def test_verificacion_por_lo_que_exige(self):
+        from motor.pliego.catalogo import verificacion_de
+
+        casos = {
+            "Certificado de inscripción en el Registro Único de Proponentes RUP": "juridica.rup",
+            "Certificado de antecedentes disciplinarios de la Procuraduría": "juridica.procuraduria",
+            "No estar incurso en causales de inhabilidad o incompatibilidad": "juridica.carta",
+            "Fotocopia de la cédula de ciudadanía del representante legal": "juridica.identidad",
+            "Término de duración de la sociedad": "juridica.duracion",
+            "Garantía de seriedad de la oferta": "juridica.garantia",
+        }
+        for requisito, esperado in casos.items():
+            with self.subTest(requisito=requisito):
+                self.assertEqual(verificacion_de(_requisito_pliego(requisito=requisito)), esperado)
+        self.assertIsNone(verificacion_de(_requisito_pliego(requisito="Poder otorgado al apoderado del consorcio")))
+        self.assertIsNone(verificacion_de(_requisito_pliego(requisito="Certificado de tamaño empresarial MIPYME")))
+
+    def test_parametros_que_fija_el_pliego(self):
+        from motor.pliego.catalogo import parametros_de
+
+        rup = _requisito_pliego(requisito="RUP", verificacion="juridica.rup", vigencia_dias=30)
+        self.assertEqual(parametros_de(rup), {"camara_dias": 30})
+        policia = _requisito_pliego(requisito="Antecedentes judiciales", verificacion="juridica.policia", vigencia_dias=90)
+        self.assertEqual(parametros_de(policia), {"antecedentes_meses": 3})
+        extranjero = _requisito_pliego(requisito="Certificado de existencia", verificacion="juridica.existencia",
+                                       vigencia_dias=90, aplica_a=["extranjero"])
+        self.assertEqual(parametros_de(extranjero), {})
+
+    def test_config_desde_el_pliego(self):
+        from motor import criterios
+        from motor.pliego.catalogo import config_desde_pliego
+
+        r = _requisito_pliego(requisito="Certificado de la ARL", titulo_documento=["CERTIFICADO DE AFILIACION ARL"],
+                              vigencia_dias=45, condiciones=["que cubra a todo el personal"], aplica_a=["plural"])
+        config = config_desde_pliego(r)
+        criterios.ConfigPersonalizado.model_validate(config)
+        self.assertEqual(config["bloques"][0], {"tipo": "vigencia_maxima", "meses": 2})
+        self.assertEqual(config["bloques"][1]["tipo"], "confirmar")
+        self.assertEqual(config["aplica_a"], ["consorcio", "union_temporal"])
+        self.assertIsNone(config_desde_pliego(_requisito_pliego(requisito="Manifestar la intención de participar")))
+
+    def test_confirmar_nunca_aprueba_solo(self):
+        from datetime import date
+
+        from motor import criterios
+        from motor.evaluacion import personalizado
+
+        config = criterios.ConfigPersonalizado(
+            frases_documento=["CERTIFICADO DE AFILIACION"], bloques=[{"tipo": "confirmar", "frases": ["que cubra a todo el personal"]}]
+        )
+        with mock.patch.object(personalizado, "extraer_texto", return_value="CERTIFICADO DE AFILIACION ARL"):
+            cumple, motivo, archivo = personalizado.evaluar_config({"arl.pdf": b"x"}, config, date(2026, 5, 25), None, [], "ACME")
+        self.assertFalse(cumple)
+        self.assertIn("confirma lo que exige el pliego", motivo)
+        self.assertEqual(archivo, "arl.pdf")
+
+
+class ComparacionConLecturaIATests(TestCase):
+    """Lo que la IA leyó del pliego frente a la plantilla de la entidad."""
+
+    def comparar(self, requisitos):
+        from motor import criterios
+        from motor.pliego.analisis import Extraccion, comparar
+
+        extraccion = Extraccion(secciones=[], exigencias=[], paginas=40, documento_tipo=None)
+        return comparar(extraccion, criterios.definicion_sistema("juridica"), requisitos)
+
+    def test_propone_lo_que_falta_y_lo_que_cambia(self):
+        requisitos = [
+            _requisito_pliego(id="a", requisito="RUP", verificacion="juridica.rup", vigencia_dias=15),
+            _requisito_pliego(id="b", requisito="Término de duración de la sociedad", verificacion="juridica.duracion"),
+            _requisito_pliego(id="c", requisito="Certificado de la ARL", documento="Certificado de afiliación a la ARL"),
+            _requisito_pliego(id="d", requisito="Visita a la obra"),
+            _requisito_pliego(id="e", requisito="Documentos apostillados", aplica_a=["extranjero"]),
+        ]
+        hallazgos = {h.id: h for h in self.comparar(requisitos)}
+        self.assertEqual(hallazgos["ia_param_camara_dias"].valor_pliego, 15)
+        self.assertEqual(hallazgos["ia_falta_juridica.duracion"].requisito_propuesto["verificacion"], "juridica.duracion")
+        self.assertEqual(hallazgos["ia_c"].requisito_propuesto["verificacion"], "personalizado")
+        self.assertNotIn("verificacion", hallazgos["ia_d"].requisito_propuesto)
+        self.assertEqual(hallazgos["ia_extranjeros"].tipo, "aclaracion")
+        self.assertFalse(any(h.tipo == "requisito_no_exigido" for h in hallazgos.values()))  # lectura corta: no se afirma
+
+    def test_no_exigido_solo_con_lectura_suficiente(self):
+        from motor.pliego.analisis import MINIMO_REQUISITOS_PARA_NO_EXIGIDOS
+
+        requisitos = [_requisito_pliego(id=str(i), requisito=f"Requisito {i}", verificacion="juridica.existencia")
+                      for i in range(MINIMO_REQUISITOS_PARA_NO_EXIGIDOS)]
+        no_exigidos = {h.verificacion for h in self.comparar(requisitos) if h.tipo == "requisito_no_exigido"}
+        self.assertIn("juridica.rup", no_exigidos)
+        self.assertNotIn("juridica.carta", no_exigidos)  # la carta siempre se exige
+        self.assertNotIn("juridica.existencia", no_exigidos)
+
+    def test_aplicar_ajustes_quita_y_agrega(self):
+        from evaluaciones.pliego import aplicar_ajustes
+        from motor import criterios
+
+        definicion = criterios.definicion_sistema("juridica")
+        config = {"frases_documento": ["CERTIFICADO ARL"], "bloques": [{"tipo": "confirmar", "frases": ["todo el personal"]}]}
+        ajustes = [
+            {"decision": "aceptado", "hallazgo": {"tipo": "requisito_no_exigido", "verificacion": "juridica.rup"}},
+            {"decision": "aceptado", "hallazgo": {"tipo": "requisito_nuevo", "requisito_propuesto": {
+                "verificacion": "personalizado", "titulo": "Certificado de la ARL", "corto": "ARL", "config": config}}},
+            {"decision": "rechazado", "hallazgo": {"tipo": "requisito_no_exigido", "verificacion": "juridica.redam"}},
+        ]
+        nueva = aplicar_ajustes(definicion, ajustes)
+        verificaciones = [r.verificacion for r in nueva.requisitos]
+        self.assertNotIn("juridica.rup", verificaciones)
+        self.assertIn("juridica.redam", verificaciones)
+        arl = next(r for r in nueva.requisitos if r.titulo == "Certificado de la ARL")
+        self.assertEqual(arl.config.bloques[0].tipo, "confirmar")
+
+
+class LecturaIAProcesoTests(BaseEvaluaciones):
+    """La lectura con IA la hace el trabajador y guarda lo que encontró."""
+
+    analisis = PliegoProcesoTests.analisis
+
+    def test_trabajador_lee_y_guarda(self):
+        from evaluaciones import pliego
+        from evaluaciones.models import AnalisisPliego
+
+        a = self.analisis()
+        self.assertEqual(a.estado_ia, "pendiente")
+        requisitos = [_requisito_pliego(id="b", requisito="Duración de la sociedad", verificacion="juridica.duracion")]
+        with mock.patch("motor.pliego.lector_ia.disponible", return_value=True), \
+             mock.patch("motor.pliego.lector_ia.leer", return_value=requisitos), \
+             mock.patch("evaluaciones.pliego.lectura.leer_paginas", return_value=[]):
+            self.assertEqual(pliego.atender_lecturas_pendientes(), 1)
+        a = AnalisisPliego.objects.get(pk=a.pk)
+        self.assertEqual((a.estado_ia, a.progreso_ia), ("listo", 100))
+        self.assertEqual(pliego.mapa(a)[0]["estado"], "motor_nuevo")
+
+    def test_sin_ia_queda_no_disponible(self):
+        from evaluaciones import pliego
+        from evaluaciones.models import AnalisisPliego
+
+        a = self.analisis()
+        with mock.patch("motor.pliego.lector_ia.disponible", return_value=False):
+            pliego.atender_lecturas_pendientes()
+        self.assertEqual(AnalisisPliego.objects.get(pk=a.pk).estado_ia, "no_disponible")

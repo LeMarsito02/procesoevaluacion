@@ -347,7 +347,9 @@ TIPOS_PROPONENTE = ("persona_natural", "persona_juridica", "consorcio", "union_t
 class Bloque(BaseModel):
     """Una comprobación sobre el documento encontrado."""
 
-    tipo: Literal["vigencia_maxima", "contiene", "no_contiene", "menciona_representante", "menciona_proponente"]
+    # "confirmar": condición del pliego que la máquina no comprueba; siempre
+    # queda para que una persona la confirme (nunca se aprueba sola).
+    tipo: Literal["vigencia_maxima", "contiene", "no_contiene", "menciona_representante", "menciona_proponente", "confirmar"]
     meses: int | None = Field(None, ge=1, le=120)
     frases: list[str] = Field(default_factory=list)
 
@@ -355,7 +357,7 @@ class Bloque(BaseModel):
     def _coherente(self) -> "Bloque":
         if self.tipo == "vigencia_maxima" and not self.meses:
             raise ValueError("La vigencia máxima necesita el número de meses.")
-        if self.tipo in ("contiene", "no_contiene"):
+        if self.tipo in ("contiene", "no_contiene", "confirmar"):
             self.frases = [f.strip() for f in self.frases if f and f.strip()]
             if not self.frases:
                 raise ValueError("Indique al menos una frase a buscar.")

@@ -156,9 +156,15 @@ async def _analizar_pliego(
         if analisis is None:
             extraccion = await asyncio.to_thread(pliego_servicio.leer, pdf_bytes)
             analisis = await sync_to_async(pliego_servicio.guardar)(entidad, pdf_bytes, nombre, extraccion, usuario)
-        hallazgos = await sync_to_async(pliego_servicio.hallazgos)(analisis)
+        payload = await sync_to_async(_payload_pliego)(analisis, reutilizado)
     except Exception as exc:  # noqa: BLE001
         return None, f"No se pudo analizar el pliego completo: {exc}"
+    return payload, None
+
+
+def _payload_pliego(analisis, reutilizado: bool) -> dict:
+    """Lo que ve la persona al crear el proceso: hallazgos (con la lectura con
+    IA si ya terminó), el mapa de requisitos del pliego y el avance de la IA."""
     from motor import criterios
 
     secciones = [
@@ -172,9 +178,26 @@ async def _analizar_pliego(
         "paginas": analisis.paginas,
         "documento_tipo": analisis.documento_tipo,
         "reutilizado": reutilizado,
-        "hallazgos": [h.model_dump(mode="json") for h in hallazgos],
+        "hallazgos": [h.model_dump(mode="json") for h in pliego_servicio.hallazgos(analisis)],
         "secciones": secciones,
-    }, None
+        "lectura_ia": pliego_servicio.estado_lectura(analisis),
+        "requisitos": pliego_servicio.mapa(analisis),
+    }
+
+
+@procesos.get("/pliego/{analisis_id}")
+async def estado_pliego(request: HttpRequest, analisis_id: UUID, entidad_id: UUID | None = None) -> dict:
+    """El análisis del pliego con el avance de la lectura con IA: la pantalla
+    lo consulta hasta que la IA termina y entonces muestra los hallazgos
+    completos."""
+    from evaluaciones.models import AnalisisPliego
+
+    usuario = request.auth
+    entidad = usuario.entidad_id if not usuario.es_superadmin else entidad_id
+    analisis = await sync_to_async(lambda: AnalisisPliego.objects.filter(pk=analisis_id, entidad_id=entidad).first())()
+    if analisis is None:
+        raise HttpError(404, "No se encontró el análisis del pliego.")
+    return await sync_to_async(_payload_pliego)(analisis, True)
 
 
 async def _evaluar_en_proceso(

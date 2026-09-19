@@ -363,6 +363,16 @@ class AnalisisPliego(models.Model):
     # motor.pliego.analisis.Extraccion
     extraccion = models.JSONField()
     version = models.PositiveIntegerField()
+    # Lectura profunda con IA local (motor.pliego.lector_ia): todos los
+    # requisitos jurídicos del pliego. Corre en el trabajador de la fila.
+    estado_ia = models.CharField(max_length=20, default="pendiente")  # pendiente | leyendo | listo | error | no_disponible
+    progreso_ia = models.PositiveSmallIntegerField(default=0)  # 0-100
+    requisitos_ia = models.JSONField(default=list, blank=True)  # [motor.pliego.lector_ia.RequisitoPliego]
+    modelo_ia = models.CharField(max_length=80, blank=True)
+    version_ia = models.PositiveIntegerField(default=0)
+    error_ia = models.TextField(blank=True)
+    ia_iniciada = models.DateTimeField(null=True, blank=True)
+    ia_terminada = models.DateTimeField(null=True, blank=True)
     creado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)

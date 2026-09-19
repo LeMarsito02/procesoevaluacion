@@ -16,7 +16,7 @@ export interface PersonaVerificada {
   detectada: boolean
 }
 
-export type EstadoCertificado = 'cumple' | 'falta' | 'con_novedad' | 'no_requerido'
+export type EstadoCertificado = 'cumple' | 'falta' | 'con_novedad' | 'vencido' | 'no_requerido'
 
 export interface DocumentoAportado {
   id: string
