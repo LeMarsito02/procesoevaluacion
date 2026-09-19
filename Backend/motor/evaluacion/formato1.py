@@ -14,6 +14,14 @@ import pdfplumber
 from motor import criterios
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.integrations.drive import download_file_bytes, get_file_metadata
+from motor.evaluacion.formato1_contenido import (
+    avalista_del_parrafo,
+    clausulas_de,
+    clausulas_faltantes,
+    composicion_accionaria_vacia,
+    firmas_desubicadas,
+    representante_de_la_carta,
+)
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.pdf_utils import abrir_pdf, extraer_texto, texto_pagina
 from motor.procesamiento.zip_utils import extraer_pdfs
@@ -58,7 +66,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 49
+VERSION_LOGICA = 50
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -76,6 +84,10 @@ def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str
     payload["fecha_cierre"] = proceso.fecha_cierre.isoformat()
     payload["garantia"] = [g.vigencia_meses, g.porcentaje, g.base_calculo, g.valor_asegurado, g.fecha_vencimiento.isoformat()]
     payload["lotes_valores"] = sorted((lote.numero, lote.valor_presupuesto) for lote in proceso.lotes)
+    if proceso.modalidad:
+        payload["modalidad"] = proceso.modalidad
+    if proceso.tarjeta_suplible:
+        payload["tarjeta_suplible"] = True
     huella = criterios.huella_parametros()
     if huella:
         payload["criterios"] = huella
@@ -468,6 +480,48 @@ class ResultadoEvaluacionFormato1:
         self.objeto_relacionado = objeto_relacionado
 
 
+def _motivos_contenido(
+    texto: str, pdf_bytes: bytes, proceso: ProcesoDocumentoBase, representante_legal: str | None
+) -> list[str]:
+    """La carta frente al Formato 1 del pliego: declaraciones completas,
+    cuadro de composición diligenciado, aval coherente y firmas en su raya.
+    Ante la duda, a revisión (ver motor.evaluacion.formato1_contenido)."""
+    motivos = []
+    esenciales = clausulas_de(proceso.modalidad)
+    faltan = clausulas_faltantes(texto, proceso.modalidad)
+    if esenciales and len(faltan) > len(esenciales) / 2:
+        motivos.append(
+            "no se pudo comparar la carta con el Formato 1 del pliego (su texto no se leyó completo o es otro "
+            "formato) — revísala completa"
+        )
+    elif faltan:
+        citas = "; ".join(f"«{_cita(c)}»" for c in faltan[:3]) + (f" y {len(faltan) - 3} más" if len(faltan) > 3 else "")
+        motivos.append(f"a la carta le falta o le cambiaron lo que exige el Formato 1 del pliego: {citas}")
+    if composicion_accionaria_vacia(texto):
+        motivos.append("el cuadro de composición accionaria de la carta está vacío (no se diligenció)")
+    avalista = avalista_del_parrafo(texto)
+    representante = representante_de_la_carta(texto) or representante_legal
+    if avalista and representante and _nombres_coinciden(avalista, representante):
+        motivos.append(
+            f"el párrafo del aval dice que quien suscribe no es ingeniero, pero quien avala es el mismo representante "
+            f"legal ({avalista}): la carta se contradice — revisa si debe corregirse"
+        )
+    try:
+        paginas = firmas_desubicadas(pdf_bytes)
+    except Exception:  # noqa: BLE001
+        paginas = []
+    if paginas:
+        motivos.append(
+            f"en la página {', '.join(map(str, paginas))} de la carta hay una raya de firma vacía y una firma puesta en "
+            f"otro lugar (encima del texto) — revisa que la carta esté bien firmada"
+        )
+    return motivos
+
+
+def _cita(clausula: str, largo: int = 110) -> str:
+    return clausula if len(clausula) <= largo else clausula[:largo].rsplit(" ", 1)[0] + "…"
+
+
 def evaluar_formato1(pdf_bytes: bytes, proceso: ProcesoDocumentoBase) -> ResultadoEvaluacionFormato1:
     with abrir_pdf(pdf_bytes) as pdf:
         texto_completo = ""
@@ -545,6 +599,8 @@ def evaluar_formato1(pdf_bytes: bytes, proceso: ProcesoDocumentoBase) -> Resulta
 
     if not tiene_firma:
         motivos.append("no se encontró ninguna firma (ni imagen ni firma digital) en el documento")
+
+    motivos.extend(_motivos_contenido(texto_completo, pdf_bytes, proceso, representante_legal))
 
     if firma_confirmada is False:
         motivos.append(

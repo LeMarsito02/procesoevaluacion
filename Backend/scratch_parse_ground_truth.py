@@ -96,7 +96,7 @@ def main():
         faltantes = [n for n in range(1, 19) if n not in r["requisitos"]]
         print(f"  {r['nombre']}: faltan {faltantes}")
 
-    with open(".scratch/ground_truth.json", "w") as f:
+    with open(os.environ.get("MEDICION_GROUND_TRUTH", ".scratch/ground_truth.json"), "w") as f:
         json.dump(resultados, f, ensure_ascii=False, indent=1)
     print("Guardado en .scratch/ground_truth.json")
 

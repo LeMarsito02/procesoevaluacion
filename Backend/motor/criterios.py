@@ -131,6 +131,18 @@ PARAMETROS: dict[str, Parametro] = {
             ("juridica.existencia", "juridica.rup"),
         ),
         Parametro(
+            "antecedentes_meses",
+            "Antigüedad máxima de los certificados de antecedentes",
+            "Procuraduría, Contraloría, Policía y RNMC: meses de expedición antes del cierre (0 = no se revisa la "
+            "fecha). El REDAM siempre debe estar vigente al cierre según su propia fecha de validez.",
+            1,
+            "entero",
+            0,
+            12,
+            "meses",
+            ("juridica.contraloria", "juridica.procuraduria", "juridica.policia", "juridica.rnmc"),
+        ),
+        Parametro(
             "seguridad_social_certificado",
             "Aceptar certificación propia de pagos de seguridad social",
             "1 si el pliego dice que basta el certificado suscrito por el revisor fiscal o el representante legal: "

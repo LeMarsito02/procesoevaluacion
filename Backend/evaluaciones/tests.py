@@ -1867,3 +1867,116 @@ class OneDriveTests(TestCase):
                 mock.patch.object(onedrive.requests, "get", return_value=self.respuesta({}, 403)):
             with self.assertRaisesMessage(onedrive.OneDriveError, "Cualquier persona con el vínculo"):
                 onedrive._redimir("https://1drv.ms/f/c/otro")
+
+
+class ContenidoCartaTests(TestCase):
+    """Carta de presentación frente al Formato 1 del pliego (casos reales
+    que el abogado rechazó y el programa aprobaba)."""
+
+    NUMERAL_5 = ("5. Tengo conocimiento acerca de las características y condiciones del sitio de ejecución del proyecto, "
+                 "por lo que asumo la responsabilidad de su revisión con la presentación de esta oferta.")
+    NUMERAL_5_CAMBIADO = ("5. Tengo conocimiento acerca de las características y condiciones del sitio de ejecución del "
+                          "proyecto y asumo los Riesgos previsibles inherentes al mismo, así como aquellos asignados en el "
+                          "Pliego de Condiciones.")
+
+    def test_modalidad_del_pliego(self):
+        from motor.evaluacion.formato1_contenido import modalidad_de
+
+        self.assertEqual(modalidad_de("DOCUMENTO BASE LICITACIÓN DE OBRA PÚBLICA DE INFRAESTRUCTURA SOCIAL"), "obra_social")
+        self.assertEqual(modalidad_de("LICITACIÓN DE INFRAESTRUCTURA DE TRANSPORTE (VERSIÓN 4)"), "obra_transporte")
+        self.assertEqual(modalidad_de("SELECCIÓN ABREVIADA DE MENOR CUANTÍA"), "menor_cuantia")
+        self.assertEqual(modalidad_de("Código CCE-EICP-GI-11 INTERVENTORÍA DE OBRA PÚBLICA"), "interventoria")
+        self.assertIsNone(modalidad_de("CONCURSO DE MÉRITOS"))
+
+    def test_numeral_cambiado(self):
+        from motor.evaluacion.formato1_contenido import clausulas_faltantes
+
+        def falta_revision(texto):
+            return any("RESPONSABILIDAD DE SU REVISI" in c.upper() for c in clausulas_faltantes(texto, "obra_transporte"))
+
+        self.assertFalse(falta_revision(self.NUMERAL_5))
+        self.assertTrue(falta_revision(self.NUMERAL_5_CAMBIADO))
+
+    def test_composicion_accionaria_vacia(self):
+        from motor.evaluacion.formato1_contenido import composicion_accionaria_vacia
+
+        encabezado = ("Composición de la persona jurídica: Porcentaje NIT, Cédula o Nombre o participación Documento de "
+                      "Razón social Identificación del Accionista\n")
+        self.assertTrue(composicion_accionaria_vacia(encabezado + "21. La oferta contiene información reservada"))
+        self.assertFalse(composicion_accionaria_vacia(encabezado + "51% CC 1.088.245.241 Marcela Ruiz\n21. La oferta"))
+        self.assertFalse(composicion_accionaria_vacia("Carta sin cuadro de composición"))
+
+    def test_aval_del_mismo_representante(self):
+        from motor.evaluacion.formato1_contenido import avalista_del_parrafo, representante_de_la_carta
+
+        carta = ("Nombre del representante legal: Andrés Felipe García Ávila\nC. C. No. 1’069.725.868\n"
+                 "“De acuerdo con lo expresado en la Ley 842 de 2003 y debido a que el suscriptor de la presente propuesta "
+                 "no es ingeniero matriculado, yo Andrés Felipe García Ávila ingeniero con matrícula profesional No. "
+                 "25202-251630 CND, avalo la presente propuesta”.")
+        self.assertEqual(avalista_del_parrafo(carta), "ANDRES FELIPE GARCIA AVILA")
+        self.assertEqual(representante_de_la_carta(carta), "ANDRES FELIPE GARCIA AVILA")
+
+
+class RevisorFiscalSeguridadSocialTests(TestCase):
+    """Si la sociedad tiene revisor fiscal, el formato de seguridad social
+    debe venir certificado por él (caso real rechazado por el abogado)."""
+
+    def test_revisor_designado_en_el_certificado(self):
+        from motor.evaluacion.camara_comercio import REVISOR_FISCAL_DESIGNADO_RE
+
+        m = REVISOR_FISCAL_DESIGNADO_RE.search(
+            "SE DESIGNO A: CARGO NOMBRE IDENTIFICACION REVISOR FISCAL ANGELICA MARIA BARRIOS C.C. NO. 1140873167")
+        self.assertEqual(m.group(1), "ANGELICA MARIA BARRIOS")
+        self.assertIsNone(REVISOR_FISCAL_DESIGNADO_RE.search(
+            "O NOMBRAMIENTO DE REPRESENTANTES LEGALES, ADMINISTRADORES O REVISORES FISCALES, QUE MODIFIQUEN"))
+
+    def test_falta_la_firma_del_revisor(self):
+        from motor.evaluacion.seguridad_social import _falta_revisor_fiscal
+
+        revisores = {"901332677": "ANGELICA MARIA BARRIOS"}
+        firmado_por_rl = "YO JUAN PEREZ EN CALIDAD DE REPRESENTANTE LEGAL DE EFR SAS NIT 901.332.677-1 CERTIFICO"
+        self.assertEqual(_falta_revisor_fiscal(firmado_por_rl, "901332677", revisores), "ANGELICA MARIA BARRIOS")
+        self.assertIsNone(_falta_revisor_fiscal(firmado_por_rl + " ANGELICA MARIA BARRIOS REVISOR FISCAL", "901332677", revisores))
+        self.assertIsNone(_falta_revisor_fiscal(firmado_por_rl, "900111222", revisores))  # otra sociedad, sin revisor
+        self.assertIsNone(_falta_revisor_fiscal(firmado_por_rl, "901332677", {}))
+
+
+class VigenciaAntecedentesTests(TestCase):
+    """REDAM vencido al cierre (caso real rechazado por el abogado) y
+    antigüedad máxima de los demás certificados de antecedentes."""
+
+    def test_redam(self):
+        from datetime import date
+
+        from motor.evaluacion.antecedentes import CONFIG_REDAM, problema_de_vigencia
+
+        texto = "SE EXPIDE EN BOGOTA EL 28/04/2026 10:53 AM CODIGO VERIFICACION: Z81TN3L4PD VALIDA HASTA: 27/07/2026"
+        self.assertIn("venció el 27/07/2026", problema_de_vigencia(CONFIG_REDAM, texto, date(2026, 8, 3)))
+        self.assertIsNone(problema_de_vigencia(CONFIG_REDAM, texto, date(2026, 7, 20)))
+        # Sin "válida hasta": tres meses desde la expedición.
+        self.assertIsNone(problema_de_vigencia(CONFIG_REDAM, "SE EXPIDE EN BOGOTA EL 17/07/2026", date(2026, 8, 3)))
+        self.assertIsNotNone(problema_de_vigencia(CONFIG_REDAM, "SIN FECHAS", date(2026, 8, 3)))
+
+    def test_demas_certificados(self):
+        from datetime import date
+
+        from motor import criterios
+        from motor.evaluacion.antecedentes import CONFIG_PROCURADURIA, problema_de_vigencia
+
+        reciente = "BOGOTA DC, 31 DE JULIO DEL 2026 LA PROCURADURIA GENERAL DE LA NACION CERTIFICA"
+        viejo = "BOGOTA DC, 15 DE MAYO DEL 2026 LA PROCURADURIA GENERAL DE LA NACION CERTIFICA"
+        self.assertIsNone(problema_de_vigencia(CONFIG_PROCURADURIA, reciente, date(2026, 8, 3)))
+        self.assertIn("más de 1 mes", problema_de_vigencia(CONFIG_PROCURADURIA, viejo, date(2026, 8, 3)))
+        with criterios.usar({"antecedentes_meses": 0}):
+            self.assertIsNone(problema_de_vigencia(CONFIG_PROCURADURIA, viejo, date(2026, 8, 3)))
+
+
+class ObjetoSocialTests(TestCase):
+    def test_objeto_social(self):
+        from motor.evaluacion.camara_comercio import PROPORCION_MINIMA_OBJETO_SOCIAL, _proporcion_objeto_relacionado_laxo as p
+
+        base = "MANTENIMIENTO DE LA VÍA DESDE EL SECTOR LA PLAYA HACIA EL CASCO URBANO DEL MUNICIPIO DE SUESCA"
+        self.assertGreaterEqual(p("CONSTRUCCION Y MANTENIMIENTO DE VIAS Y OBRAS CIVILES", base), PROPORCION_MINIMA_OBJETO_SOCIAL)
+        self.assertEqual(p("PODRA REALIZAR CUALQUIER ACTIVIDAD COMERCIAL O CIVIL LICITA", base), 1.0)
+        # Comparte "mantenimiento" pero no es del sector de obras.
+        self.assertEqual(p("VENTA Y MANTENIMIENTO DE EQUIPOS DE COMPUTO", base), 0.0)

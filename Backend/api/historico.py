@@ -77,7 +77,7 @@ class AntecedentesOut(Schema):
     # Documento que la oferta trae para cada requisito (si el motor lo encontró).
     encontrados: dict[int, str | None]
     # Estado de cada certificado de cada persona según el programa:
-    # {persona_id: {requisito: {"estado": "cumple" | "falta" | "con_novedad" |
+    # {persona_id: {requisito: {"estado": "cumple" | "falta" | "con_novedad" | "vencido" |
     # "no_requerido", "archivo": ...}}}. Sin entrada: el programa no la evaluó
     # (la agregó el evaluador y no está entre las que exige la regla).
     estados: dict[str, dict[int, dict]] = {}

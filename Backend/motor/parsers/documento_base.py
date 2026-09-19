@@ -75,6 +75,13 @@ class ParseResult:
     objeto_general: str
     lotes: list[ParsedLote] = field(default_factory=list)
     garantia: ParsedGarantia | None = None
+    modalidad: str | None = None
+    tarjeta_suplible: bool = False
+
+
+# "El requisito de la tarjeta profesional se puede suplir con el registro de
+# que trata el artículo 18 del Decreto-Ley 2106 de 2019."
+TARJETA_SUPLIBLE_RE = re.compile(r"tarjeta profesional se (?:puede|podr[áa]) suplir con el registro", re.IGNORECASE)
 
 
 def _find_budget_rows(pdf: pdfplumber.PDF) -> tuple[str, list[ParsedLote]]:
@@ -239,10 +246,22 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF) -> ParsedGarantia | None:
 
 
 def parse_documento_base(pdf_bytes: bytes) -> ParseResult:
+    from motor.evaluacion.formato1_contenido import modalidad_de
+
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         objeto_general, lotes = _find_budget_rows(pdf)
         garantia = _find_garantia_seriedad(pdf)
-    return ParseResult(objeto_general=objeto_general, lotes=lotes, garantia=garantia)
+        # La modalidad se lee del encabezado de las primeras páginas.
+        modalidad = modalidad_de(" ".join((p.extract_text() or "") for p in pdf.pages[:3]))
+        tarjeta_suplible = False
+        for page in pdf.pages:
+            if TARJETA_SUPLIBLE_RE.search(re.sub(r"\s+", " ", page.extract_text() or "")):
+                tarjeta_suplible = True
+                break
+            page.flush_cache()
+    return ParseResult(
+        objeto_general=objeto_general, lotes=lotes, garantia=garantia, modalidad=modalidad, tarjeta_suplible=tarjeta_suplible
+    )
 
 
 def build_proceso(codigo_proceso: str, fecha_cierre: date, pdf_bytes: bytes) -> ProcesoDocumentoBase:
@@ -325,6 +344,8 @@ def build_proceso(codigo_proceso: str, fecha_cierre: date, pdf_bytes: bytes) -> 
     return ProcesoDocumentoBase(
         codigo_proceso=codigo_proceso,
         fecha_cierre=fecha_cierre,
+        modalidad=parsed.modalidad,
+        tarjeta_suplible=parsed.tarjeta_suplible,
         objeto_general=parsed.objeto_general,
         lotes=lotes,
         lote_mayor_valor=lote_mayor.numero if lote_mayor else "",

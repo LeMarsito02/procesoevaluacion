@@ -47,6 +47,14 @@ class ProcesoDocumentoBase(BaseModel):
         default_factory=list,
         description="Mensajes sobre datos que no se pudieron extraer con certeza y deben revisarse manualmente",
     )
+    # Modalidad del Formato 1 que exige el pliego ("interventoria",
+    # "obra_transporte", "obra_social", "menor_cuantia"); None si no se
+    # reconoció: la carta se compara entonces con el núcleo común del formato.
+    modalidad: str | None = None
+    # El pliego permite suplir la tarjeta profesional del ingeniero con el
+    # registro del art. 18 del Decreto-Ley 2106 de 2019 (el certificado
+    # COPNIA): entonces no se exige la copia de la tarjeta.
+    tarjeta_suplible: bool = False
     # Definición de evaluación de la entidad (motor.criterios.DefinicionEvaluacion
     # serializada). None = evaluación jurídica base del sistema.
     criterios: dict | None = Field(default=None, exclude=True)
@@ -77,7 +85,7 @@ class PersonaAntecedente(BaseModel):
     rol: str = "representante_legal"
     # "cumple": el certificado está y no reporta novedades · "falta": no se
     # encontró en la oferta · "con_novedad": está pero no confirma que esté
-    # libre de novedades.
+    # libre de novedades · "vencido": está, pero por su fecha ya no sirve.
     estado: str
     archivo: str | None = None
 

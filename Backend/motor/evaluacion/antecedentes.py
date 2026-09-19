@@ -3,7 +3,11 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 
+from dateutil.relativedelta import relativedelta
+
+from motor import criterios
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.evaluacion.formato1 import (
     _clave_cache,
@@ -201,6 +205,48 @@ def _con_roles(personas: list[tuple[str, str | None]], tipo_proponente: str | No
     return [(n, c, rol) for n, c in personas]
 
 
+# REDAM: "SE EXPIDE EN BOGOTA EL 28/04/2026 … VALIDA HASTA: 27/07/2026". El
+# certificado dice hasta cuándo vale; sin esa fecha, vale tres meses.
+_REDAM_VALIDA_HASTA_RE = re.compile(r"VALID[OA]\s+HASTA\s*:?\s*(\d{1,2})[/-](\d{1,2})[/-](\d{4})")
+MESES_VALIDEZ_REDAM = 3
+
+
+def problema_de_vigencia(config: AntecedenteConfig, texto_norm: str, fecha_cierre: date | None) -> str | None:
+    """Por qué el certificado no sirve por su fecha (None si sirve o no se
+    revisa). El REDAM debe estar vigente al cierre; los demás, expedidos a
+    lo sumo `antecedentes_meses` antes del cierre (la entidad además puede
+    consultarlos en línea)."""
+    from motor.evaluacion.personalizado import fecha_expedicion
+
+    if fecha_cierre is None:
+        return None
+    expedicion = fecha_expedicion(texto_norm)
+    if config.requisito == 5:
+        m = _REDAM_VALIDA_HASTA_RE.search(texto_norm)
+        try:
+            hasta = date(int(m.group(3)), int(m.group(2)), int(m.group(1))) if m else None
+        except ValueError:
+            hasta = None
+        if hasta is None and expedicion is not None:
+            hasta = expedicion + relativedelta(months=MESES_VALIDEZ_REDAM)
+        if hasta is None:
+            return "no se pudo leer hasta cuándo es válido"
+        if hasta < fecha_cierre:
+            return f"venció el {hasta.strftime('%d/%m/%Y')}, antes del cierre ({fecha_cierre.strftime('%d/%m/%Y')})"
+        return None
+    meses = criterios.valor("antecedentes_meses")
+    if not meses:
+        return None
+    if expedicion is None:
+        return "no se pudo leer su fecha de expedición"
+    if expedicion < fecha_cierre - relativedelta(months=meses):
+        return (
+            f"fue expedido el {expedicion.strftime('%d/%m/%Y')}, más de {meses} mes{'es' if meses > 1 else ''} antes del "
+            f"cierre ({fecha_cierre.strftime('%d/%m/%Y')}) — la entidad puede consultarlo en línea"
+        )
+    return None
+
+
 class ResultadoEvaluacionAntecedente:
     def __init__(
         self, cumple: bool, motivo: str | None, archivo: str | None, personas: list[PersonaAntecedente] | None = None
@@ -218,6 +264,7 @@ def evaluar_antecedente(
     personas: list[tuple],
     empresas: list[Empresa] | None = None,
     plural: bool = False,
+    fecha_cierre: date | None = None,
 ) -> ResultadoEvaluacionAntecedente:
     """Verifica que se haya aportado el certificado de `config.entidad` para
     cada persona en `personas` —(nombre, cédula) o (nombre, cédula, rol)— y,
@@ -275,6 +322,9 @@ def evaluar_antecedente(
                 f"el certificado de {config.entidad} de {nombre_persona} no confirma que esté libre de novedades"
             )
             resultados.append(PersonaAntecedente(**base, estado="con_novedad", archivo=archivo))
+        elif vencido := problema_de_vigencia(config, _norm(texto), fecha_cierre):
+            faltantes.append(f"el certificado de {config.entidad} de {nombre_persona} {vencido}")
+            resultados.append(PersonaAntecedente(**base, estado="vencido", archivo=archivo))
         else:
             resultados.append(PersonaAntecedente(**base, estado="cumple", archivo=archivo))
 
@@ -296,6 +346,9 @@ def evaluar_antecedente(
                 "libre de novedades"
             )
             resultados.append(PersonaAntecedente(**base, estado="con_novedad", archivo=suyo.archivo))
+        elif vencido := problema_de_vigencia(config, _norm(suyo.texto), fecha_cierre):
+            faltantes.append(f"el certificado de {config.entidad} de {empresa.nombre} (NIT {empresa.nit}) {vencido}")
+            resultados.append(PersonaAntecedente(**base, estado="vencido", archivo=suyo.archivo))
         else:
             resultados.append(PersonaAntecedente(**base, estado="cumple", archivo=suyo.archivo))
 
@@ -368,7 +421,8 @@ def _evaluar_proponente_antecedente(
         else []
     )
     resultado = evaluar_antecedente(
-        pdfs, config, personas, empresas, plural=tipo_proponente in ("consorcio", "union_temporal")
+        pdfs, config, personas, empresas, plural=tipo_proponente in ("consorcio", "union_temporal"),
+        fecha_cierre=proceso.fecha_cierre,
     )
 
     return finalizar(

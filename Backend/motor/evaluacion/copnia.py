@@ -106,6 +106,61 @@ def encontrar_copnias(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
     return encontrados
 
 
+# Copia de la tarjeta profesional del ingeniero (los abogados la piden como
+# soporte del aval, además del certificado COPNIA: "NO SE APORTA TARJETA
+# PROFESIONAL DEL INGENIERO QUE AVALA LA PROPUESTA"). Es una página con
+# "TARJETA PROFESIONAL" o "MATRÍCULA PROFESIONAL" que no es el certificado
+# COPNIA ni la carta (que dice "Matrícula profesional No. … [anexar copia]").
+# La tarjeta suele ser una imagen escaneada: su texto sale por OCR.
+TARJETA_RE = re.compile(r"TARJETA\s+PROFESIONAL|MATRICULA\s+PROFESIONAL|T\.\s?P\.\s?(?:NO\.?\s*)?\d|REGISTRO\s+PROFESIONAL")
+NO_ES_TARJETA_RE = re.compile(
+    r"ANEXAR COPIA|CARTA DE PRESENTACION|ESTIMADOS SENORES|RESPETADOS SENORES|AVALO LA PRESENTE"
+    r"|CONTADOR|REVISOR(?:A)? FISCAL|JUNTA CENTRAL|ESTADOS FINANCIEROS"
+)
+PISTAS_TARJETA = ("tarjeta", "tp", "matricula", "copnia", "profesional", "carta", "aval", "ingeniero", "cedula", "rl")
+PAGINAS_TARJETA = 20
+
+
+@memo_por_pdfs
+def paginas_tarjeta_profesional(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
+    """(archivo, texto) de las páginas que parecen la copia de una tarjeta
+    profesional."""
+    paginas = []
+    for nombre in pdfs:
+        base = _norm(nombre.rsplit("/", 1)[-1]).lower()
+        limite = PAGINAS_TARJETA if any(p in base for p in PISTAS_TARJETA) else 3
+        try:
+            with abrir_pdf(pdfs[nombre]) as pdf:
+                for page in pdf.pages[:limite]:
+                    texto = texto_pagina(page)
+                    page.flush_cache()
+                    texto_norm = _norm(texto)
+                    if TARJETA_RE.search(texto_norm) and not TITULO_COPNIA_RE.search(texto_norm) \
+                            and not NO_ES_TARJETA_RE.search(texto_norm):
+                        paginas.append((nombre, texto))
+        except Exception:  # noqa: BLE001
+            continue
+    return paginas
+
+
+def tarjeta_profesional(pdfs: dict[str, bytes], nombre: str | None, matricula: str | None) -> str | None:
+    """Archivo con la copia de la tarjeta profesional del ingeniero: de
+    preferencia la página de tarjeta con su número de matrícula o su nombre;
+    si no, cualquier página de tarjeta (escaneada, el OCR suele dañar el
+    número y el nombre)."""
+    digitos = re.sub(r"\D", "", matricula or "")
+    paginas = paginas_tarjeta_profesional(pdfs)
+    for archivo, texto in paginas:
+        texto_norm = _norm(texto)
+        if digitos and len(digitos) >= 5 and digitos in re.sub(r"\D", "", texto_norm):
+            return archivo
+        if nombre and _nombres_coinciden(nombre, " ".join(re.findall(r"[A-ZÑ]{2,}", texto_norm))):
+            return archivo
+    # Tarjeta escaneada ilegible: basta una página de tarjeta que no sea de
+    # contador ni revisor fiscal (ya excluidas en paginas_tarjeta_profesional).
+    return paginas[0][0] if paginas else None
+
+
 def _elegir_copnia_del_profesional(
     pdfs: dict[str, bytes], personas: list[str]
 ) -> tuple[str, str] | None:
@@ -226,7 +281,11 @@ ANTIGUEDAD_MAXIMA_MESES = 3
 
 
 def evaluar_requisito2(
-    pdfs: dict[str, bytes], fecha_cierre: date, representante_legal: str | None, avalista: str | None = None
+    pdfs: dict[str, bytes],
+    fecha_cierre: date,
+    representante_legal: str | None,
+    avalista: str | None = None,
+    exigir_tarjeta: bool = True,
 ) -> ResultadoEvaluacionCopnia:
     """Requisito 2: la propuesta debe estar suscrita por un ingeniero o, si
     quien la suscribe no lo es, avalada por uno (Documento Base, Ley 842 de
@@ -263,6 +322,13 @@ def evaluar_requisito2(
             f"el COPNIA fue expedido el {datos.fecha_expedicion.strftime('%d/%m/%Y')}, hace más de "
             f"{criterios.valor('copnia_meses')} meses contados desde la fecha de cierre "
             f"({fecha_cierre.strftime('%d/%m/%Y')})"
+        )
+
+    if exigir_tarjeta and tarjeta_profesional(pdfs, datos.nombre, datos.matricula) is None:
+        motivos.append(
+            "no se encontró la copia de la tarjeta profesional del ingeniero"
+            + (f" {datos.nombre}" if datos.nombre else "")
+            + " (solo el certificado COPNIA) — confirma si se aportó"
         )
 
     if not datos.nombre or not personas:
@@ -438,7 +504,9 @@ def evaluar_proponente_requisito2(proponente: Proponente, proceso: ProcesoDocume
         )
 
     representante_legal = _obtener_representante_legal(pdfs)
-    resultado = evaluar_requisito2(pdfs, proceso.fecha_cierre, representante_legal, obtener_avalista(pdfs))
+    resultado = evaluar_requisito2(
+        pdfs, proceso.fecha_cierre, representante_legal, obtener_avalista(pdfs), exigir_tarjeta=not proceso.tarjeta_suplible
+    )
 
     datos = resultado.datos
     return finalizar(

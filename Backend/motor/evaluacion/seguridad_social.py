@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from motor.evaluacion.camara_comercio import revisores_fiscales
 from motor.evaluacion.formato1 import (
     _clave_cache,
     _extraer_nombre_apertura,
@@ -204,6 +205,7 @@ def _evaluar_formato5_plural(pdfs: dict[str, bytes], codigo_proceso: str | None)
     texto_formato2_norm = _norm(encontrar_formato2(pdfs, codigo_proceso)[1])
     integrantes = len(datos.porcentajes)
 
+    revisores = revisores_fiscales(pdfs)
     nits_validos: set[str] = set()
     problemas: list[str] = []
     for nombre_archivo, texto in certificados:
@@ -214,6 +216,14 @@ def _evaluar_formato5_plural(pdfs: dict[str, bytes], codigo_proceso: str | None)
             continue
         if not FIRMANTE_VALIDO_RE.search(texto_norm):
             problemas.append(f"'{nombre_archivo}' no indica que lo firme el representante legal o el revisor fiscal")
+            continue
+        persona_natural = PERSONA_NATURAL_RE.search(texto_norm) and not _nit(texto_norm)
+        revisor = None if persona_natural else _falta_revisor_fiscal(texto_norm, _nit(texto_norm), revisores)
+        if revisor:
+            problemas.append(
+                f"'{nombre_archivo}' no viene certificado por el revisor fiscal de la sociedad ({revisor}, según su "
+                "certificado de existencia)"
+            )
             continue
         nits_validos.add(integrante)
 
@@ -226,6 +236,28 @@ def _evaluar_formato5_plural(pdfs: dict[str, bytes], codigo_proceso: str | None)
     if problemas:
         motivo += " (" + "; ".join(problemas) + ")"
     return ResultadoEvaluacionSegSocial(cumple=False, motivo=motivo + " — revisa manualmente", archivo=archivo)
+
+
+def _falta_revisor_fiscal(texto_norm: str, nit: str | None, revisores: dict[str, str]) -> str | None:
+    """Si la sociedad tiene revisor fiscal (según su certificado de
+    existencia), el formato debe venir certificado por él (art. 50 Ley 789
+    de 2002): se exige "en calidad de revisor fiscal" o su nombre. Devuelve
+    el nombre del revisor que falta, o None si no aplica o está."""
+    if not revisores:
+        return None
+    if nit is not None:
+        revisor = revisores.get(nit)
+    elif len(revisores) == 1:
+        revisor = next(iter(revisores.values()))
+    else:
+        # Sin NIT en el formato no se sabe de qué sociedad es: basta que lo
+        # certifique alguno de los revisores; si no, a revisión.
+        if any(_nombre_aparece_en_texto(r, texto_norm) for r in revisores.values()):
+            return None
+        revisor = " o ".join(revisores.values())
+    if revisor is None or REVISOR_FISCAL_CERTIFICA_RE.search(texto_norm) or _nombre_aparece_en_texto(revisor, texto_norm):
+        return None
+    return revisor
 
 
 class ResultadoEvaluacionSegSocial:
@@ -255,11 +287,10 @@ def evaluar_requisito12(
     representante elegido del consorcio/UT — esa regla es específica de los
     antecedentes de REDAM/Contraloría/etc., no de este requisito).
 
-    Limitaciones conocidas, ambas quedan para revisión humana en vez de una
-    confirmación automática sin base real: (1) no se verifica la firma del
-    revisor fiscal — requeriría cruzar con el Requisito 6 si el certificado
-    de existencia menciona uno, y esa extracción no está implementada; (2)
-    en plurales se exige un Formato 5 por integrante (cruzado por NIT con el
+    Si el certificado de existencia de la sociedad designa revisor fiscal, el
+    formato debe venir certificado por él (se busca "en calidad de revisor
+    fiscal" o su nombre); si no, va a revisión. Limitación conocida: en
+    plurales se exige un Formato 5 por integrante (cruzado por NIT con el
     Formato 2), firmado por representante legal o revisor fiscal, sin
     verificar el nombre exacto de quien firma."""
     encontrado = encontrar_formato5(pdfs)
@@ -301,6 +332,17 @@ def evaluar_requisito12(
         return ResultadoEvaluacionSegSocial(
             cumple=False,
             motivo="Se encontró el formato de seguridad social, pero no se pudo identificar al representante legal (Formato 1) para confirmar su firma — revisa manualmente.",
+            archivo=archivo,
+        )
+
+    revisor = _falta_revisor_fiscal(texto_norm, _nit(texto_norm), revisores_fiscales(pdfs))
+    if revisor:
+        return ResultadoEvaluacionSegSocial(
+            cumple=False,
+            motivo=(
+                f"la sociedad tiene revisor fiscal ({revisor}, según su certificado de existencia) y el formato de "
+                "seguridad social no viene certificado por él — confirma quién lo firmó"
+            ),
             archivo=archivo,
         )
 

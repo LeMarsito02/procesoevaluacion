@@ -13,10 +13,15 @@ FILA_INICIAL, PASO, REQUISITOS = 29, 4, 18
 def main(ruta: str, salida: str) -> None:
     wb = openpyxl.load_workbook(ruta, data_only=True)
     proponentes = []
-    for hoja in wb.sheetnames:
-        if not re.fullmatch(r"P-\d+", hoja):
+    for nombre_hoja in wb.sheetnames:
+        ws = wb[nombre_hoja]
+        if re.fullmatch(r"P-\d+", nombre_hoja):
+            hoja = nombre_hoja
+        elif re.fullmatch(r"\d+", nombre_hoja) and re.fullmatch(r"\d+(\.0)?", str(ws["D5"].value or "")):
+            # Hojas "1", "2"… con el número del proponente en D5 (informe parcial).
+            hoja = f"P-{int(float(ws['D5'].value)):02d}"
+        else:
             continue
-        ws = wb[hoja]
         requisitos = {}
         # La fila del requisito 1 cambia entre versiones de la plantilla (29 o 28).
         inicio = next((r for r in range(20, 40) if str(ws[f"B{r}"].value or "").strip() in ("1", "1.0")), FILA_INICIAL)

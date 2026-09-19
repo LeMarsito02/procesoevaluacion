@@ -80,7 +80,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   const pendiente = (per: PersonaVerificada, req: number) => {
     if (aportado(per.id, req).length) return false
     const e = estado(per.id, req)?.estado
-    return e ? e === 'falta' || e === 'con_novedad' : !datos.encontrados[req]
+    return e ? e === 'falta' || e === 'con_novedad' || e === 'vencido' : !datos.encontrados[req]
   }
   const sinCertificado = ordenadas.reduce((n, per) => n + datos.requisitos.filter((r) => pendiente(per, r.numero)).length, 0)
 
@@ -187,6 +187,11 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                         {docs.length === 0 && estado(per.id, r.numero)?.estado === 'con_novedad' && (
                           <span className="pill" data-estado="error" title={estado(per.id, r.numero)?.archivo ?? ''}>
                             <span className="dot" /> Con novedad
+                          </span>
+                        )}
+                        {docs.length === 0 && estado(per.id, r.numero)?.estado === 'vencido' && (
+                          <span className="pill" data-estado="error" title={estado(per.id, r.numero)?.archivo ?? ''}>
+                            <span className="dot" /> Vencido
                           </span>
                         )}
                         {docs.length === 0 && estado(per.id, r.numero)?.estado === 'falta' && (

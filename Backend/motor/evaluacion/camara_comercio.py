@@ -220,6 +220,33 @@ def empresas_con_certificado(pdfs: dict[str, bytes]) -> list[Empresa]:
     return list(empresas.values())
 
 
+# Revisor fiscal designado: "…SE DESIGNO A: CARGO NOMBRE IDENTIFICACION
+# REVISOR FISCAL ANGELICA MARIA BARRIOS C.C. NO. 1140873167", "REVISOR
+# FISCAL. FONTALVO MEJIA MIGUEL DE JESUS CC 1140877146". No cuenta la frase
+# genérica "…NOMBRAMIENTO DE … REVISORES FISCALES, QUE MODIFIQUEN…".
+REVISOR_FISCAL_DESIGNADO_RE = re.compile(
+    r"REVISOR(?:A)?\s+FISCAL(?:\s+(?:PRINCIPAL|SUPLENTE))?\.?\s+(?!DE\b|DEL\b|QUE\b|Y\b|O\b)"
+    r"([A-ZÑ][A-ZÑ.& ]{5,80}?)\s+(?:C\.?\s?C\.?|CEDULA|NIT|T\.?\s?P\.?|TARJETA)"
+)
+
+
+def revisores_fiscales(pdfs: dict[str, bytes]) -> dict[str, str]:
+    """NIT (9 dígitos) -> nombre del revisor fiscal designado, según el
+    certificado de existencia de cada empresa. Las empresas sin revisor
+    fiscal no aparecen."""
+    revisores: dict[str, str] = {}
+    for nombre in encontrar_documentos(pdfs, TITULO_EXISTENCIA_RE, PISTAS_EXISTENCIA):
+        try:
+            texto_norm = re.sub(r"\s+", " ", _norm(_texto_completo(pdfs, nombre)))
+        except Exception:  # noqa: BLE001
+            continue
+        nit = NIT_CERTIFICADO_RE.search(texto_norm)
+        revisor = REVISOR_FISCAL_DESIGNADO_RE.search(texto_norm)
+        if nit and revisor:
+            revisores.setdefault(re.sub(r"\D", "", nit.group(1))[:9], revisor.group(1).strip(" ."))
+    return revisores
+
+
 def _identidad_y_extension(contenido: bytes, titulo_re: re.Pattern[str]) -> tuple[str | None, int]:
     """(NIT o código de verificación del certificado, páginas que ocupa el
     certificado dentro del archivo)."""
@@ -343,12 +370,17 @@ def evaluar_requisito9(pdfs: dict[str, bytes], fecha_cierre: date) -> ResultadoE
 # "OBJETO SOCIAL OBJETO SOCIAL. POR ACTA...LA SOCIEDAD TENDRA COMO OBJETO
 # PRINCIPAL..." — se toma el texto que sigue al encabezado, igual que
 # _extraer_objeto_carta hace con el objeto de la carta de presentación.
+# Los objetos sociales con listas de códigos CIIU son largos: la actividad de
+# construcción puede venir después de otras (ganadería, comercio…).
+LARGO_OBJETO_SOCIAL = 4000
+
+
 def _extraer_objeto_social(texto_norm: str) -> str | None:
     idx = texto_norm.find("OBJETO SOCIAL")
     if idx == -1:
         return None
     inicio = idx + len("OBJETO SOCIAL")
-    return texto_norm[inicio : inicio + 1200].strip()
+    return texto_norm[inicio : inicio + LARGO_OBJETO_SOCIAL].strip()
 
 
 # Comparación por raíz de palabra (los primeros 3 caracteres), no por
@@ -361,11 +393,49 @@ def _raiz(palabra: str) -> str:
     return palabra[:3]
 
 
+# Del objeto del proceso solo cuentan las actividades, no la geografía: "…
+# DESDE EL SECTOR LA PLAYA HACIA EL CASCO URBANO DEL MUNICIPIO DE SUESCA,
+# DEPARTAMENTO DE CUNDINAMARCA" no es algo que un objeto social mencione.
+_LUGAR_RE = re.compile(
+    r"\b(?:MUNICIPIOS?|DEPARTAMENTOS?|SECTOR(?:ES)?|VEREDAS?|INSPECCION(?:ES)?|CORREGIMIENTOS?|BARRIOS?|CIUDAD|DISTRITO)"
+    r"\s+(?:DE\s+(?:LA\s+|LOS\s+|EL\s+)?)?(?:[A-ZÑ]+\s*){1,3}"
+)
+_PALABRAS_DE_LUGAR = {
+    "DESDE", "HACIA", "HASTA", "CASCO", "URBANO", "RURAL", "MUNICIPIO", "DEPARTAMENTO", "SECTOR", "LOTE", "ETAPA",
+    "CUNDINAMARCA", "BOGOTA", "VEREDA", "INSPECCION", "ENTRE", "TRAMO",
+}
+# El objeto social debe ser del sector: obras, construcción, ingeniería,
+# infraestructura, vías… (un "mantenimiento de computadores" comparte la
+# palabra "mantenimiento" con un proceso de vías, pero no el sector).
+_SECTOR_OBRAS_RE = re.compile(
+    r"CONSTRUC|\bOBRAS?\b|INGENIER|INFRAESTRUCT|\bVIA[SL]?\b|VIALES|CARRETER|PAVIMENT|EDIFICA|INTERVENTOR|ARQUITECT"
+    r"|OBRA\s+CIVIL|OBRAS\s+CIVILES|CONSULTORIA"
+)
+
+
+# Objeto indeterminado de las S.A.S. (art. 5 Ley 1258 de 2008): "PODRÁ
+# REALIZAR CUALQUIER ACTIVIDAD COMERCIAL O CIVIL LÍCITA" cubre cualquier
+# objeto de proceso.
+_OBJETO_INDETERMINADO_RE = re.compile(r"CUALQUIER\s+ACTIVIDAD\s+(?:LICITA|(?:COMERCIAL|CIVIL)(?:\s+[OY]\s+(?:COMERCIAL|CIVIL))?,?\s+LICITA)")
+
+
+def _raices_de_actividad(objeto_base: str) -> set[str]:
+    base = _LUGAR_RE.sub(" ", _norm(objeto_base))
+    return {_raiz(t) for t in _tokens_significativos(base) if t not in _PALABRAS_DE_LUGAR}
+
+
 def _proporcion_objeto_relacionado_laxo(objeto_social: str, objeto_base: str) -> float:
-    raices_base = {_raiz(t) for t in _tokens_significativos(objeto_base)}
+    """Fracción de las actividades del objeto del proceso que aparecen en el
+    objeto social (0 si el objeto social no es del sector de obras)."""
+    raices_base = _raices_de_actividad(objeto_base)
     if not raices_base:
         return 1.0
-    raices_social = {_raiz(t) for t in _tokens_significativos(objeto_social)}
+    social = _norm(objeto_social)
+    if _OBJETO_INDETERMINADO_RE.search(social):
+        return 1.0
+    if not _SECTOR_OBRAS_RE.search(social):
+        return 0.0
+    raices_social = {_raiz(t) for t in _tokens_significativos(social)}
     comunes = raices_social & raices_base
     return len(comunes) / len(raices_base)
 
