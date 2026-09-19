@@ -2274,3 +2274,56 @@ class LecturaIAProcesoTests(BaseEvaluaciones):
         with mock.patch("motor.pliego.lector_ia.disponible", return_value=False):
             pliego.atender_lecturas_pendientes()
         self.assertEqual(AnalisisPliego.objects.get(pk=a.pk).estado_ia, "no_disponible")
+
+
+class FiltrosLecturaIATests(TestCase):
+    """Lo que se aprendió de la prueba 4 (documento tipo de menor cuantía)."""
+
+    def test_nacional_o_extranjero_es_para_todos(self):
+        from motor.pliego.lector_ia import es_de_extranjeros
+
+        todos = _requisito_pliego(requisito="Ser persona natural o jurídica nacional o extranjera domiciliada en Colombia",
+                                  cita="personas naturales nacionales o extranjeras")
+        self.assertFalse(es_de_extranjeros(todos))
+        self.assertTrue(es_de_extranjeros(_requisito_pliego(requisito="Documentos públicos otorgados en el exterior apostillados")))
+
+    def test_condicionales_no_se_exigen_a_todos(self):
+        from motor import criterios
+        from motor.pliego.analisis import Extraccion, comparar
+
+        requisitos = [
+            _requisito_pliego(id="a", requisito="El proponente debe acreditar que el apoderado que firma la oferta está facultado",
+                              documento="Poder", titulo_documento=["PODER ESPECIAL AMPLIO Y SUFICIENTE"]),
+            _requisito_pliego(id="b", requisito="La persona natural que reúna los requisitos para acceder a la pensión de vejez",
+                              verificacion="juridica.seguridad_social"),
+        ]
+        extraccion = Extraccion(secciones=[], exigencias=[], paginas=40, documento_tipo=None)
+        h = {x.id: x for x in comparar(extraccion, criterios.definicion_sistema("juridica"), requisitos)}
+        self.assertNotIn("ia_a", h)
+        self.assertEqual(h["ia_condicionales"].tipo, "aclaracion")
+
+    def test_lo_que_el_pliego_menciona_no_se_propone_quitar(self):
+        from motor import criterios
+        from motor.pliego.analisis import MINIMO_REQUISITOS_PARA_NO_EXIGIDOS, Extraccion, comparar
+        from motor.pliego.catalogo import temas_en
+
+        temas = temas_en("F. La Entidad debe consultar los antecedentes judiciales en línea y el certificado de antecedentes "
+                         "disciplinarios y el Registro Nacional de Medidas Correctivas")
+        self.assertTrue({"juridica.policia", "juridica.procuraduria", "juridica.rnmc"} <= set(temas))
+        requisitos = [_requisito_pliego(id=str(i), requisito=f"Requisito {i}", verificacion="juridica.existencia")
+                      for i in range(MINIMO_REQUISITOS_PARA_NO_EXIGIDOS)]
+        extraccion = Extraccion(secciones=[], exigencias=[], paginas=40, documento_tipo=None, temas=temas)
+        no_exigidos = {x.verificacion for x in comparar(extraccion, criterios.definicion_sistema("juridica"), requisitos)
+                       if x.tipo == "requisito_no_exigido"}
+        self.assertFalse({"juridica.policia", "juridica.procuraduria", "juridica.rnmc"} & no_exigidos)
+        self.assertIn("juridica.rup", no_exigidos)
+
+    def test_se_lee_la_seriedad_y_lo_juridico_de_paso(self):
+        from motor.pliego.lector_ia import _se_lee
+        from motor.pliego.lectura import Seccion
+
+        self.assertTrue(_se_lee(Seccion(numero="7.1", titulo="GARANTÍA DE SERIEDAD DE LA OFERTA", pagina=83, texto="x"), "garantias"))
+        self.assertFalse(_se_lee(Seccion(numero="7.2", titulo="GARANTÍA DE CUMPLIMIENTO", pagina=84, texto="x"), "garantias"))
+        rup = "D. Los Proponentes obligados a estar inscritos en el Registro Único de Proponentes (RUP), deben aportar certificado"
+        self.assertTrue(_se_lee(Seccion(numero="3.1", titulo="GENERALIDADES", pagina=25, texto=rup), "puntaje"))
+        self.assertFalse(_se_lee(Seccion(numero="3.5", titulo="EXPERIENCIA", pagina=32, texto=rup), "tecnica"))

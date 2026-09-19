@@ -39,7 +39,7 @@ CONTEXTO = int(os.environ.get("PLIEGO_IA_CONTEXTO", "4096"))
 TROZO = int(os.environ.get("PLIEGO_IA_TROZO", "3500"))
 HABILITADO = os.environ.get("PLIEGO_IA_HABILITADO", "1") == "1"
 # Cambia cuando cambia la forma de leer: las lecturas viejas se repiten.
-VERSION = 2
+VERSION = 3
 TIEMPO_MAXIMO = float(os.environ.get("PLIEGO_IA_TIMEOUT", "600"))
 
 INSTRUCCION = """Eres abogado experto en contratación estatal colombiana (Ley 80 de 1993, Decreto 1082 de 2015, documentos tipo de Colombia Compra Eficiente).
@@ -77,6 +77,9 @@ _NO_ES_REQUISITO_RE = re.compile(
     r"|OFERTA ECONOMICA|\bAIU\b|ADMINISTRACION, IMPREVISTOS|MANIFESTA\w* (?:DE |SU )?INTERES|SMMLV|VALORES CONVERTIDOS"
     r"|EMPRENDIMIENTO|EMPRESAS? DE MUJERES|DESEMPATE|ADJUDICATARIO|EL CONTRATISTA|CADA PAGO|FECHA (?:Y HORA )?DE CIERRE"
     r"|ENTREGUEN SU OFERTA|MISMOS INTEGRANTES|IDIOMA|TRADUCCION|CONVERTID"
+    # Remisiones genéricas ("acreditar el cumplimiento de los requisitos
+    # definidos en el anexo"): no dicen qué se exige.
+    r"|^(?:EL PROPONENTE DEBE )?ACREDITAR EL CUMPLIMIENTO DE LOS REQUISITOS (?:DEFINIDOS|ESTABLECIDOS|SENALADOS|PREVISTOS)"
 )
 # Requisitos solo para proponentes extranjeros: no se le exigen a uno
 # nacional; se muestran juntos como aclaración.
@@ -117,6 +120,31 @@ class Trozo(BaseModel):
     pagina: int
 
 
+# Documentos jurídicos que una sección no jurídica puede exigir de paso
+# ("D. Los proponentes obligados a estar inscritos en el RUP deben aportar
+# certificado…" dentro de "3.1 GENERALIDADES").
+_DOCUMENTO_JURIDICO_RE = re.compile(
+    r"REGISTRO UNICO DE PROPONENTES|\bRUP\b|REDAM|DEUDORES ALIMENTARIOS|EXISTENCIA Y REPRESENTACION|GARANTIA DE SERIEDAD"
+    r"|ANTECEDENTES (?:FISCALES|DISCIPLINARIOS|JUDICIALES)|SEGURIDAD SOCIAL|CARTA DE PRESENTACION"
+)
+_TITULO_NO_JURIDICO_RE = re.compile(
+    r"EXPERIENCIA|FINANCIER|ORGANIZACIONAL|PUNTAJE|FACTOR|DESEMPATE|MIPYME|ECONOMICA|CALIDAD|CRITERIO|CIERRE|RETIRO|APERTURA"
+)
+LARGO_SECCION_DE_PASO = 6000
+
+
+def _se_lee(s: Seccion, ambito: str) -> bool:
+    titulo = _norm(s.titulo)
+    if ambito == "juridica":
+        return True
+    if ambito == "general" and _TEMA_JURIDICO_RE.search(titulo):
+        return True
+    if ambito == "garantias":  # solo la de seriedad es habilitante
+        return "SERIEDAD" in titulo
+    return (ambito in ("general", "puntaje") and len(s.texto) <= LARGO_SECCION_DE_PASO
+            and not _TITULO_NO_JURIDICO_RE.search(titulo) and bool(_DOCUMENTO_JURIDICO_RE.search(_norm(s.texto))))
+
+
 def trozos(secciones: list[Seccion], ambitos: dict[str, str], largo: int = TROZO) -> list[Trozo]:
     """Los trozos que se leen: las secciones jurídicas completas y las
     generales cuyo título trata un tema jurídico (nunca las técnicas,
@@ -124,8 +152,7 @@ def trozos(secciones: list[Seccion], ambitos: dict[str, str], largo: int = TROZO
     solapan un poco para no cortar un requisito a la mitad."""
     salida = []
     for s in secciones:
-        ambito = ambitos.get(s.numero, "general")
-        if ambito != "juridica" and not (ambito == "general" and _TEMA_JURIDICO_RE.search(_norm(s.titulo))):
+        if not _se_lee(s, ambitos.get(s.numero, "general")):
             continue
         texto = f"{s.numero} {s.titulo}\n{s.texto}".strip()
         paso = max(largo - 300, 500)
@@ -223,8 +250,13 @@ def _sin_repetidos(requisitos: list[RequisitoPliego]) -> list[RequisitoPliego]:
     return unicos
 
 
+# "personas naturales o jurídicas nacionales o extranjeras" habla de todos.
+_NACIONAL_O_EXTRANJERO_RE = re.compile(r"NACIONAL(?:ES)?\s+(?:O|Y|U)\s+EXTRANJER\w*|EXTRANJER\w*\s+(?:O|Y)\s+NACIONAL(?:ES)?")
+
+
 def es_de_extranjeros(r: "RequisitoPliego") -> bool:
-    return "extranjero" in r.aplica_a or bool(EXTRANJEROS_RE.search(_norm(f"{r.requisito} {r.documento or ''} {r.cita}")))
+    texto = _NACIONAL_O_EXTRANJERO_RE.sub(" ", _norm(f"{r.requisito} {r.documento or ''} {r.cita}"))
+    return "extranjero" in r.aplica_a or bool(EXTRANJEROS_RE.search(texto))
 
 
 def leer(

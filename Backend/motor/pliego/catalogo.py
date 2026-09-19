@@ -40,7 +40,8 @@ REGLAS: tuple[tuple[str, str], ...] = (
     ("juridica.facultades", r"FACULTADES|AUTORIZACION (?:DEL|DE LA) (?:ORGANO|JUNTA|ASAMBLEA)|LIMITACION(?:ES)? (?:DEL|AL) REPRESENTANTE"),
     ("juridica.objeto_social", r"OBJETO SOCIAL"),
     ("juridica.existencia", r"EXISTENCIA Y REPRESENTACION|CAMARA DE COMERCIO|CERTIFICADO DE EXISTENCIA"),
-    ("juridica.seguridad_social", r"SEGURIDAD SOCIAL|APORTES (?:LEGALES|PARAFISCALES)|PARAFISCAL|LEY 789|ARTICULO 50"),
+    ("juridica.seguridad_social", r"SEGURIDAD SOCIAL|APORTES (?:LEGALES|PARAFISCALES)|PARAFISCAL|LEY 789|ARTICULO 50"
+                                  r"|COTIZACION|PENSION DE VEJEZ"),
     ("juridica.garantia", r"GARANTIA DE SERIEDAD|POLIZA DE SERIEDAD|SERIEDAD DE LA OFERTA"),
     ("juridica.carta", r"CARTA DE PRESENTACION|FORMATO 1\b"),
 )
@@ -50,6 +51,25 @@ _REGLAS = tuple((clave, re.compile(patron)) for clave, patron in REGLAS)
 def _norm(texto: str) -> str:
     t = unicodedata.normalize("NFKD", (texto or "").upper())
     return re.sub(r"\s+", " ", "".join(c for c in t if not unicodedata.combining(c)))
+
+
+# Requisitos que solo aplican en un caso ("si la oferta la firma un
+# apoderado", "la persona natural que reúna los requisitos para la pensión",
+# "quienes no estén obligados a cotizar"): no se le exigen a todos.
+_CONDICIONAL_RE = re.compile(
+    r"^(?:SI |EN CASO|CUANDO |QUIENES |LA PERSONA NATURAL QUE |LAS PERSONAS QUE |EN EL EVENTO)|APODERAD|\bPODER\b"
+)
+
+
+def es_condicional(req) -> bool:
+    return bool(_CONDICIONAL_RE.search(_norm(req.requisito)))
+
+
+def temas_en(texto: str) -> list[str]:
+    """Verificaciones cuyo tema aparece en el texto (sin importar quién lo
+    aporta o consulta)."""
+    t = _norm(texto)
+    return sorted({clave for clave, patron in _REGLAS if clave in criterios.VERIFICACIONES and patron.search(t)})
 
 
 def verificacion_de(req) -> str | None:

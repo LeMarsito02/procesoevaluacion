@@ -26,7 +26,7 @@ from motor.pliego.lectura import Pagina, Seccion, codigo_documento_tipo, norm, s
 
 # Sube cuando cambian los detectores: los análisis guardados con otra versión
 # se rehacen.
-VERSION_ANALISIS = 4
+VERSION_ANALISIS = 5
 
 Ambito = Literal["juridica", "tecnica", "financiera", "puntaje", "garantias", "general"]
 
@@ -126,6 +126,10 @@ class Extraccion(BaseModel):
     # Toda oración de una sección jurídica que obliga al proponente: la red de
     # seguridad para exigencias que ningún detector conoce.
     obligaciones: list[Exigencia] = Field(default_factory=list)
+    # Verificaciones del catálogo cuyo tema el pliego menciona en alguna
+    # parte (aunque sea "la Entidad consultará…"): nunca se proponen como no
+    # exigidas.
+    temas: list[str] = Field(default_factory=list)
 
 
 TipoHallazgo = Literal[
@@ -334,7 +338,14 @@ def extraer(paginas: list[Pagina]) -> Extraccion:
     return Extraccion(
         paginas=len(paginas), documento_tipo=codigo_documento_tipo(paginas),
         secciones=analizadas, exigencias=_sin_repetir(exigencias), formatos=formatos, obligaciones=obligaciones,
+        temas=temas_del_pliego(paginas),
     )
+
+
+def temas_del_pliego(paginas: list[Pagina]) -> list[str]:
+    from motor.pliego.catalogo import temas_en
+
+    return temas_en(" ".join(p.texto for p in paginas))
 
 
 def _sin_repetir(exigencias: list[Exigencia]) -> list[Exigencia]:
@@ -377,8 +388,8 @@ _SIEMPRE_EXIGIDOS = {"juridica.carta", "juridica.aval_ingeniero", "juridica.copn
 MINIMO_REQUISITOS_PARA_NO_EXIGIDOS = 8
 
 
-def _hallazgos_de_requisitos(requisitos, previos, en_plantilla, parametros, definicion) -> list[Hallazgo]:
-    from motor.pliego.catalogo import config_desde_pliego, parametros_de
+def _hallazgos_de_requisitos(requisitos, previos, en_plantilla, parametros, definicion, temas) -> list[Hallazgo]:
+    from motor.pliego.catalogo import config_desde_pliego, es_condicional, parametros_de
     from motor.pliego.lector_ia import es_de_extranjeros
 
     hallazgos: list[Hallazgo] = []
@@ -393,6 +404,18 @@ def _hallazgos_de_requisitos(requisitos, previos, en_plantilla, parametros, defi
             id="ia_extranjeros", tipo="aclaracion", titulo="Requisitos para proponentes extranjeros",
             detalle="Si un proponente o integrante es extranjero, el pliego además exige: "
                     + "; ".join(dict.fromkeys(r.requisito.rstrip(".") for r in extranjeros)) + ".",
+            seccion=primero.seccion, pagina=primero.pagina, cita=primero.cita,
+        ))
+    # Lo que solo aplica en un caso (apoderado, pensionado…) y el motor no
+    # verifica: se tiene en cuenta al revisar, no se le exige a todos.
+    condicionales = [r for r in requisitos if not r.verificacion and es_condicional(r)]
+    requisitos = [r for r in requisitos if r not in condicionales]
+    if condicionales:
+        primero = condicionales[0]
+        hallazgos.append(Hallazgo(
+            id="ia_condicionales", tipo="aclaracion", titulo="Requisitos que aplican solo en ciertos casos",
+            detalle="El pliego además exige, solo cuando se da el caso: "
+                    + "; ".join(dict.fromkeys(r.requisito.rstrip(".") for r in condicionales)) + ".",
             seccion=primero.seccion, pagina=primero.pagina, cita=primero.cita,
         ))
     ajustados = {h.parametro for h in previos if h.parametro}
@@ -455,7 +478,9 @@ def _hallazgos_de_requisitos(requisitos, previos, en_plantilla, parametros, defi
     # d) La plantilla verifica algo que el pliego no pide (solo si la lectura
     # fue suficiente para afirmarlo).
     if len(requisitos) >= MINIMO_REQUISITOS_PARA_NO_EXIGIDOS:
-        pedidas = {r.verificacion for r in requisitos if r.verificacion}
+        # Lo que la IA listó y todo tema que el pliego menciona en cualquier
+        # parte: quitar un requisito exigido sería una aprobación indebida.
+        pedidas = {r.verificacion for r in requisitos if r.verificacion} | set(temas)
         for req in definicion.requisitos:
             v = req.verificacion
             if v in pedidas or v in _SIEMPRE_EXIGIDOS or v not in criterios.VERIFICACIONES:
@@ -476,8 +501,7 @@ def _corto(r) -> str:
 
 def mapa_de_requisitos(requisitos, definicion: criterios.DefinicionEvaluacion) -> list[dict]:
     """Cada requisito jurídico del pliego y cómo se verificará, para mostrarlo."""
-    from motor.pliego.catalogo import config_desde_pliego, parametros_de
-
+    from motor.pliego.catalogo import config_desde_pliego, es_condicional, parametros_de
     from motor.pliego.lector_ia import es_de_extranjeros
 
     en_plantilla = {r.verificacion for r in definicion.requisitos}
@@ -485,6 +509,8 @@ def mapa_de_requisitos(requisitos, definicion: criterios.DefinicionEvaluacion) -
     for r in requisitos:
         if es_de_extranjeros(r):
             como, estado = "Solo si el proponente es extranjero: lo revisa una persona", "extranjeros"
+        elif not r.verificacion and es_condicional(r):
+            como, estado = "Solo si se da el caso: lo revisa una persona", "condicional"
         elif r.verificacion and r.verificacion in en_plantilla:
             como, estado = f"Lo verifica el programa: {criterios.VERIFICACIONES[r.verificacion].titulo}", "motor"
         elif r.verificacion:
@@ -662,7 +688,8 @@ def comparar(
 
     # 5b. Lectura completa con IA: cada requisito jurídico del pliego.
     if requisitos:
-        hallazgos += _hallazgos_de_requisitos(requisitos, hallazgos, en_plantilla, parametros, definicion)
+        temas = set(extraccion.temas) | {v for sec in extraccion.secciones for v in sec.verificaciones}
+        hallazgos += _hallazgos_de_requisitos(requisitos, hallazgos, en_plantilla, parametros, definicion, temas)
 
     # 6. Red de seguridad: obligaciones del pliego que nada de lo anterior cubre.
     citadas = {norm(h.cita)[:80] for h in hallazgos} | {norm(e.cita)[:80] for e in extraccion.exigencias}

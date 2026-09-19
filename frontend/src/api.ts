@@ -106,7 +106,7 @@ export interface RequisitoDelPliego {
   pagina: number
   verificacion: string | null
   como: string
-  estado: 'motor' | 'motor_nuevo' | 'documento' | 'revision' | 'extranjeros'
+  estado: 'motor' | 'motor_nuevo' | 'documento' | 'revision' | 'condicional' | 'extranjeros'
   parametros: Record<string, number>
 }
 

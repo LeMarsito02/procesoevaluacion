@@ -30,6 +30,7 @@ const ESTADO_REQUISITO: Record<RequisitoDelPliego['estado'], { texto: string; pi
   motor_nuevo: { texto: 'Automático al aplicarlo', pill: 'cumple' },
   documento: { texto: 'Se busca el documento', pill: 'revisar' },
   revision: { texto: 'Revisión de una persona', pill: 'error' },
+  condicional: { texto: 'Solo si se da el caso', pill: 'no_aplica' },
   extranjeros: { texto: 'Solo extranjeros', pill: 'no_aplica' },
 }
 
@@ -389,6 +390,7 @@ function TablaRequisitos({ requisitos }: { requisitos: RequisitoDelPliego[] }) {
         <>
           <p className="small muted" style={{ marginTop: 8 }}>
             {automaticos} automáticos · {cuenta('documento')} con búsqueda del documento · {cuenta('revision')} para revisión
+            {cuenta('condicional') > 0 && <> · {cuenta('condicional')} solo en ciertos casos</>}
             {cuenta('extranjeros') > 0 && <> · {cuenta('extranjeros')} solo para extranjeros</>}. Haga clic en uno para ver la
             cita del pliego.
           </p>
