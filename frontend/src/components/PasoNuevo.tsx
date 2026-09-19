@@ -128,20 +128,21 @@ export default function PasoNuevo(props: Props) {
         </div>
 
         <div className="field">
-          <label htmlFor="drive">Carpeta de Google Drive con las ofertas</label>
+          <label htmlFor="drive">Carpeta con las ofertas (Google Drive u OneDrive)</label>
           <div className="input-group">
             <Icono nombre="carpeta" tam={16} />
             <input
               id="drive"
               className="input"
-              placeholder="https://drive.google.com/drive/folders/…"
+              placeholder="https://drive.google.com/drive/folders/… o https://1drv.ms/f/…"
               value={carpetaDrive}
               onChange={(e) => props.onCambiar({ carpetaDrive: e.target.value })}
               required
             />
           </div>
           <span className="hint">
-            Cada proponente debe estar en un archivo .zip o .rar nombrado como “P1 Nombre del proponente”.
+            Cada proponente debe estar en un archivo .zip o .rar nombrado como “P1 Nombre del proponente” o “1. Nombre”.
+            En OneDrive, comparta la carpeta con «Cualquier persona con el vínculo».
           </span>
         </div>
 

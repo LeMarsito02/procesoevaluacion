@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -14,6 +15,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
 from motor.esquemas.proceso import Proponente
+from motor.integrations import onedrive
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
@@ -112,6 +114,8 @@ def _get_file_metadata(file_id: str) -> dict:
         if cacheada is not None:
             return cacheada
     try:
+        if onedrive.es_id(file_id):
+            return onedrive.metadatos(file_id)
         service = get_drive_service()
         return service.files().get(fileId=file_id, fields="md5Checksum,size,name", supportsAllDrives=True).execute()
     except Exception:
@@ -156,14 +160,17 @@ def _download_file_bytes(file_id: str, metadata: dict | None) -> bytes:
         except OSError:
             pass
 
-    service = get_drive_service()
-    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, request)
-    done = False
-    while not done:
-        _status, done = downloader.next_chunk()
-    data = buffer.getvalue()
+    if onedrive.es_id(file_id):
+        data = onedrive.descargar(file_id)
+    else:
+        service = get_drive_service()
+        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _status, done = downloader.next_chunk()
+        data = buffer.getvalue()
 
     if md5:
         try:
@@ -258,6 +265,10 @@ def _listar_archivos_recursivo(service, folder_id: str, _profundidad: int = 0, _
 
 
 def list_proponentes(carpeta_drive: str) -> ProponentesResult:
+    """Ofertas de la carpeta: un enlace de Google Drive o uno público de
+    OneDrive."""
+    if onedrive.es_enlace(carpeta_drive):
+        return _list_proponentes_onedrive(carpeta_drive.strip())
     folder_id = extract_folder_id(carpeta_drive)
     cache_listado = CACHE_LISTADOS_DIR / f"{folder_id}.json"
 
@@ -288,6 +299,34 @@ def list_proponentes(carpeta_drive: str) -> ProponentesResult:
                 raise DriveAccessError(f"No se pudo consultar Google Drive y no hay copia local: {exc}") from exc
             archivos = json.loads(cache_listado.read_text())
 
+    return _proponentes_de(archivos)
+
+
+def _list_proponentes_onedrive(enlace: str) -> ProponentesResult:
+    cache_listado = CACHE_LISTADOS_DIR / f"onedrive_{hashlib.sha1(enlace.encode()).hexdigest()[:16]}.json"
+    if _solo_cache() and cache_listado.exists():
+        return _proponentes_de(json.loads(cache_listado.read_text()))
+    try:
+        archivos = onedrive.listar(enlace, MAX_PROFUNDIDAD_CARPETAS)
+    except onedrive.OneDriveError as exc:
+        raise DriveAccessError(str(exc)) from exc
+    except Exception as exc:
+        if not cache_listado.exists():
+            raise DriveAccessError(f"No se pudo consultar OneDrive y no hay copia local: {exc}") from exc
+        archivos = json.loads(cache_listado.read_text())
+    else:
+        try:
+            CACHE_LISTADOS_DIR.mkdir(parents=True, exist_ok=True)
+            cache_listado.write_text(json.dumps(archivos))
+            # Los metadatos ya vienen en el listado: se guardan para no pedirlos uno a uno.
+            for a in archivos:
+                _METADATA_MEMORIA[a["id"]] = (time.monotonic(), {k: a[k] for k in ("md5Checksum", "size", "name")})
+        except OSError:
+            pass
+    return _proponentes_de(archivos)
+
+
+def _proponentes_de(archivos: list[dict]) -> ProponentesResult:
     result = ProponentesResult()
     # Las ofertas son las del nivel más alto que tenga alguna: si están en la
     # raíz, las subcarpetas (sobre económico, subsanaciones…) no se mezclan.

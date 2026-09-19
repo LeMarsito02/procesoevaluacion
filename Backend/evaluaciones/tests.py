@@ -1817,3 +1817,53 @@ class LecturaPolizaTests(TestCase):
                 "EL TOMADOR Y/O ASEGURADO SEGÚN CORRESPONDA, SE COMPROMETE A PAGAR LA PRIMA DENTRO DE LOS 30 DÍAS")))
             # Póliza de otra entidad (se vio en una oferta real).
             self.assertFalse(patron.search(_norm("ASEGURADO MUNICIPIO DE MANIZALES BENEFICIARIO MUNICIPIO DE MANIZALES")))
+
+
+class OneDriveTests(TestCase):
+    """Carpetas de ofertas compartidas por OneDrive con enlace público."""
+
+    ENLACE = "https://1drv.ms/f/c/d09ede0cd2e6118e/IgBXSGkuRU2QR6ag50US4Rkb?e=hPgliQ"
+
+    def respuesta(self, datos, estado=200):
+        r = mock.Mock(status_code=estado)
+        r.json.return_value = datos
+        r.raise_for_status.return_value = None
+        return r
+
+    def test_reconoce_enlaces(self):
+        from motor.integrations import onedrive
+
+        self.assertTrue(onedrive.es_enlace(self.ENLACE))
+        self.assertTrue(onedrive.es_enlace("https://onedrive.live.com/?id=ABC"))
+        self.assertFalse(onedrive.es_enlace("https://drive.google.com/drive/folders/abc"))
+        self.assertTrue(onedrive._token_de_enlace(self.ENLACE).startswith("u!aHR0cHM6Ly8xZHJ2"))
+
+    def test_lista_ofertas_como_drive(self):
+        import tempfile
+        from pathlib import Path
+
+        from motor.integrations import drive, onedrive
+
+        zip_ = {"id": "D09!s1", "name": "1. GARANS SAS.zip", "size": 10, "file": {"hashes": {"quickXorHash": "abc="}}}
+        otro = {"id": "D09!s2", "name": "LEAME.txt", "size": 1, "file": {"hashes": {"quickXorHash": "x"}}}
+        raiz = {"id": "D09!raiz", "name": "OFERTAS", "folder": {}, "children": [zip_, otro]}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(onedrive, "_DIR", Path(tmp)), \
+                mock.patch.object(onedrive, "_ENLACES", Path(tmp) / "e.json"), \
+                mock.patch.object(drive, "CACHE_LISTADOS_DIR", Path(tmp)), \
+                mock.patch.object(onedrive, "_token_anonimo", return_value="T"), \
+                mock.patch.object(onedrive.requests, "get", return_value=self.respuesta(raiz)):
+            r = drive.list_proponentes(self.ENLACE)
+            self.assertEqual([(p.hoja, p.nombre_proponente) for p in r.proponentes], [("P-01", "GARANS SAS")])
+            self.assertEqual(r.proponentes[0].drive_file_id, "onedrive!D09!s1")
+            self.assertEqual(r.no_reconocidos, ["LEAME.txt"])
+            # La descarga sabe de qué enlace es cada archivo.
+            self.assertEqual(onedrive._enlace_de("onedrive!D09!s1"), self.ENLACE)
+
+    def test_enlace_sin_permiso(self):
+        from motor.integrations import onedrive
+
+        with mock.patch.object(onedrive, "_token_anonimo", return_value="T"), \
+                mock.patch.object(onedrive.requests, "get", return_value=self.respuesta({}, 403)):
+            with self.assertRaisesMessage(onedrive.OneDriveError, "Cualquier persona con el vínculo"):
+                onedrive._redimir("https://1drv.ms/f/c/otro")

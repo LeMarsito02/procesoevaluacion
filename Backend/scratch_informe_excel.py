@@ -18,8 +18,10 @@ def main(ruta: str, salida: str) -> None:
             continue
         ws = wb[hoja]
         requisitos = {}
+        # La fila del requisito 1 cambia entre versiones de la plantilla (29 o 28).
+        inicio = next((r for r in range(20, 40) if str(ws[f"B{r}"].value or "").strip() in ("1", "1.0")), FILA_INICIAL)
         for n in range(REQUISITOS):
-            fila = FILA_INICIAL + n * PASO
+            fila = inicio + n * PASO
             numero = ws[f"B{fila}"].value
             veredicto = str(ws[f"L{fila}"].value or "").strip().upper().replace("N.A", "N.A.").replace("N.A..", "N.A.")
             nota = " ".join(
@@ -27,7 +29,7 @@ def main(ruta: str, salida: str) -> None:
                 for r in range(fila, fila + PASO) for c in range(14, 24)
                 if ws.cell(row=r, column=c).value not in (None, "") and str(ws.cell(row=r, column=c).value).strip() not in ("SI", "NO", "N.A.")
             )
-            requisitos[str(int(numero) if str(numero).isdigit() else n + 1)] = {"veredicto": veredicto or "?", "nota": nota[:300]}
+            requisitos[str(int(float(numero)) if re.fullmatch(r"\d+(\.0)?", str(numero or "")) else n + 1)] = {"veredicto": veredicto or "?", "nota": nota[:300]}
         proponentes.append({"hoja": hoja, "nombre": hoja, "requisitos": requisitos})
     json.dump(proponentes, open(salida, "w"), ensure_ascii=False, indent=1)
     import collections
