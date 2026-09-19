@@ -72,20 +72,25 @@ def temas_en(texto: str) -> list[str]:
     return sorted({clave for clave, patron in _REGLAS if clave in criterios.VERIFICACIONES and patron.search(t)})
 
 
+def _clave_de(texto: str) -> str | None:
+    t = _norm(texto)
+    for clave, patron in _REGLAS:
+        if patron.search(t) and clave in criterios.VERIFICACIONES:
+            return clave
+    return None
+
+
 def verificacion_de(req) -> str | None:
-    """La verificación del motor para un requisito del pliego (por lo que
-    exige y el documento con que se acredita), o None si el motor no la
-    tiene."""
-    texto = _norm(f"{req.requisito} {req.documento or ''} {' '.join(req.titulo_documento)}")
+    """La verificación del motor para lo que el pliego exige, o None si el
+    motor no la tiene. Manda el requisito, no el documento: la IA a veces
+    nombra un documento que no corresponde ("garantía de seriedad… documento:
+    certificado de existencia")."""
     # Lo propio se decide por lo que se exige (los títulos del documento a
     # veces traen formatos vecinos: "Carta de presentación", "Acreditación de Mipyme").
     propio = _norm(f"{req.requisito} {req.documento or ''}")
     if _PROPIOS_RE.search(propio) or re.search(r"MIPYME|EMPRENDIMIENTO", propio):
         return None
-    for clave, patron in _REGLAS:
-        if patron.search(texto) and clave in criterios.VERIFICACIONES:
-            return clave
-    return None
+    return _clave_de(req.requisito) or _clave_de(f"{req.documento or ''} {' '.join(req.titulo_documento)}")
 
 
 # Parámetros del motor que el pliego fija con la vigencia de cada documento.
@@ -112,6 +117,12 @@ def config_desde_pliego(req) -> dict | None:
     documento por las frases con que se titula y se revisa su vigencia; las
     demás condiciones del pliego quedan para que una persona las confirme.
     None si el requisito no tiene un documento que buscar."""
+    # El documento que nombró la IA debe corresponder a lo que se exige: si
+    # apunta a otra cosa (garantía de seriedad "acreditada" con el certificado
+    # de existencia), no se busca nada y lo revisa una persona.
+    del_documento = _clave_de(f"{req.documento or ''} {' '.join(req.titulo_documento)}")
+    if del_documento is not None and del_documento != _clave_de(req.requisito):
+        return None
     frases = [f for f in req.titulo_documento if len(f) >= 8]
     if not frases and req.documento and len(req.documento) >= 8:
         frases = [req.documento]

@@ -2375,3 +2375,27 @@ class SinFalsosPositivosDelPliegoTests(TestCase):
             cumple, motivo, _ = personalizado.evaluar_config({"x.pdf": b"y"}, config, date(2026, 5, 25), None, [], "ACME")
         self.assertFalse(cumple)
         self.assertIn("confirma", motivo)
+
+
+class DocumentoInventadoPorLaIATests(TestCase):
+    """La IA a veces nombra un documento que no corresponde a lo exigido."""
+
+    def requisito(self):
+        return _requisito_pliego(
+            requisito="El proponente debe presentar una garantía de seriedad de la oferta que cumpla el Decreto 1082 de 2015",
+            documento="Certificado de existencia y representación legal",
+            titulo_documento=["CERTIFICADO DE EXISTENCIA Y REPRESENTACION LEGAL"],
+        )
+
+    def test_manda_lo_que_se_exige_no_el_documento(self):
+        from motor.pliego.catalogo import verificacion_de
+
+        self.assertEqual(verificacion_de(self.requisito()), "juridica.garantia")
+
+    def test_no_se_busca_un_documento_que_no_corresponde(self):
+        from motor.pliego.catalogo import config_desde_pliego
+
+        incoherente = _requisito_pliego(requisito="Presentar la autorización de tratamiento de datos personales",
+                                        documento="Carta de presentación de la oferta",
+                                        titulo_documento=["CARTA DE PRESENTACION DE LA OFERTA"])
+        self.assertIsNone(config_desde_pliego(incoherente))
