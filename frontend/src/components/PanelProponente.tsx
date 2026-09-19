@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Proponente, ResultadoRequisito } from '../api'
 import { claveRevision, ETIQUETA_ESTADO, esPendiente, estadoDe, resumenProponente, usaIA, type Estado, type Revisiones } from '../estado'
 import { GRUPOS, ORDEN_GRUPOS, ordenarArchivosPorRequisito, REQUISITOS } from '../requisitos'
+import { fuenteDe } from '../historico'
 import Icono from './Icono'
 
 const TIPO: Record<string, string> = {
@@ -26,6 +27,8 @@ interface Props {
   onSiguientePendiente: (() => void) | null
   /** Contenido adicional al final (personas verificadas y antecedentes aportados). */
   extra?: React.ReactNode
+  /** Subir el certificado que el evaluador consultó en línea (null = solo lectura). */
+  onSubirCertificado: ((requisito: number) => void) | null
 }
 
 function nombreArchivo(ruta: string): string {
@@ -53,6 +56,8 @@ export default function PanelProponente(p: Props) {
       }).map((i) => i.numero),
     )
   const [abiertos, setAbiertos] = useState<Set<number>>(pendientesIniciales)
+  // Antecedentes que el evaluador consulta en línea y sube (Contraloría, Procuraduría, Policía, RNMC, REDAM).
+  const fuente = (numero: number) => fuenteDe(REQUISITOS.find((x) => x.numero === numero)?.pistas ?? [])
   const [archivoElegido, setArchivoElegido] = useState<Record<number, string>>({})
 
   useEffect(() => {
@@ -144,6 +149,22 @@ export default function PanelProponente(p: Props) {
                         {texto && estado !== 'revisado_cumple' && (
                           <div className="motivo" data-tono={estado === 'revisar' ? 'warn' : estado === 'error' ? 'bad' : undefined}>
                             {texto}
+                          </div>
+                        )}
+                        {fuente(info.numero) && esPendiente(estado) && (
+                          <div className="acciones">
+                            <span className="small muted">
+                              Si ya lo consultó en{' '}
+                              <a className="enlace" href={fuente(info.numero)!.url} target="_blank" rel="noopener noreferrer">
+                                {fuente(info.numero)!.nombre}
+                              </a>
+                              , adjúntelo aquí y queda en el expediente.
+                            </span>
+                            {p.onSubirCertificado && (
+                              <button className="btn btn-secondary btn-sm" type="button" onClick={() => p.onSubirCertificado?.(info.numero)}>
+                                <Icono nombre="subir" tam={15} /> Subir el certificado consultado
+                              </button>
+                            )}
                           </div>
                         )}
                         {archivos.length > 0 && (

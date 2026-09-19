@@ -123,6 +123,11 @@ def config_desde_pliego(req) -> dict | None:
         bloques.append({"tipo": "vigencia_maxima", "meses": meses})
     for c in req.condiciones:
         bloques.append({"tipo": "confirmar", "frases": [c[:200]]})
+    # Lo que leyó la IA nunca aprueba solo: encontrar un documento con ese
+    # título no prueba que diga lo que el pliego exige, así que siempre queda
+    # una confirmación de la persona (el contenido lo lee ella).
+    if not any(b["tipo"] == "confirmar" for b in bloques):
+        bloques.append({"tipo": "confirmar", "frases": [req.requisito[:200]]})
     return {"frases_documento": frases[:4], "paginas": 3, "bloques": bloques, "aplica_a": aplica_a_de(req)}
 
 

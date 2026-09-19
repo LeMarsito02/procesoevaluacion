@@ -109,6 +109,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const fechaCierre = inicial.documento_base.fecha_cierre
   const [paso, setPaso] = useState<Paso>(inicial.resultados.length ? 'evaluacion' : 'datos')
   const [panel, setPanel] = useState<{ hoja: string; requisito: number | null } | null>(null)
+  // Requisito cuyo certificado consultado se va a subir desde su tarjeta.
+  const [subirCertificado, setSubirCertificado] = useState<number | null>(null)
   const [visor, setVisor] = useState<{ url: string; archivo: string; resultado: ResultadoRequisito } | null>(null)
   const [abriendoDocumento, setAbriendoDocumento] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
@@ -422,6 +424,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           onCerrar={() => setPanel(null)}
           onRevisar={onRevisar}
           onVerDocumento={abrirDocumento}
+          onSubirCertificado={soloLectura ? null : (requisito) => setSubirCertificado(requisito)}
           onAnterior={indicePanel > 0 ? () => setPanel({ hoja: evaluadosEnOrden[indicePanel - 1].hoja, requisito: null }) : null}
           onSiguiente={
             indicePanel >= 0 && indicePanel < evaluadosEnOrden.length - 1
@@ -436,6 +439,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
               proponenteId={panelProponente.id}
               soloLectura={soloLectura}
               onVerPdf={(blob) => window.open(URL.createObjectURL(blob), '_blank', 'noopener')}
+              subirRequisito={subirCertificado}
+              onSubidaAtendida={() => setSubirCertificado(null)}
             />
           }
         />

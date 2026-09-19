@@ -2354,3 +2354,24 @@ class AQuienSeExigeTests(TestCase):
         self.assertFalse(es_de_extranjeros(_requisito_pliego(requisito="Tener capacidad jurídica",
                                                             aplica_a=["persona_natural", "persona_juridica", "extranjero"])))
         self.assertTrue(es_de_extranjeros(_requisito_pliego(requisito="Tener capacidad jurídica", aplica_a=["extranjero"])))
+
+
+class SinFalsosPositivosDelPliegoTests(TestCase):
+    """Nada que la IA leyó del pliego puede aprobarse solo."""
+
+    def test_el_requisito_armado_desde_el_pliego_siempre_lo_confirma_una_persona(self):
+        from datetime import date
+
+        from motor import criterios
+        from motor.evaluacion import personalizado
+        from motor.pliego.catalogo import config_desde_pliego
+
+        req = _requisito_pliego(requisito="Presentar la autorización de tratamiento de datos personales",
+                                documento="Autorización de tratamiento de datos personales",
+                                titulo_documento=["AUTORIZACION DE TRATAMIENTO DE DATOS PERSONALES"])
+        config = criterios.ConfigPersonalizado.model_validate(config_desde_pliego(req))
+        self.assertTrue(any(b.tipo == "confirmar" for b in config.bloques))
+        with mock.patch.object(personalizado, "extraer_texto", return_value="AUTORIZACION DE TRATAMIENTO DE DATOS PERSONALES firmada"):
+            cumple, motivo, _ = personalizado.evaluar_config({"x.pdf": b"y"}, config, date(2026, 5, 25), None, [], "ACME")
+        self.assertFalse(cumple)
+        self.assertIn("confirma", motivo)

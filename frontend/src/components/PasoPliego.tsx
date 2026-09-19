@@ -28,7 +28,7 @@ const ETIQUETA: Record<string, string> = {
 const ESTADO_REQUISITO: Record<RequisitoDelPliego['estado'], { texto: string; pill: string }> = {
   motor: { texto: 'Automático', pill: 'cumple' },
   motor_nuevo: { texto: 'Automático al aplicarlo', pill: 'cumple' },
-  documento: { texto: 'Se busca el documento', pill: 'revisar' },
+  documento: { texto: 'Documento + confirmación', pill: 'revisar' },
   revision: { texto: 'Revisión de una persona', pill: 'error' },
   condicional: { texto: 'Solo si se da el caso', pill: 'no_aplica' },
   extranjeros: { texto: 'Solo extranjeros', pill: 'no_aplica' },
@@ -69,7 +69,8 @@ export default function PasoPliego(p: Props) {
           <p>
             El pliego puede cambiar o agregar requisitos frente a la forma de evaluar de su entidad. Se leyó completo y se
             comparó con su plantilla: decida qué se aplica a este proceso. Cada decisión queda en el reporte con la cita del
-            pliego y quién la tomó.
+            pliego y quién la tomó. Lo que se agregue desde el pliego nunca se aprueba solo: una persona confirma que el
+            documento dice lo que el pliego exige.
           </p>
         </div>
       </div>
@@ -389,7 +390,8 @@ function TablaRequisitos({ requisitos }: { requisitos: RequisitoDelPliego[] }) {
       {ver && (
         <>
           <p className="small muted" style={{ marginTop: 8 }}>
-            {automaticos} automáticos · {cuenta('documento')} con búsqueda del documento · {cuenta('revision')} para revisión
+            {automaticos} automáticos · {cuenta('documento')} con búsqueda del documento y confirmación de una persona ·{' '}
+            {cuenta('revision')} para revisión
             {cuenta('condicional') > 0 && <> · {cuenta('condicional')} solo en ciertos casos</>}
             {cuenta('extranjeros') > 0 && <> · {cuenta('extranjeros')} solo para extranjeros</>}. Haga clic en uno para ver la
             cita del pliego.

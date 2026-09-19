@@ -461,7 +461,8 @@ def _hallazgos_de_requisitos(requisitos, previos, en_plantilla, parametros, defi
                          + (f" (se acredita con {r.documento})" if r.documento else "")
                          + ". Se verificará buscando el documento en la oferta"
                          + (" y su vigencia" if any(b["tipo"] == "vigencia_maxima" for b in config["bloques"]) else "")
-                         + (". Las demás condiciones quedan para que una persona las confirme." if r.condiciones else ".")),
+                         + ". Como lo leyó la IA del pliego, nunca se aprueba solo: una persona confirma que el documento "
+                           "dice lo que el pliego exige."),
                 seccion=seccion, pagina=pagina, cita=cita, verificacion=criterios.PERSONALIZADO, requiere_decision=True,
                 requisito_propuesto={"verificacion": criterios.PERSONALIZADO, "titulo": titulo, "corto": _corto(r),
                                      "verifica": f"{cita} (pliego, {seccion}, pág. {pagina})", "config": config},
@@ -516,7 +517,7 @@ def mapa_de_requisitos(requisitos, definicion: criterios.DefinicionEvaluacion) -
         elif r.verificacion:
             como, estado = f"El programa sabe verificarlo ({criterios.VERIFICACIONES[r.verificacion].titulo}); falta agregarlo", "motor_nuevo"
         elif config_desde_pliego(r):
-            como, estado = "Se busca el documento en la oferta (verificación armada desde el pliego)", "documento"
+            como, estado = "Se busca el documento en la oferta y una persona confirma que dice lo que el pliego exige", "documento"
         else:
             como, estado = "Lo revisa una persona", "revision"
         salida.append({**r.model_dump(), "aplica_a": tipos_del_pliego(r), "como": como, "estado": estado,

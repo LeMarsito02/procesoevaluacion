@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   agregarPersona,
   fuenteDe,
+  FUENTES,
   aportarDocumento,
   archivoAportado,
   obtenerAntecedentes,
@@ -37,10 +38,13 @@ interface Props {
   proponenteId: string
   soloLectura: boolean
   onVerPdf: (blob: Blob, titulo: string) => void
+  /** Requisito cuyo certificado se va a subir, pedido desde la tarjeta del requisito. */
+  subirRequisito?: number | null
+  onSubidaAtendida?: () => void
 }
 
 /** Personas cuyos antecedentes se verifican y certificados que el evaluador aportó. */
-export default function AntecedentesProponente({ evaluacionId, proponenteId, soloLectura, onVerPdf }: Props) {
+export default function AntecedentesProponente({ evaluacionId, proponenteId, soloLectura, onVerPdf, subirRequisito, onSubidaAtendida }: Props) {
   const [datos, setDatos] = useState<Antecedentes | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [agregando, setAgregando] = useState<{ de: PersonaVerificada | null } | null>(null)
@@ -60,6 +64,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
     recargar()
   }, [recargar])
 
+
   async function accion(f: () => Promise<unknown>) {
     try {
       await f()
@@ -72,6 +77,8 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   if (!datos) return error ? <p className="small" style={{ color: 'var(--bad)' }}>{error}</p> : null
   if (datos.requisitos.length === 0) return null
 
+  // La subida puede venir de una casilla de la tabla o de la tarjeta del requisito.
+  const subida = subiendo ?? (subirRequisito != null ? { persona: null, requisito: subirRequisito } : null)
   const raiz = datos.personas.filter((p) => !p.de_id)
   const hijos = (id: string) => datos.personas.filter((p) => p.de_id === id)
   const ordenadas = raiz.flatMap((p) => [p, ...hijos(p.id)])
@@ -264,14 +271,24 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
           }
         />
       )}
-      {subiendo && (
+      {subida && (
         <FormularioCertificado
-          titulo={`${datos.requisitos.find((r) => r.numero === subiendo.requisito)?.titulo} · ${subiendo.persona?.nombre ?? ''}`}
-          onCerrar={() => setSubiendo(null)}
-          onGuardar={(d) =>
+          titulo={`${datos.requisitos.find((r) => r.numero === subida.requisito)?.titulo ?? `Requisito ${subida.requisito}`}${subida.persona ? ` · ${subida.persona.nombre}` : ''}`}
+          fuente={fuenteDe(datos.requisitos.find((r) => r.numero === subida.requisito)?.pistas ?? [])}
+          personas={subida.persona ? null : ordenadas}
+          onCerrar={() => {
+            setSubiendo(null)
+            onSubidaAtendida?.()
+          }}
+          onGuardar={(d, personaId) =>
             accion(async () => {
-              await aportarDocumento(evaluacionId, proponenteId, { ...d, requisito: subiendo.requisito, persona_id: subiendo.persona?.id ?? null })
+              await aportarDocumento(evaluacionId, proponenteId, {
+                ...d,
+                requisito: subida.requisito,
+                persona_id: subida.persona?.id ?? personaId ?? null,
+              })
               setSubiendo(null)
+              onSubidaAtendida?.()
             })
           }
         />
@@ -357,20 +374,50 @@ function FormularioPersona({
 
 function FormularioCertificado({
   titulo,
+  fuente,
+  personas,
   onCerrar,
   onGuardar,
 }: {
   titulo: string
+  /** Página oficial donde se consulta este antecedente, si la hay. */
+  fuente?: (typeof FUENTES)[number] | null
+  /** Personas entre las que elegir cuando la subida no viene de una casilla. */
+  personas?: PersonaVerificada[] | null
   onCerrar: () => void
-  onGuardar: (d: { fecha_expedicion: string; observacion: string; archivo: File }) => void
+  onGuardar: (d: { fecha_expedicion: string; observacion: string; archivo: File }, personaId?: string | null) => void
 }) {
   const [archivo, setArchivo] = useState<File | null>(null)
   const [expedicion, setExpedicion] = useState('')
   const [observacion, setObservacion] = useState('')
+  const [persona, setPersona] = useState('')
+  const faltaPersona = !!personas && personas.length > 0 && !persona
   return (
     <div className="formulario-inline">
       <strong className="small">Certificado consultado: {titulo}</strong>
+      {fuente && (
+        <p className="small muted" style={{ margin: 0 }}>
+          Se consulta en{' '}
+          <a className="enlace" href={fuente.url} target="_blank" rel="noopener noreferrer">
+            {fuente.nombre}
+          </a>{' '}
+          (pide {fuente.pide}).
+        </p>
+      )}
       <div className="grid-persona">
+        {personas && personas.length > 0 && (
+          <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            ¿De quién es el certificado?
+            <select className="input select-sm" value={persona} onChange={(e) => setPersona(e.target.value)}>
+              <option value="">Elegir persona…</option>
+              {personas.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           PDF del certificado
           <input type="file" accept="application/pdf" onChange={(e) => setArchivo(e.target.files?.[0] ?? null)} />
@@ -385,7 +432,12 @@ function FormularioCertificado({
         <button type="button" className="btn btn-ghost btn-sm" onClick={onCerrar}>
           Cancelar
         </button>
-        <button type="button" className="btn btn-primary btn-sm" disabled={!archivo || !expedicion} onClick={() => archivo && onGuardar({ fecha_expedicion: expedicion, observacion, archivo })}>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={!archivo || !expedicion || faltaPersona}
+          onClick={() => archivo && onGuardar({ fecha_expedicion: expedicion, observacion, archivo }, persona || null)}
+        >
           Subir certificado
         </button>
       </div>
