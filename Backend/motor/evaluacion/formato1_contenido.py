@@ -76,18 +76,38 @@ def _plantillas() -> dict[str, list[dict]]:
         return {}
 
 
-def modalidad_de(texto_pliego: str) -> str | None:
-    """Modalidad del Formato 1 que exige el pliego, por su encabezado."""
-    t = _norm(texto_pliego)
-    if "INTERVENTORIA DE OBRA PUBLICA" in t or "CCE-EICP-GI-11" in t:
-        return "interventoria"
-    if "MENOR CUANTIA" in t:
-        return "menor_cuantia"
-    if re.search(r"INFRAESTRUCTURA\s+SOCIAL", t):
-        return "obra_social"
-    if re.search(r"INFRAESTRUCTURA\s+DE\s+TRANSPORTE", t):
-        return "obra_transporte"
-    return None
+_TIPOS = (
+    ("interventoria", r"INTERVENTORIA"),
+    ("consultoria", r"CONSULTORIA\s+DE\s+ESTUDIOS"),
+    ("minima_cuantia", r"MINIMA\s+CUANTIA"),
+    ("menor_cuantia", r"MENOR\s+CUANTIA"),
+    ("licitacion", r"LICITACION"),
+)
+_SECTORES = (
+    ("transporte", r"INFRAESTRUCTURA\s+DE\s*TRANSPORTE|CCE-EICP-GI-11"),
+    ("social", r"INFRAESTRUCTURA\s+SOCIAL"),
+    ("agua", r"AGUA\s*,?\s+(?:POTABLE|SANEAMIENTO)|SANEAMIENTO\s+BASICO"),
+)
+
+
+def modalidad_de(texto: str, texto_amplio: str | None = None) -> str | None:
+    """Modalidad del Formato 1 que exige el pliego, por su encabezado: tipo de
+    proceso y sector ("licitacion_transporte", "menor_cuantia_social",
+    "interventoria_social"…), o solo el tipo si no se reconoce el sector.
+    El tipo se lee del encabezado (`texto`, primeras páginas: más adelante un
+    pliego de obra habla de la interventoría); el sector puede leerse de
+    `texto_amplio` si el encabezado no lo dice."""
+    t = re.sub(r"\s+", " ", _norm(texto))
+    tipo = next((k for k, patron in _TIPOS if re.search(patron, t)), None)
+    if tipo is None and "CCE-EICP-GI-11" in t:
+        tipo = "interventoria"
+    sector = next((k for k, patron in _SECTORES if re.search(patron, t)), None)
+    if sector is None and texto_amplio:
+        amplio = re.sub(r"\s+", " ", _norm(texto_amplio))
+        sector = next((k for k, patron in _SECTORES if re.search(patron, amplio)), None)
+    if tipo is None:
+        return None
+    return f"{tipo}_{sector}" if sector else tipo
 
 
 def clausulas_de(modalidad: str | None) -> list[dict]:
@@ -99,6 +119,11 @@ def clausulas_de(modalidad: str | None) -> list[dict]:
         return plantillas[modalidad]
     if not plantillas:
         return []
+    # El mismo tipo de proceso en otro sector comparte casi toda la carta.
+    tipo = (modalidad or "").split("_")[0]
+    del_tipo = [v for k, v in plantillas.items() if tipo and k.startswith(tipo + "_")]
+    if len(del_tipo) == 1:
+        return del_tipo[0]
     listas = list(plantillas.values())
     return [
         c for c in listas[0]

@@ -143,6 +143,18 @@ PARAMETROS: dict[str, Parametro] = {
             ("juridica.contraloria", "juridica.procuraduria", "juridica.policia", "juridica.rnmc"),
         ),
         Parametro(
+            "identidad_suplente",
+            "Exigir también la cédula del representante legal suplente",
+            "Además de la del representante legal, la copia de la cédula del suplente que figure en el certificado "
+            "de existencia (para poder validar sus antecedentes). 1 = sí, 0 = no.",
+            1,
+            "entero",
+            0,
+            1,
+            "",
+            ("juridica.identidad",),
+        ),
+        Parametro(
             "seguridad_social_certificado",
             "Aceptar certificación propia de pagos de seguridad social",
             "1 si el pliego dice que basta el certificado suscrito por el revisor fiscal o el representante legal: "
@@ -252,6 +264,9 @@ class Verificacion:
     verifica: str
     grupo: str
     pistas: tuple[str, ...] = ()
+    # False: no está en la evaluación base; se agrega cuando el pliego la pide
+    # (lo propone el análisis del pliego) o la entidad la pone en su plantilla.
+    base: bool = True
 
 
 VERIFICACIONES: dict[str, Verificacion] = {
@@ -309,6 +324,12 @@ VERIFICACIONES: dict[str, Verificacion] = {
         Verificacion("juridica.revisor_fiscal", "juridica", 18, "Rev. fiscal", "Certificado de revisor fiscal",
                      "Aplica solo a sociedades anónimas: indica si es abierta o cerrada.",
                      "camara", ("revisor", "existencia")),
+        Verificacion("juridica.duracion", "juridica", 19, "Duración", "Duración de la sociedad",
+                     "La duración de cada sociedad (certificado de existencia) no es inferior al plazo del contrato y un año más.",
+                     "camara", base=False),
+        Verificacion("juridica.identidad", "juridica", 20, "Doc. identidad", "Documento de identidad del representante legal",
+                     "Copia de la cédula del representante legal (y del suplente, si el parámetro lo pide).",
+                     "oferta", base=False),
     )
 }
 
@@ -432,6 +453,6 @@ def definicion_sistema(tipo: str) -> DefinicionEvaluacion:
             verifica=v.verifica,
         )
         for v in VERIFICACIONES.values()
-        if v.tipo == "juridica"
+        if v.tipo == "juridica" and v.base
     ]
     return DefinicionEvaluacion(parametros={}, requisitos=requisitos)

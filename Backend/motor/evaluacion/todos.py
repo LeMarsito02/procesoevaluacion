@@ -22,11 +22,13 @@ from motor.evaluacion.camara_comercio import (
     evaluar_proponente_requisito8,
     evaluar_proponente_requisito9,
     evaluar_proponente_requisito10,
+    evaluar_proponente_duracion,
     evaluar_proponente_requisito18,
 )
 from motor.evaluacion.copnia import evaluar_proponente_requisito2, evaluar_proponente_requisito3
 from motor.evaluacion.formato1 import evaluar_proponente
 from motor.evaluacion.garantia import evaluar_proponente_requisito11
+from motor.evaluacion.identidad import evaluar_proponente_identidad
 from motor.evaluacion.personalizado import evaluar_requisito_personalizado
 from motor.evaluacion.proponente_plural import evaluar_proponente_requisito4
 from motor.evaluacion.seguridad_social import evaluar_proponente_requisito12
@@ -59,6 +61,13 @@ EVALUADORES_POR_REQUISITO: dict[int, EvaluadorProponente] = {
     16: evaluar_proponente_requisito16,
     17: evaluar_proponente_requisito17,
     18: evaluar_proponente_requisito18,
+}
+
+# Verificaciones que no son de la evaluación base: se evalúan solo cuando la
+# definición del proceso las incluye (las propone el análisis del pliego).
+EVALUADORES_DEL_PLIEGO: dict[int, EvaluadorProponente] = {
+    19: evaluar_proponente_duracion,
+    20: evaluar_proponente_identidad,
 }
 
 
@@ -140,7 +149,8 @@ def evaluar_requisito(
             motivo=f"Verificación manual que exige el pliego: {req.verifica}",
         )
     interno = criterios.VERIFICACIONES[req.verificacion].numero_interno
-    resultado = EVALUADORES_POR_REQUISITO[interno](proponente, proceso)
+    evaluador = EVALUADORES_POR_REQUISITO.get(interno) or EVALUADORES_DEL_PLIEGO[interno]
+    resultado = evaluador(proponente, proceso)
     # Los resultados cacheados son objetos compartidos: se copia antes de renumerar.
     return resultado.model_copy(update={"requisito": req.numero})
 

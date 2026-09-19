@@ -855,24 +855,67 @@ def evaluar_proponente_requisito10(proponente: Proponente, proceso: ProcesoDocum
 
 # "ORGANIZACION JURIDICA: SOCIEDAD POR ACCIONES SIMPLIFICADA CATEGORIA :
 # PERSONA JURIDICA PRINCIPAL NIT :..." — confirmado con un Certificado de
-# Existencia real (EMPRESA DOS SAS). "SOCIEDAD ANONIMA" y "SOCIEDAD POR ACCIONES
-# SIMPLIFICADA" (S.A.S.) son frases completamente distintas en español, así
-# que basta buscar la primera literalmente sin riesgo de confundirla con
-# S.A.S. No se encontró en los documentos reales revisados un proponente
-# que sea efectivamente una S.A. (todos eran S.A.S.), así que esta parte no
-# se pudo validar contra un caso real — queda como limitación conocida.
+# El tipo societario se lee de la razón social ACTUAL: el certificado cuenta
+# la historia ("…SE TRANSFORMÓ DE SOCIEDAD ANÓNIMA A SOCIEDAD POR ACCIONES
+# SIMPLIFICADA BAJO EL NOMBRE DE: KA S.A.S.", caso real) y buscar "sociedad
+# anónima" en todo el texto convertía una S.A.S. en S.A.
 SOCIEDAD_ANONIMA_RE = re.compile(r"SOCIEDAD ANONIMA(?!\s*SIMPLIFICADA)")
-SOCIEDAD_ABIERTA_RE = re.compile(r"\bABIERTA\b")
-SOCIEDAD_CERRADA_RE = re.compile(r"\bCERRADA\b")
+_RAZON_SAS_RE = re.compile(r"S\.?\s?A\.?\s?S\.?(?:\s+(?:B\.?\s?I\.?\s?C\.?|ZOMAC))*\s*$|SIMPLIFICADA")
+_RAZON_SA_RE = re.compile(r"(?:\bS\.?\s?A\.?|SOCIEDAD\s+ANONIMA)(?:\s+(?:E\.?\s?S\.?\s?P\.?|B\.?\s?I\.?\s?C\.?|ZOMAC))*\s*$")
+_RAZON_OTRA_RE = re.compile(r"\bLTDA\.?\s*$|LIMITADA\s*$|\bE\.?\s?U\.?\s*$|COMANDITA|COLECTIVA|\bS\.?\s?EN\s?C\b")
+_TRANSFORMACION_RE = re.compile(
+    r"TRANSFORM\w*\s+DE\s+SOCIEDAD\s+ANONIMA|DE\s+SOCIEDAD\s+ANONIMA\s+A\s+SOCIEDAD|DENOMINACION\s+O\s+RAZON\s+SOCIAL\s+DE\s+.{0,60}?\s+A\s+"
+)
+
+
+def es_sociedad_anonima(texto_norm: str) -> bool:
+    """La sociedad del certificado es hoy una S.A. Por la razón social; si no
+    se puede leer, por el texto (sin la historia de transformaciones), y
+    ante la duda se toma como S.A. (va a revisión, no se aprueba sola)."""
+    razon = RAZON_SOCIAL_RE.search(texto_norm)
+    if razon:
+        nombre = razon.group(1).strip(" ,")
+        if _RAZON_SAS_RE.search(nombre) or _RAZON_OTRA_RE.search(nombre):
+            return False
+        if _RAZON_SA_RE.search(nombre):
+            return True
+    return bool(SOCIEDAD_ANONIMA_RE.search(_TRANSFORMACION_RE.sub(" ", texto_norm)))
+
+
+# Certificación del revisor fiscal: "…LA EMPRESA MOVITIERRA CONSTRUCCIONES
+# S.A., IDENTIFICADA CON NIT NO. 800.128.984-5, ES UNA SOCIEDAD ANÓNIMA
+# CERRADA". Solo cuenta la frase completa (antes bastaba la palabra suelta
+# "abierta" o "cerrada" en cualquier parte del certificado de existencia).
+ABIERTA_O_CERRADA_RE = re.compile(
+    r"SOCIEDAD\s+(?:ANONIMA\s+)?(?:DE\s+CARACTER\s+)?(?:ABIERTA|CERRADA)\b"
+    r"|NO\s+(?:ES|TIENE\s+(?:EL\s+)?CARACTER\s+DE)\s+(?:UNA\s+)?SOCIEDAD\s+(?:ANONIMA\s+)?ABIERTA"
+)
+PAGINAS_CERTIFICACION_SA = 3
+
+
+def _certifica_abierta_o_cerrada(pdfs: dict[str, bytes], nit: str | None, razon: str | None) -> str | None:
+    """Archivo donde el revisor fiscal (o la Cámara) certifica si ESTA
+    sociedad es abierta o cerrada: la frase y su NIT o su nombre."""
+    palabras = [p for p in re.findall(r"[A-Z0-9Ñ]{3,}", razon or "") if p not in {"SAS", "LTDA", "SOCIEDAD", "ANONIMA"}]
+    for nombre, contenido in pdfs.items():
+        try:
+            texto = re.sub(r"\s+", " ", _norm(extraer_texto(contenido, max_paginas=PAGINAS_CERTIFICACION_SA)))
+        except Exception:  # noqa: BLE001
+            continue
+        if not ABIERTA_O_CERRADA_RE.search(texto):
+            continue
+        digitos = re.sub(r"\D", "", texto)
+        if (nit and nit in digitos) or (palabras and all(re.search(rf"\b{re.escape(p)}\b", texto) for p in palabras)):
+            return nombre
+    return None
 
 
 def evaluar_requisito18(pdfs: dict[str, bytes], tipo_proponente: str | None) -> ResultadoEvaluacionCamara:
     """Requisito 18: Certificado de Revisor Fiscal indicando si la sociedad
-    es abierta o cerrada. N.A. si el proponente no es una Sociedad Anónima
-    (S.A.) — incluye personas naturales y cualquier otro tipo societario
-    (S.A.S., Ltda., etc.), que no están obligados a este certificado. No
-    validado contra un proponente S.A. real (limitación conocida, ver
-    comentario en SOCIEDAD_ANONIMA_RE)."""
+    es abierta o cerrada. N.A. si ninguna sociedad del proponente es hoy una
+    Sociedad Anónima (S.A.) — personas naturales, S.A.S., Ltda., etc. Cada
+    S.A. (también las integrantes de un consorcio) necesita su certificación;
+    sin ella el requisito no se aprueba (criterio del abogado)."""
     if tipo_proponente == "persona_natural":
         return ResultadoEvaluacionCamara(cumple=True, motivo="N.A. — persona natural", archivo=None)
 
@@ -884,26 +927,32 @@ def evaluar_requisito18(pdfs: dict[str, bytes], tipo_proponente: str | None) -> 
             archivo=None,
         )
 
-    es_sociedad_anonima = False
+    faltan, certificaciones = [], []
     for nombre in encontrados:
-        texto_norm = _norm(_texto_completo(pdfs, nombre))
-        if SOCIEDAD_ANONIMA_RE.search(texto_norm):
-            es_sociedad_anonima = True
-            if SOCIEDAD_ABIERTA_RE.search(texto_norm) or SOCIEDAD_CERRADA_RE.search(texto_norm):
-                return ResultadoEvaluacionCamara(cumple=True, motivo=None, archivo=nombre)
+        texto_norm = re.sub(r"\s+", " ", _norm(_texto_completo(pdfs, nombre)))
+        if not es_sociedad_anonima(texto_norm):
+            continue
+        nit = NIT_CERTIFICADO_RE.search(texto_norm)
+        nit = re.sub(r"\D", "", nit.group(1))[:9] if nit else None
+        razon = RAZON_SOCIAL_RE.search(texto_norm)
+        razon = razon.group(1).strip(" ,") if razon else None
+        archivo = _certifica_abierta_o_cerrada(pdfs, nit, razon)
+        if archivo:
+            certificaciones.append(archivo)
+        else:
+            faltan.append(razon or (f"la sociedad con NIT {nit}" if nit else nombre.rsplit("/", 1)[-1]))
 
-    if not es_sociedad_anonima:
+    if not faltan and not certificaciones:
         return ResultadoEvaluacionCamara(
             cumple=True, motivo="N.A. — el proponente no es una Sociedad Anónima (S.A.)", archivo=None
         )
-
+    if not faltan:
+        return ResultadoEvaluacionCamara(cumple=True, motivo=None, archivo=certificaciones[0])
     return ResultadoEvaluacionCamara(
         cumple=False,
-        # Criterio del abogado: sin la certificación que diga si la S.A. es
-        # abierta o cerrada, el requisito no se aprueba.
         motivo=(
-            "El proponente es una Sociedad Anónima (S.A.) y no se encontró la certificación que indique si es abierta "
-            "o cerrada: sin ella el requisito no se aprueba. Si el proponente la aportó en otro documento, verifícala."
+            f"{', '.join(faltan)} es Sociedad Anónima (S.A.) y no se encontró la certificación del revisor fiscal que "
+            "indique si es abierta o cerrada: sin ella el requisito no se aprueba. Si la aportó en otro documento, verifícala."
         ),
         archivo=encontrados[0],
     )
@@ -911,3 +960,96 @@ def evaluar_requisito18(pdfs: dict[str, bytes], tipo_proponente: str | None) -> 
 
 def evaluar_proponente_requisito18(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
     return _evaluar_proponente_camara(18, lambda pdfs, proceso, tipo: evaluar_requisito18(pdfs, tipo), proponente, proceso)
+
+
+# --- Duración de la sociedad (requisito que agrega el pliego) ---------------
+# "LA PERSONA JURÍDICA NO SE ENCUENTRA DISUELTA Y SU DURACIÓN ES INDEFINIDA",
+# "…SU DURACIÓN ES HASTA EL 30 DE MAYO DE 2063", "DURACIÓN HASTA EL 30 DE
+# JULIO DE 2045". El pliego exige una duración no inferior al plazo del
+# contrato y un año más; se cuenta desde el cierre.
+DURACION_INDEFINIDA_RE = re.compile(
+    r"DURACION\s*(?:DE\s+LA\s+(?:SOCIEDAD|PERSONA\s+JURIDICA)\s*)?(?:ES\s+|:\s*)?INDEFINID|TERMINO\s+(?:DE\s+DURACION\s+)?INDEFINIDO"
+)
+# También "LA DURACIÓN DE LA PERSONA JURÍDICA (VIGENCIA) ES HASTA EL 16 DE
+# ENERO DE 2080" y, en sucursales de sociedades extranjeras, "EL PLAZO DE
+# DURACIÓN PARA LOS NEGOCIOS DE LA SUCURSAL EN COLOMBIA ES HASTA EL…".
+DURACION_HASTA_RE = re.compile(
+    r"DURACION[^.]{0,90}?\bHASTA\s+(?:EL\s+)?(?:(\d{1,2})\s+DE\s+([A-Z]+)\s+DE(?:L)?\s+(\d{4})|(\d{1,2})[/-](\d{1,2})[/-](\d{4}))"
+)
+# Solo cuenta si es la sociedad misma la disuelta o en liquidación (no "…
+# LIQUIDACIÓN DE EMPRESAS…" dentro del objeto social).
+DISUELTA_RE = re.compile(
+    r"(?<!NO )SE\s+ENCUENTRA\s+DISUELTA"
+    r"|(?:LA\s+SOCIEDAD|LA\s+PERSONA\s+JURIDICA|LA\s+EMPRESA)\s+(?:SE\s+ENCUENTRA\s+|ESTA\s+)?EN\s+(?:ESTADO\s+DE\s+)?LIQUIDACION"
+    r"|DISUELTA\s+Y\s+EN\s+(?:ESTADO\s+DE\s+)?LIQUIDACION"
+)
+# Si la duración supera el mínimo por menos de esto, se pide confirmarla (el
+# plazo se cuenta desde la firma del contrato, que es después del cierre).
+MARGEN_DURACION_MESES = 6
+
+
+def duracion_minima(proceso: ProcesoDocumentoBase) -> date | None:
+    plazo = max((lote.plazo_meses for lote in proceso.lotes), default=0)
+    if not plazo:
+        return None
+    return proceso.fecha_cierre + relativedelta(months=plazo + 12)
+
+
+def _duracion_hasta(texto_norm: str) -> date | None:
+    m = DURACION_HASTA_RE.search(texto_norm)
+    if not m:
+        return None
+    try:
+        if m.group(1):
+            return date(int(m.group(3)), MESES[m.group(2)], int(m.group(1)))
+        return date(int(m.group(6)), int(m.group(5)), int(m.group(4)))
+    except (KeyError, ValueError):
+        return None
+
+
+def evaluar_duracion_sociedad(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase, tipo_proponente: str | None) -> ResultadoEvaluacionCamara:
+    if tipo_proponente == "persona_natural":
+        return ResultadoEvaluacionCamara(cumple=True, motivo="N.A. — persona natural", archivo=None)
+    encontrados = encontrar_documentos(pdfs, TITULO_EXISTENCIA_RE, PISTAS_EXISTENCIA)
+    if not encontrados:
+        return ResultadoEvaluacionCamara(
+            cumple=False,
+            motivo="No se encontró el Certificado de Existencia y Representación Legal por título dentro de los documentos del proponente.",
+            archivo=None,
+        )
+    minima = duracion_minima(proceso)
+    problemas = []
+    for nombre in encontrados:
+        texto_norm = re.sub(r"\s+", " ", _norm(_texto_completo(pdfs, nombre)))
+        razon = RAZON_SOCIAL_RE.search(texto_norm)
+        quien = razon.group(1).strip(" ,") if razon else f"'{nombre.rsplit('/', 1)[-1]}'"
+        if DISUELTA_RE.search(texto_norm):
+            problemas.append(f"el certificado de {quien} indica que está disuelta o en liquidación")
+            continue
+        if DURACION_INDEFINIDA_RE.search(texto_norm):
+            continue
+        hasta = _duracion_hasta(texto_norm)
+        if hasta is None:
+            problemas.append(f"no se pudo leer la duración de {quien} en su certificado de existencia")
+        elif minima is None:
+            problemas.append(
+                f"{quien} dura hasta el {hasta.strftime('%d/%m/%Y')}, pero no se pudo leer el plazo del contrato para "
+                "compararla (plazo más un año)"
+            )
+        elif hasta < minima:
+            problemas.append(
+                f"{quien} dura hasta el {hasta.strftime('%d/%m/%Y')}, menos que el plazo del contrato y un año más "
+                f"(mínimo {minima.strftime('%d/%m/%Y')} contando desde el cierre)"
+            )
+        elif hasta < minima + relativedelta(months=MARGEN_DURACION_MESES):
+            problemas.append(
+                f"{quien} dura hasta el {hasta.strftime('%d/%m/%Y')}, apenas por encima del mínimo "
+                f"({minima.strftime('%d/%m/%Y')} contando desde el cierre) — confirma con la fecha de firma del contrato"
+            )
+    if problemas:
+        return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(problemas), archivo=encontrados[0])
+    return ResultadoEvaluacionCamara(cumple=True, motivo=None, archivo=encontrados[0])
+
+
+def evaluar_proponente_duracion(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
+    return _evaluar_proponente_camara(19, evaluar_duracion_sociedad, proponente, proceso)

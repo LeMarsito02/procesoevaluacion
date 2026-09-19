@@ -26,7 +26,7 @@ from motor.pliego.lectura import Pagina, Seccion, codigo_documento_tipo, norm, s
 
 # Sube cuando cambian los detectores: los análisis guardados con otra versión
 # se rehacen.
-VERSION_ANALISIS = 3
+VERSION_ANALISIS = 4
 
 Ambito = Literal["juridica", "tecnica", "financiera", "puntaje", "garantias", "general"]
 
@@ -236,8 +236,15 @@ _FIJOS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
      re.compile(r"BASTARA\s+(?:CON\s+)?EL\s+CERTIFICADO\s+SUSCRITO\s+POR\s+EL\s+REVISOR\s+FISCAL")),
 )
 
-_MIPYME_NO_RE = re.compile(r"NO\s+(?:ES\s+SUSCEPTIBLE|SE\s+LIMITA|SERA\s+LIMITAD)")
-_MIPYME_SI_RE = re.compile(r"(?:SE\s+LIMITA|LIMITAD[OA]|LIMITACION)[^.]{0,80}MIPYME|MIPYME[^.]{0,80}(?:PODRAN|UNICAMENTE|SOLO)")
+# "No limita" (sin "se") también cuenta: "LA ENTIDAD NO LIMITA EL PROCESO DE
+# CONTRATACIÓN A LAS MIPYME…". Y el texto tipo que explica CÓMO pedir la
+# limitación ("LOS INTERESADOS MANIFESTARÁN SU INTENCIÓN DE LIMITAR…") no dice
+# que el proceso esté limitado: solo cuenta una afirmación de limitación.
+_MIPYME_NO_RE = re.compile(r"NO\s+(?:ES\s+SUSCEPTIBLE|SE\s+LIMITA|LIMITA\b|SERA\s+LIMITAD)|PODRA\s+PARTICIPAR\s+CUALQUIER")
+_MIPYME_SI_RE = re.compile(
+    r"(?:EL\s+PRESENTE\s+PROCESO|LA\s+CONVOCATORIA|EL\s+PROCESO\s+DE\s+CONTRATACION)\s+(?:SE\s+LIMITA|(?:QUEDA|ESTA)\s+LIMITAD[OA])[^.]{0,80}MIPYME"
+    r"|(?:SOLO|UNICAMENTE)\s+(?:PODRAN\s+PARTICIPAR|SE\s+ACEPTARAN)[^.]{0,80}MIPYME"
+)
 
 
 def _detectar_fijos(sec: Seccion, paginas: list[Pagina]) -> list[Exigencia]:
@@ -249,7 +256,7 @@ def _detectar_fijos(sec: Seccion, paginas: list[Pagina]) -> list[Exigencia]:
             salida.append(Exigencia(clave=clave, titulo=titulo, seccion=sec.encabezado, pagina=pagina, cita=cita))
     if "LIMITACION A MIPYME" in norm(sec.titulo) or "CONVOCATORIA LIMITADA" in norm(sec.titulo):
         t = norm(sec.texto)
-        limitado = not _MIPYME_NO_RE.search(t) and bool(_MIPYME_SI_RE.search(t) or "MIPYME" in t)
+        limitado = not _MIPYME_NO_RE.search(t) and bool(_MIPYME_SI_RE.search(t))
         cita = re.sub(r"\s+", " ", sec.texto).strip()[:420] or sec.titulo
         salida.append(Exigencia(
             clave="limitacion_mipyme", titulo="Limitación a MiPyme", seccion=sec.encabezado,
@@ -422,24 +429,29 @@ def comparar(extraccion: Extraccion, definicion: criterios.DefinicionEvaluacion)
             ))
 
     # 2. Exigencias que la plantilla no evalúa.
+    # (el motor los verifica solo: juridica.duracion y juridica.identidad)
     nuevos = {
         "duracion_sociedad": (
             "El certificado de existencia debe mostrar una duración de la sociedad no inferior al plazo del contrato y "
             "un año más. La evaluación de la entidad no lo verifica.",
-            "Duración de la sociedad", "Duración",
+            "juridica.duracion",
         ),
         "identidad_representante": (
             "El pliego pide copia del documento de identidad del representante legal. La evaluación de la entidad no "
             "lo verifica.",
-            "Documento de identidad del representante legal", "Doc. identidad",
+            "juridica.identidad",
         ),
     }
-    for clave, (detalle, titulo, corto) in nuevos.items():
+    for clave, (detalle, verificacion) in nuevos.items():
+        if verificacion in en_plantilla:
+            continue
+        ver = criterios.VERIFICACIONES[verificacion]
         for e in por_clave.get(clave, [])[:1]:
             hallazgos.append(Hallazgo(
-                id=clave, tipo="requisito_nuevo", titulo=titulo, detalle=detalle,
-                seccion=e.seccion, pagina=e.pagina, cita=e.cita, requiere_decision=True,
-                requisito_propuesto={"titulo": titulo, "corto": corto, "verifica": f"{e.cita} (pliego, {e.seccion}, pág. {e.pagina})"},
+                id=clave, tipo="requisito_nuevo", titulo=ver.titulo, detalle=detalle,
+                seccion=e.seccion, pagina=e.pagina, cita=e.cita, verificacion=verificacion, requiere_decision=True,
+                requisito_propuesto={"verificacion": verificacion, "titulo": ver.titulo, "corto": ver.corto,
+                                     "verifica": f"{e.cita} (pliego, {e.seccion}, pág. {e.pagina})"},
             ))
 
     for e in por_clave.get("limitacion_mipyme", [])[:1]:
@@ -454,7 +466,9 @@ def comparar(extraccion: Extraccion, definicion: criterios.DefinicionEvaluacion)
         else:
             hallazgos.append(Hallazgo(
                 id="limitacion_mipyme", tipo="informativo", titulo="Sin limitación a MiPyme",
-                detalle="El pliego no limita la convocatoria a MiPyme: no se exige acreditar esa condición.",
+                detalle=("El pliego no afirma que la convocatoria esté limitada a MiPyme: no se exige acreditar esa "
+                         "condición. Si el proceso se limitó después (por solicitud de los interesados, en el SECOP), "
+                         "hay que agregarlo."),
                 seccion=e.seccion, pagina=e.pagina, cita=e.cita,
             ))
 

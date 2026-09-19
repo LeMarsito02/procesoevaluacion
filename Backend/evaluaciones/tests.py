@@ -620,7 +620,8 @@ class PlantillaEvaluacionTests(BaseEvaluaciones):
 
     def test_catalogo_del_motor(self):
         cat = self.admin.get("/api/configuracion/catalogo?tipo=juridica").json()
-        self.assertEqual(len(cat["verificaciones"]), 17)
+        # 17 de la evaluación base + 2 que se agregan cuando el pliego las pide.
+        self.assertEqual(len(cat["verificaciones"]), 19)
         self.assertIn("copnia_meses", {p["clave"] for p in cat["parametros"]})
 
     def test_sin_version_propia_usa_la_base_del_sistema(self):
@@ -1434,7 +1435,7 @@ class AnalisisPliegoTests(TestCase):
         ajustada = aplicar_ajustes(base, ajustes)
         self.assertEqual(ajustada.parametros["camara_dias"], 30)
         nuevos = ajustada.requisitos[len(base.requisitos):]
-        self.assertEqual([(r.titulo, r.verificacion) for r in nuevos], [("Duración de la sociedad", criterios.MANUAL)])
+        self.assertEqual([(r.titulo, r.verificacion) for r in nuevos], [("Duración de la sociedad", "juridica.duracion")])
         self.assertEqual(nuevos[0].numero, max(r.numero for r in base.requisitos) + 1)
 
     def test_la_verificacion_manual_queda_pendiente(self):
@@ -1882,17 +1883,19 @@ class ContenidoCartaTests(TestCase):
     def test_modalidad_del_pliego(self):
         from motor.evaluacion.formato1_contenido import modalidad_de
 
-        self.assertEqual(modalidad_de("DOCUMENTO BASE LICITACIÓN DE OBRA PÚBLICA DE INFRAESTRUCTURA SOCIAL"), "obra_social")
-        self.assertEqual(modalidad_de("LICITACIÓN DE INFRAESTRUCTURA DE TRANSPORTE (VERSIÓN 4)"), "obra_transporte")
+        self.assertEqual(modalidad_de("DOCUMENTO BASE LICITACIÓN DE OBRA PÚBLICA DE INFRAESTRUCTURA SOCIAL"), "licitacion_social")
+        self.assertEqual(modalidad_de("LICITACIÓN DE INFRAESTRUCTURA DE TRANSPORTE (VERSIÓN 4)"), "licitacion_transporte")
         self.assertEqual(modalidad_de("SELECCIÓN ABREVIADA DE MENOR CUANTÍA"), "menor_cuantia")
-        self.assertEqual(modalidad_de("Código CCE-EICP-GI-11 INTERVENTORÍA DE OBRA PÚBLICA"), "interventoria")
+        self.assertEqual(modalidad_de("SELECCIÓN ABREVIADA DE MENOR CUANTÍA", "…DE INFRAESTRUCTURA SOCIAL…"), "menor_cuantia_social")
+        self.assertEqual(modalidad_de("Código CCE-EICP-GI-11 INTERVENTORÍA DE OBRA PÚBLICA"), "interventoria_transporte")
+        self.assertEqual(modalidad_de("INFRAESTRUCTURA DE AGUA, SANEAMIENTO BÁSICO … MEDIANTE LICITACIÓN PÚBLICA"), "licitacion_agua")
         self.assertIsNone(modalidad_de("CONCURSO DE MÉRITOS"))
 
     def test_numeral_cambiado(self):
         from motor.evaluacion.formato1_contenido import clausulas_faltantes
 
         def falta_revision(texto):
-            return any("RESPONSABILIDAD DE SU REVISI" in c.upper() for c in clausulas_faltantes(texto, "obra_transporte"))
+            return any("RESPONSABILIDAD DE SU REVISI" in c.upper() for c in clausulas_faltantes(texto, "licitacion_transporte"))
 
         self.assertFalse(falta_revision(self.NUMERAL_5))
         self.assertTrue(falta_revision(self.NUMERAL_5_CAMBIADO))
@@ -1980,3 +1983,46 @@ class ObjetoSocialTests(TestCase):
         self.assertEqual(p("PODRA REALIZAR CUALQUIER ACTIVIDAD COMERCIAL O CIVIL LICITA", base), 1.0)
         # Comparte "mantenimiento" pero no es del sector de obras.
         self.assertEqual(p("VENTA Y MANTENIMIENTO DE EQUIPOS DE COMPUTO", base), 0.0)
+
+
+class RequisitosDelPliegoTests(TestCase):
+    """Verificaciones que el pliego agrega y el motor revisa solo."""
+
+    def test_duracion(self):
+        from datetime import date
+
+        from motor.evaluacion.camara_comercio import DURACION_INDEFINIDA_RE, DISUELTA_RE, _duracion_hasta
+
+        self.assertTrue(DURACION_INDEFINIDA_RE.search("LA PERSONA JURIDICA NO SE ENCUENTRA DISUELTA Y SU DURACION ES INDEFINIDA"))
+        self.assertIsNone(DISUELTA_RE.search("LA PERSONA JURIDICA NO SE ENCUENTRA DISUELTA Y SU DURACION ES INDEFINIDA"))
+        self.assertTrue(DISUELTA_RE.search("LA SOCIEDAD SE ENCUENTRA DISUELTA Y EN ESTADO DE LIQUIDACION"))
+        self.assertEqual(_duracion_hasta("NO SE ENCUENTRA DISUELTA Y SU DURACION ES HASTA EL 30 DE MAYO DE 2063."), date(2063, 5, 30))
+        self.assertEqual(_duracion_hasta("QUE LA SOCIEDAD NO SE HALLA DISUELTA. DURACION HASTA EL 30 DE JULIO DE 2045"), date(2045, 7, 30))
+
+    def test_numero_de_cedula_con_ocr(self):
+        from motor.evaluacion.identidad import _numero_en
+
+        self.assertTrue(_numero_en("1069725868", "CEDULA DE CIUDADANIA NUMERO 1.069.725.868 GARCIA AVILA"))
+        self.assertTrue(_numero_en("1069725868", "NUMERO 1.069.725.863"))  # un dígito mal leído
+        self.assertFalse(_numero_en("1069725868", "NUMERO 1.069.735.863"))
+        self.assertFalse(_numero_en("1069725868", "NUMERO 79.446.297"))
+
+    def test_sociedad_anonima_por_razon_social(self):
+        from motor.evaluacion.camara_comercio import ABIERTA_O_CERRADA_RE, es_sociedad_anonima
+
+        self.assertFalse(es_sociedad_anonima(
+            "RAZON SOCIAL: KA S.A.S. NIT: 830141859 LA SOCIEDAD SE TRANSFORMO DE SOCIEDAD ANONIMA A SOCIEDAD POR ACCIONES SIMPLIFICADA"))
+        self.assertTrue(es_sociedad_anonima("RAZON SOCIAL: MOVITIERRA CONSTRUCCIONES S.A. NIT: 800128984"))
+        self.assertTrue(es_sociedad_anonima("RAZON SOCIAL: EMPRESAS PUBLICAS S.A. E.S.P. NIT: 890904996"))
+        self.assertFalse(es_sociedad_anonima("RAZON SOCIAL: INGENIEROS ASOCIADOS LTDA NIT: 800000000"))
+        self.assertTrue(ABIERTA_O_CERRADA_RE.search("LA EMPRESA MOVITIERRA CONSTRUCCIONES S.A. ES UNA SOCIEDAD ANONIMA CERRADA"))
+        self.assertIsNone(ABIERTA_O_CERRADA_RE.search("LA CUENTA ABIERTA EN EL BANCO"))
+
+    def test_limitacion_mipyme(self):
+        from motor.pliego.analisis import _MIPYME_NO_RE, _MIPYME_SI_RE
+
+        no = "LA ENTIDAD NO LIMITA EL PROCESO DE CONTRATACION A LAS MIPYME COLOMBIANAS POR NO HABERSE CUMPLIDO LAS CONDICIONES"
+        self.assertTrue(_MIPYME_NO_RE.search(no))
+        como_pedir = "LOS INTERESADOS MANIFESTARAN SU INTENCION DE LIMITAR LAS CONVOCATORIAS A MIPYME EN LA SECCION MENSAJES"
+        self.assertIsNone(_MIPYME_SI_RE.search(como_pedir))
+        self.assertTrue(_MIPYME_SI_RE.search("EL PRESENTE PROCESO SE LIMITA A MIPYME COLOMBIANAS"))

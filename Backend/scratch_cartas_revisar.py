@@ -9,7 +9,7 @@ from motor.evaluacion.formato1_contenido import (avalista_del_parrafo, clausulas
                                                  representante_de_la_carta)
 from motor.evaluacion.formato1 import _nombres_coinciden
 
-MODALIDAD = {"p1": "interventoria", "p2": "obra_social", "p3": "obra_transporte", "p4": "menor_cuantia"}
+MODALIDAD = {"p1": "interventoria_transporte", "p2": "licitacion_social", "p3": "licitacion_transporte", "p4": "menor_cuantia_social"}
 GT = {"p1": ".scratch/medicion_comparacion.json", "p3": ".scratch/prueba3/medicion_comparacion.json", "p4": ".scratch/prueba4/medicion_comparacion.json"}
 abogado = {}
 for p, f in GT.items():

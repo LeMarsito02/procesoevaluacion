@@ -1,5 +1,5 @@
 {
- "interventoria": [
+ "interventoria_transporte": [
   {
    "texto": "caso de conocer que los integrantes del Proponente Plural, los socios de la persona jurídica que represento (se exceptúan las sociedades anónimas abiertas) o yo nos encontremos incursos en alguna inhabilidad o Conflicto de Interés sobreviniente, contemplados en la normativa vigente, nos comprometemo",
    "claves": [
@@ -611,7 +611,7 @@
    ]
   }
  ],
- "obra_social": [
+ "licitacion_social": [
   {
    "texto": "caso de llegar a conocer que los integrantes del Proponente Plural, los socios de la persona jurídica que represento o yo nos encontramos incursos en alguna inhabilidad, incompatibilidad o conflicto de interés sobreviniente, contemplados en la normativa vigente, nos comprometemos a informar de maner",
    "claves": [
@@ -1114,7 +1114,7 @@
    ]
   }
  ],
- "obra_transporte": [
+ "licitacion_transporte": [
   {
    "texto": "caso de llegar a conocer que los integrantes del proponente plural, los socios de la persona jurídica que representó o yo nos encontramos incursos en alguna inhabilidad o conflicto de interés sobreviniente, contemplados en la normativa vigente, nos comprometemos a informar de manera LICITACIÓN DE OB",
    "claves": [
@@ -1604,7 +1604,7 @@
    ]
   }
  ],
- "menor_cuantia": [
+ "menor_cuantia_social": [
   {
    "texto": "caso de llegar a conocer que los integrantes del proponente plural, los socios de la persona jurídica que representó o yo nos encontramos incursos en alguna inhabilidad o conflicto de interés sobreviniente, contemplados en la normativa vigente, nos comprometemos a informar de manera inmediata tal ci",
    "claves": [
@@ -2091,6 +2091,2451 @@
     "SEA",
     "AFIRMATIVA",
     "EMPRESARIAL"
+   ]
+  }
+ ],
+ "consultoria_social": [
+  {
+   "texto": "Estoy autorizado para suscribir y presentar la oferta y para firmar el Contrato si resulto adjudicatario del Proceso de Contratación de la referencia.",
+   "claves": [
+    "ESTOY",
+    "AUTORIZADO",
+    "SUSCRIBIR",
+    "PRESENTAR",
+    "OFERTA",
+    "FIRMAR",
+    "CONTRATO",
+    "RESULTO",
+    "ADJUDICATARIO",
+    "PROCESO",
+    "CONTRATACION",
+    "REFERENCIA"
+   ]
+  },
+  {
+   "texto": "En caso de que la oferta le sea adjudicada al Proponente suscribiré el Contrato objeto del Proceso de Contratación en la fecha prevista para el efecto en el cronograma contenido en los documentos del proceso.",
+   "claves": [
+    "CASO",
+    "OFERTA",
+    "SEA",
+    "ADJUDICADA",
+    "PROPONENTE",
+    "SUSCRIBIRE",
+    "CONTRATO",
+    "OBJETO",
+    "PROCESO",
+    "CONTRATACION",
+    "FECHA",
+    "PREVISTA",
+    "EFECTO",
+    "CRONOGRAMA",
+    "CONTENIDO",
+    "DOCUMENTOS",
+    "PROCESO"
+   ]
+  },
+  {
+   "texto": "Conozco los documentos del proceso, incluyendo adendas y acepto los requisitos en ellos contenidos.",
+   "claves": [
+    "CONOZCO",
+    "DOCUMENTOS",
+    "PROCESO",
+    "INCLUYENDO",
+    "ADENDAS",
+    "ACEPTO",
+    "REQUISITOS",
+    "ELLOS",
+    "CONTENIDOS"
+   ]
+  },
+  {
+   "texto": "Dentro de los documentos presentados a la Entidad conozco los ítems, la descripción, las unidades y cantidades establecidas en el Formulario 1 – Propuesta económica.",
+   "claves": [
+    "DENTRO",
+    "DOCUMENTOS",
+    "PRESENTADOS",
+    "ENTIDAD",
+    "CONOZCO",
+    "ITEMS",
+    "DESCRIPCION",
+    "UNIDADES",
+    "CANTIDADES",
+    "ESTABLECIDAS",
+    "FORMULARIO",
+    "PROPUESTA",
+    "ECONOMICA"
+   ]
+  },
+  {
+   "texto": "Conozco las leyes de la República de Colombia que rigen el Proceso de Contratación.",
+   "claves": [
+    "CONOZCO",
+    "LEYES",
+    "REPUBLICA",
+    "COLOMBIA",
+    "RIGEN",
+    "PROCESO",
+    "CONTRATACION"
+   ]
+  },
+  {
+   "texto": "Conozco las especificaciones técnicas y el alcance de la obra objeto de la consultoría, así como las disposiciones establecidas en el Anexo 1 – Anexo Técnico.",
+   "claves": [
+    "CONOZCO",
+    "ESPECIFICACIONES",
+    "TECNICAS",
+    "ALCANCE",
+    "OBRA",
+    "OBJETO",
+    "CONSULTORIA",
+    "ASI",
+    "DISPOSICIONES",
+    "ESTABLECIDAS",
+    "ANEXO",
+    "ANEXO",
+    "TECNICO"
+   ]
+  },
+  {
+   "texto": "Conozco el sitio donde se ejecutará el Contrato y asumo los Riesgos previsibles inherentes al mismo, así como aquellos asignados en el Pliego de Condiciones.",
+   "claves": [
+    "CONOZCO",
+    "SITIO",
+    "DONDE",
+    "EJECUTARA",
+    "CONTRATO",
+    "ASUMO",
+    "RIESGOS",
+    "PREVISIBLES",
+    "INHERENTES",
+    "MISMO",
+    "ASI",
+    "AQUELLOS",
+    "ASIGNADOS",
+    "PLIEGO",
+    "CONDICIONES"
+   ]
+  },
+  {
+   "texto": "La información contenida en todos los documentos de la oferta es veraz y asumo total responsabilidad frente a la Entidad cuando los datos suministrados sean falsos o contrarios a la realidad, sin perjuicio de lo dispuesto en el Código Penal y demás normas concordantes.",
+   "claves": [
+    "INFORMACION",
+    "CONTENIDA",
+    "TODOS",
+    "DOCUMENTOS",
+    "OFERTA",
+    "VERAZ",
+    "ASUMO",
+    "TOTAL",
+    "RESPONSABILIDAD",
+    "FRENTE",
+    "ENTIDAD",
+    "DATOS",
+    "SUMINISTRADOS",
+    "SEAN",
+    "FALSOS",
+    "CONTRARIOS",
+    "REALIDAD",
+    "PERJUICIO",
+    "DISPUESTO",
+    "CODIGO",
+    "PENAL",
+    "DEMAS",
+    "NORMAS",
+    "CONCORDANTES"
+   ]
+  },
+  {
+   "texto": "La información diligenciada en el Formato 8 A “Información sobre el Personal Clave Evaluable” es real y verificable con los soportes de formación académica y experiencia que entregaré a la Entidad en el momento dispuesto en el numeral 9.1 del Documento Base.",
+   "claves": [
+    "INFORMACION",
+    "DILIGENCIADA",
+    "FORMATO",
+    "INFORMACION",
+    "PERSONAL",
+    "CLAVE",
+    "EVALUABLE",
+    "REAL",
+    "VERIFICABLE",
+    "SOPORTES",
+    "FORMACION",
+    "ACADEMICA",
+    "EXPERIENCIA",
+    "ENTREGARE",
+    "ENTIDAD",
+    "MOMENTO",
+    "DISPUESTO",
+    "NUMERAL",
+    "DOCUMENTO",
+    "BASE"
+   ]
+  },
+  {
+   "texto": "En el caso que la Entidad encuentre que la información del Formato no sea verídica, soy consciente de las sanciones penales en que puedo incurrir, tales como falsedad en documento público.",
+   "claves": [
+    "CASO",
+    "ENTIDAD",
+    "ENCUENTRE",
+    "INFORMACION",
+    "FORMATO",
+    "SEA",
+    "VERIDICA",
+    "SOY",
+    "CONSCIENTE",
+    "SANCIONES",
+    "PENALES",
+    "PUEDO",
+    "INCURRIR",
+    "TALES",
+    "FALSEDAD",
+    "DOCUMENTO",
+    "PUBLICO"
+   ]
+  },
+  {
+   "texto": "Conozco y cuento con los profesionales ofertados en el equipo de trabajo y los pondré a disposición de la Entidad para el cumplimiento del objeto del proyecto de consultoría en los plazos dispuestos en el numeral 9.1 del Documento Base.",
+   "claves": [
+    "CONOZCO",
+    "CUENTO",
+    "PROFESIONALES",
+    "OFERTADOS",
+    "EQUIPO",
+    "TRABAJO",
+    "PONDRE",
+    "DISPOSICION",
+    "ENTIDAD",
+    "CUMPLIMIENTO",
+    "OBJETO",
+    "PROYECTO",
+    "CONSULTORIA",
+    "PLAZOS",
+    "DISPUESTOS",
+    "NUMERAL",
+    "DOCUMENTO",
+    "BASE"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento, ni yo nos hallamos incursos en causal alguna de conflicto de interés, inhabilidad o incompatibilidad de las señaladas en la Constitución y en la ley.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "HALLAMOS",
+    "INCURSOS",
+    "CAUSAL",
+    "ALGUNA",
+    "CONFLICTO",
+    "INTERES",
+    "INHABILIDAD",
+    "INCOMPATIBILIDAD",
+    "SENALADAS",
+    "CONSTITUCION",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento, ni yo nos encontramos en ninguno de los eventos de prohibiciones especiales para contratar, ni nos encontramos incursos en ninguno de los conflictos de interés para participar establecidos en la ley.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "ENCONTRAMOS",
+    "NINGUNO",
+    "EVENTOS",
+    "PROHIBICIONES",
+    "ESPECIALES",
+    "CONTRATAR",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "NINGUNO",
+    "CONFLICTOS",
+    "INTERES",
+    "PARTICIPAR",
+    "ESTABLECIDOS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "En caso de conocer que los integrantes del Proponente Plural, los socios de la persona jurídica que represento o yo nos encontramos incursos en alguna inhabilidad o conflicto de interés sobreviniente, contemplados en la normativa vigente, nos comprometemos a informar de manera inmediata tal circunst",
+   "claves": [
+    "CASO",
+    "CONOCER",
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "INHABILIDAD",
+    "CONFLICTO",
+    "INTERES",
+    "SOBREVINIENTE",
+    "CONTEMPLADOS",
+    "NORMATIVA",
+    "VIGENTE",
+    "NOS",
+    "COMPROMETEMOS",
+    "INFORMAR",
+    "MANERA",
+    "INMEDIATA",
+    "TAL",
+    "CIRCUNSTANCIA",
+    "ENTIDAD",
+    "TOME",
+    "MEDIDAS",
+    "PERTINENTES"
+   ]
+  },
+  {
+   "texto": "Este compromiso lo adquirimos con total independencia de la etapa en que se encuentre el Proceso de Contratación (precontractual, contractual y/o post contractual).",
+   "claves": [
+    "COMPROMISO",
+    "ADQUIRIMOS",
+    "TOTAL",
+    "INDEPENDENCIA",
+    "ETAPA",
+    "ENCUENTRE",
+    "PROCESO",
+    "CONTRATACION",
+    "PRECONTRACTUAL",
+    "CONTRACTUAL",
+    "POST",
+    "CONTRACTUAL"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento, ni yo estamos incursos en la situación descrita en el numeral 1 del artículo 38 de la Ley 1116 de 2006.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "ESTAMOS",
+    "INCURSOS",
+    "SITUACION",
+    "DESCRITA",
+    "NUMERAL",
+    "ARTICULO",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Conozco el Anexo denominado “Pacto de Transparencia” relacionado en el Pliego de Condiciones y me comprometo a darle estricto cumplimiento.",
+   "claves": [
+    "CONOZCO",
+    "ANEXO",
+    "DENOMINADO",
+    "PACTO",
+    "TRANSPARENCIA",
+    "RELACIONADO",
+    "PLIEGO",
+    "CONDICIONES",
+    "COMPROMETO",
+    "DARLE",
+    "ESTRICTO",
+    "CUMPLIMIENTO"
+   ]
+  },
+  {
+   "texto": "Los recursos destinados al proyecto son de origen lícito y no hemos participado en actividades delictivas, así como no hemos recibido recursos o facilitado actividades contrarias a la ley.",
+   "claves": [
+    "RECURSOS",
+    "DESTINADOS",
+    "PROYECTO",
+    "SON",
+    "ORIGEN",
+    "LICITO",
+    "HEMOS",
+    "PARTICIPADO",
+    "ACTIVIDADES",
+    "DELICTIVAS",
+    "ASI",
+    "HEMOS",
+    "RECIBIDO",
+    "RECURSOS",
+    "FACILITADO",
+    "ACTIVIDADES",
+    "CONTRARIAS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Al momento de la presentación de la oferta, ni mis representados ni yo nos encontramos incursos en alguna de las causales de rechazo señaladas en la sección 1.15 del Documento Base.",
+   "claves": [
+    "MOMENTO",
+    "PRESENTACION",
+    "OFERTA",
+    "MIS",
+    "REPRESENTADOS",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "CAUSALES",
+    "RECHAZO",
+    "SENALADAS",
+    "SECCION",
+    "DOCUMENTO",
+    "BASE"
+   ]
+  },
+  {
+   "texto": "Si se adjudica el Contrato me comprometo a constituir las Garantías requeridas dentro del término señalado para ello.",
+   "claves": [
+    "ADJUDICA",
+    "CONTRATO",
+    "COMPROMETO",
+    "CONSTITUIR",
+    "GARANTIAS",
+    "REQUERIDAS",
+    "DENTRO",
+    "TERMINO",
+    "SENALADO",
+    "ELLO"
+   ]
+  },
+  {
+   "texto": "La oferta está constituida por todos los Formatos, Formularios, Anexos y Matrices requeridos en los Documentos del Proceso aplicables al Proponente y documentos de soporte presentados.",
+   "claves": [
+    "OFERTA",
+    "CONSTITUIDA",
+    "TODOS",
+    "FORMATOS",
+    "FORMULARIOS",
+    "ANEXOS",
+    "MATRICES",
+    "REQUERIDOS",
+    "DOCUMENTOS",
+    "PROCESO",
+    "APLICABLES",
+    "PROPONENTE",
+    "DOCUMENTOS",
+    "SOPORTE",
+    "PRESENTADOS"
+   ]
+  },
+  {
+   "texto": "La oferta fue elaborada teniendo en cuenta todos los gastos, costos, derechos, impuestos, tasas y demás contribuciones que se causen con ocasión de su presentación y suscripción del Contrato y que en consecuencia no presentaré reclamos con ocasión del pago de tales gastos.",
+   "claves": [
+    "OFERTA",
+    "FUE",
+    "ELABORADA",
+    "TENIENDO",
+    "CUENTA",
+    "TODOS",
+    "GASTOS",
+    "COSTOS",
+    "DERECHOS",
+    "IMPUESTOS",
+    "TASAS",
+    "DEMAS",
+    "CONTRIBUCIONES",
+    "CAUSEN",
+    "OCASION",
+    "PRESENTACION",
+    "SUSCRIPCION",
+    "CONTRATO",
+    "CONSECUENCIA",
+    "PRESENTARE",
+    "RECLAMOS",
+    "OCASION",
+    "PAGO",
+    "TALES",
+    "GASTOS"
+   ]
+  },
+  {
+   "texto": "Declaro que me informaré de todas las etapas y decisiones del Proceso de Contratación, consultando el Sistema Electrónico Para la Contratación Pública y en caso de que me deban comunicar o notificar alguna decisión, autorizo a la Entidad para que lo haga al correo electrónico indicado al final de es",
+   "claves": [
+    "DECLARO",
+    "INFORMARE",
+    "TODAS",
+    "ETAPAS",
+    "DECISIONES",
+    "PROCESO",
+    "CONTRATACION",
+    "CONSULTANDO",
+    "SISTEMA",
+    "ELECTRONICO",
+    "CONTRATACION",
+    "PUBLICA",
+    "CASO",
+    "DEBAN",
+    "COMUNICAR",
+    "NOTIFICAR",
+    "ALGUNA",
+    "DECISION",
+    "AUTORIZO",
+    "ENTIDAD",
+    "HAGA",
+    "CORREO",
+    "ELECTRONICO",
+    "INDICADO",
+    "FINAL",
+    "DOCUMENTO"
+   ]
+  },
+  {
+   "texto": "He leído y acepto lo establecido en el Manual de Uso y Condiciones de la plataforma del SECOP II.",
+   "claves": [
+    "LEIDO",
+    "ACEPTO",
+    "ESTABLECIDO",
+    "MANUAL",
+    "USO",
+    "CONDICIONES",
+    "PLATAFORMA",
+    "SECOP"
+   ]
+  },
+  {
+   "texto": "Me comprometo a cumplir todos los ítems relacionados con el “Formulario 1 – Presupuesto oficial” en caso de resultar adjudicatario.",
+   "claves": [
+    "COMPROMETO",
+    "CUMPLIR",
+    "TODOS",
+    "ITEMS",
+    "RELACIONADOS",
+    "FORMULARIO",
+    "PRESUPUESTO",
+    "OFICIAL",
+    "CASO",
+    "RESULTAR",
+    "ADJUDICATARIO"
+   ]
+  }
+ ],
+ "interventoria_social": [
+  {
+   "texto": "Estoy autorizado para suscribir y presentar la oferta y firmar el contrato si resulto adjudicatario del Proceso de Contratación de la referencia.",
+   "claves": [
+    "ESTOY",
+    "AUTORIZADO",
+    "SUSCRIBIR",
+    "PRESENTAR",
+    "OFERTA",
+    "FIRMAR",
+    "CONTRATO",
+    "RESULTO",
+    "ADJUDICATARIO",
+    "PROCESO",
+    "CONTRATACION",
+    "REFERENCIA"
+   ]
+  },
+  {
+   "texto": "En caso de que la oferta me sea adjudicada suscribiré el contrato objeto del Proceso de Contratación en la fecha prevista para el efecto en el Cronograma contenido en los Documentos del Proceso.",
+   "claves": [
+    "CASO",
+    "OFERTA",
+    "SEA",
+    "ADJUDICADA",
+    "SUSCRIBIRE",
+    "CONTRATO",
+    "OBJETO",
+    "PROCESO",
+    "CONTRATACION",
+    "FECHA",
+    "PREVISTA",
+    "EFECTO",
+    "CRONOGRAMA",
+    "CONTENIDO",
+    "DOCUMENTOS",
+    "PROCESO"
+   ]
+  },
+  {
+   "texto": "Conozco los Documentos del Proceso, incluyendo Adendas y acepto los requisitos en ellos contenidos.",
+   "claves": [
+    "CONOZCO",
+    "DOCUMENTOS",
+    "PROCESO",
+    "INCLUYENDO",
+    "ADENDAS",
+    "ACEPTO",
+    "REQUISITOS",
+    "ELLOS",
+    "CONTENIDOS"
+   ]
+  },
+  {
+   "texto": "Dentro de los documentos presentados a la Entidad conozco los ítems, la descripción, las unidades y cantidades establecidas en el Formulario 1 – Propuesta económica.",
+   "claves": [
+    "DENTRO",
+    "DOCUMENTOS",
+    "PRESENTADOS",
+    "ENTIDAD",
+    "CONOZCO",
+    "ITEMS",
+    "DESCRIPCION",
+    "UNIDADES",
+    "CANTIDADES",
+    "ESTABLECIDAS",
+    "FORMULARIO",
+    "PROPUESTA",
+    "ECONOMICA"
+   ]
+  },
+  {
+   "texto": "Conozco las leyes de la República de Colombia que rigen el Proceso de Contratación.",
+   "claves": [
+    "CONOZCO",
+    "LEYES",
+    "REPUBLICA",
+    "COLOMBIA",
+    "RIGEN",
+    "PROCESO",
+    "CONTRATACION"
+   ]
+  },
+  {
+   "texto": "Conozco las especificaciones técnicas y el alcance de la obra objeto de interventoría, así como las disposiciones establecidas en el “Anexo 1 – Anexo Técnico”.",
+   "claves": [
+    "CONOZCO",
+    "ESPECIFICACIONES",
+    "TECNICAS",
+    "ALCANCE",
+    "OBRA",
+    "OBJETO",
+    "INTERVENTORIA",
+    "ASI",
+    "DISPOSICIONES",
+    "ESTABLECIDAS",
+    "ANEXO",
+    "ANEXO",
+    "TECNICO"
+   ]
+  },
+  {
+   "texto": "Conozco el sitio donde se ejecutará el contrato y asumo los Riesgos previsibles inherentes al mismo, así como aquellos asignados en el Pliego de Condiciones.",
+   "claves": [
+    "CONOZCO",
+    "SITIO",
+    "DONDE",
+    "EJECUTARA",
+    "CONTRATO",
+    "ASUMO",
+    "RIESGOS",
+    "PREVISIBLES",
+    "INHERENTES",
+    "MISMO",
+    "ASI",
+    "AQUELLOS",
+    "ASIGNADOS",
+    "PLIEGO",
+    "CONDICIONES"
+   ]
+  },
+  {
+   "texto": "La información contenida en todos los documentos de la oferta es veraz y asumo total responsabilidad frente a la Entidad cuando los datos suministrados sean falsos o contrarios a la realidad, sin perjuicio de lo dispuesto en el Código Penal y demás normas concordantes.",
+   "claves": [
+    "INFORMACION",
+    "CONTENIDA",
+    "TODOS",
+    "DOCUMENTOS",
+    "OFERTA",
+    "VERAZ",
+    "ASUMO",
+    "TOTAL",
+    "RESPONSABILIDAD",
+    "FRENTE",
+    "ENTIDAD",
+    "DATOS",
+    "SUMINISTRADOS",
+    "SEAN",
+    "FALSOS",
+    "CONTRARIOS",
+    "REALIDAD",
+    "PERJUICIO",
+    "DISPUESTO",
+    "CODIGO",
+    "PENAL",
+    "DEMAS",
+    "NORMAS",
+    "CONCORDANTES"
+   ]
+  },
+  {
+   "texto": "La información diligenciada en el “Formato 8 - Aceptación y cumplimiento de la formación académica y la experiencia del Personal Clave Evaluable” es real y verificable con los soportes de formación académica y experiencia que entregaré a la Entidad en el momento dispuesto en el numeral 9.1 del Docum",
+   "claves": [
+    "INFORMACION",
+    "DILIGENCIADA",
+    "FORMATO",
+    "ACEPTACION",
+    "CUMPLIMIENTO",
+    "FORMACION",
+    "ACADEMICA",
+    "EXPERIENCIA",
+    "PERSONAL",
+    "CLAVE",
+    "EVALUABLE",
+    "REAL",
+    "VERIFICABLE",
+    "SOPORTES",
+    "FORMACION",
+    "ACADEMICA",
+    "EXPERIENCIA",
+    "ENTREGARE",
+    "ENTIDAD",
+    "MOMENTO",
+    "DISPUESTO",
+    "NUMERAL",
+    "DOCUMENTO",
+    "BASE"
+   ]
+  },
+  {
+   "texto": "En el caso que la Entidad encuentre que la información del Formato no es verídica, soy consciente de las sanciones penales en que puedo incurrir, tales como falsedad en documento público.",
+   "claves": [
+    "CASO",
+    "ENTIDAD",
+    "ENCUENTRE",
+    "INFORMACION",
+    "FORMATO",
+    "VERIDICA",
+    "SOY",
+    "CONSCIENTE",
+    "SANCIONES",
+    "PENALES",
+    "PUEDO",
+    "INCURRIR",
+    "TALES",
+    "FALSEDAD",
+    "DOCUMENTO",
+    "PUBLICO"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento (se exceptúan las sociedades anónimas abiertas), ni yo nos hallamos incursos en causal alguna de Conflicto de Interés, inhabilidad o incompatibilidad de las señaladas en la Constitución y en la ley.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "EXCEPTUAN",
+    "SOCIEDADES",
+    "ANONIMAS",
+    "ABIERTAS",
+    "NOS",
+    "HALLAMOS",
+    "INCURSOS",
+    "CAUSAL",
+    "ALGUNA",
+    "CONFLICTO",
+    "INTERES",
+    "INHABILIDAD",
+    "INCOMPATIBILIDAD",
+    "SENALADAS",
+    "CONSTITUCION",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento (se exceptúan las sociedades anónimas abiertas), ni yo nos encontramos en ninguno de los eventos de prohibiciones especiales para contratar, ni nos hallamos incursos en ninguno de los conflictos de interese",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "EXCEPTUAN",
+    "SOCIEDADES",
+    "ANONIMAS",
+    "ABIERTAS",
+    "NOS",
+    "ENCONTRAMOS",
+    "NINGUNO",
+    "EVENTOS",
+    "PROHIBICIONES",
+    "ESPECIALES",
+    "CONTRATAR",
+    "NOS",
+    "HALLAMOS",
+    "INCURSOS",
+    "NINGUNO",
+    "CONFLICTOS",
+    "INTERESES",
+    "PARTICIPAR",
+    "ESTABLECIDOS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "En caso de conocer que los integrantes del Proponente Plural, los socios de la persona jurídica que represento (se exceptúan las sociedades anónimas abiertas) o yo nos encontremos incursos en alguna inhabilidad o Conflicto de Interés sobreviniente, contemplados en la normativa vigente, nos compromet",
+   "claves": [
+    "CASO",
+    "CONOCER",
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "EXCEPTUAN",
+    "SOCIEDADES",
+    "ANONIMAS",
+    "ABIERTAS",
+    "NOS",
+    "ENCONTREMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "INHABILIDAD",
+    "CONFLICTO",
+    "INTERES",
+    "SOBREVINIENTE",
+    "CONTEMPLADOS",
+    "NORMATIVA",
+    "VIGENTE",
+    "NOS",
+    "COMPROMETEMOS",
+    "INFORMAR",
+    "MANERA",
+    "INMEDIATA",
+    "TAL",
+    "CIRCUNSTANCIA",
+    "ENTIDAD",
+    "TOME",
+    "MEDIDAS",
+    "PERTINENTES"
+   ]
+  },
+  {
+   "texto": "Este compromiso lo adquirimos en total independencia de la etapa en que se encuentre el Proceso de Contratación (precontractual, contractual y/o post contractual).",
+   "claves": [
+    "COMPROMISO",
+    "ADQUIRIMOS",
+    "TOTAL",
+    "INDEPENDENCIA",
+    "ETAPA",
+    "ENCUENTRE",
+    "PROCESO",
+    "CONTRATACION",
+    "PRECONTRACTUAL",
+    "CONTRACTUAL",
+    "POST",
+    "CONTRACTUAL"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento (se exceptúan las sociedades anónimas abiertas), ni yo estamos incursos en la situación descrita en el numeral 1° del artículo 38 de la Ley 1116 de 2006.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "EXCEPTUAN",
+    "SOCIEDADES",
+    "ANONIMAS",
+    "ABIERTAS",
+    "ESTAMOS",
+    "INCURSOS",
+    "SITUACION",
+    "DESCRITA",
+    "NUMERAL",
+    "ARTICULO",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Conozco el Anexo 4 denominado “Pacto de Transparencia” relacionado en el Pliego de Condiciones y me comprometo a darle estricto cumplimiento.",
+   "claves": [
+    "CONOZCO",
+    "ANEXO",
+    "DENOMINADO",
+    "PACTO",
+    "TRANSPARENCIA",
+    "RELACIONADO",
+    "PLIEGO",
+    "CONDICIONES",
+    "COMPROMETO",
+    "DARLE",
+    "ESTRICTO",
+    "CUMPLIMIENTO"
+   ]
+  },
+  {
+   "texto": "Los recursos destinados al proyecto son de origen lícito y no hemos participado en actividades delictivas, así como no hemos recibido recursos o facilitado actividades contrarias a la ley.",
+   "claves": [
+    "RECURSOS",
+    "DESTINADOS",
+    "PROYECTO",
+    "SON",
+    "ORIGEN",
+    "LICITO",
+    "HEMOS",
+    "PARTICIPADO",
+    "ACTIVIDADES",
+    "DELICTIVAS",
+    "ASI",
+    "HEMOS",
+    "RECIBIDO",
+    "RECURSOS",
+    "FACILITADO",
+    "ACTIVIDADES",
+    "CONTRARIAS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Al momento de la presentación de la oferta ni mis representados ni yo nos encontramos incursos en alguna de las causales de rechazo señaladas en la sección 1.15 del Documento Base.",
+   "claves": [
+    "MOMENTO",
+    "PRESENTACION",
+    "OFERTA",
+    "MIS",
+    "REPRESENTADOS",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "CAUSALES",
+    "RECHAZO",
+    "SENALADAS",
+    "SECCION",
+    "DOCUMENTO",
+    "BASE"
+   ]
+  },
+  {
+   "texto": "Si se adjudica el contrato me comprometo a constituir las Garantías requeridas y a suscribir estas y aquel dentro de los términos señalados para ello.",
+   "claves": [
+    "ADJUDICA",
+    "CONTRATO",
+    "COMPROMETO",
+    "CONSTITUIR",
+    "GARANTIAS",
+    "REQUERIDAS",
+    "SUSCRIBIR",
+    "AQUEL",
+    "DENTRO",
+    "TERMINOS",
+    "SENALADOS",
+    "ELLO"
+   ]
+  },
+  {
+   "texto": "La oferta está constituida por todos los Formatos, Formularios, Anexos y Matrices requeridos en los Documentos del Proceso aplicables al Proponente y documentos de soporte presentados.",
+   "claves": [
+    "OFERTA",
+    "CONSTITUIDA",
+    "TODOS",
+    "FORMATOS",
+    "FORMULARIOS",
+    "ANEXOS",
+    "MATRICES",
+    "REQUERIDOS",
+    "DOCUMENTOS",
+    "PROCESO",
+    "APLICABLES",
+    "PROPONENTE",
+    "DOCUMENTOS",
+    "SOPORTE",
+    "PRESENTADOS"
+   ]
+  },
+  {
+   "texto": "La oferta fue elaborada teniendo en cuenta todos los gastos, costos, derechos, impuestos, tasas y demás contribuciones que se causen con ocasión de su presentación y suscripción del contrato y que en consecuencia no haré reclamos con ocasión del pago de tales gastos.",
+   "claves": [
+    "OFERTA",
+    "FUE",
+    "ELABORADA",
+    "TENIENDO",
+    "CUENTA",
+    "TODOS",
+    "GASTOS",
+    "COSTOS",
+    "DERECHOS",
+    "IMPUESTOS",
+    "TASAS",
+    "DEMAS",
+    "CONTRIBUCIONES",
+    "CAUSEN",
+    "OCASION",
+    "PRESENTACION",
+    "SUSCRIPCION",
+    "CONTRATO",
+    "CONSECUENCIA",
+    "HARE",
+    "RECLAMOS",
+    "OCASION",
+    "PAGO",
+    "TALES",
+    "GASTOS"
+   ]
+  },
+  {
+   "texto": "Declaro que me informaré de todas las etapas y decisiones del Proceso de Contratación, consultando el Sistema Electrónico para la Contratación Pública (SECOP);",
+   "claves": [
+    "DECLARO",
+    "INFORMARE",
+    "TODAS",
+    "ETAPAS",
+    "DECISIONES",
+    "PROCESO",
+    "CONTRATACION",
+    "CONSULTANDO",
+    "SISTEMA",
+    "ELECTRONICO",
+    "CONTRATACION",
+    "PUBLICA",
+    "SECOP"
+   ]
+  },
+  {
+   "texto": "y en caso de que me deban comunicar o notificar alguna decisión, autorizo a la Entidad para que lo haga al correo electrónico indicado al final de este documento.",
+   "claves": [
+    "CASO",
+    "DEBAN",
+    "COMUNICAR",
+    "NOTIFICAR",
+    "ALGUNA",
+    "DECISION",
+    "AUTORIZO",
+    "ENTIDAD",
+    "HAGA",
+    "CORREO",
+    "ELECTRONICO",
+    "INDICADO",
+    "FINAL",
+    "DOCUMENTO"
+   ]
+  },
+  {
+   "texto": "He leído y acepto lo establecido en el Manual de Uso y Condiciones del SECOP.",
+   "claves": [
+    "LEIDO",
+    "ACEPTO",
+    "ESTABLECIDO",
+    "MANUAL",
+    "USO",
+    "CONDICIONES",
+    "SECOP"
+   ]
+  },
+  {
+   "texto": "Me comprometo a cumplir todos los ítems relacionados con el “Formulario 1 – Formulario oferta económica”, en caso de resultar adjudicatario.",
+   "claves": [
+    "COMPROMETO",
+    "CUMPLIR",
+    "TODOS",
+    "ITEMS",
+    "RELACIONADOS",
+    "FORMULARIO",
+    "FORMULARIO",
+    "OFERTA",
+    "ECONOMICA",
+    "CASO",
+    "RESULTAR",
+    "ADJUDICATARIO"
+   ]
+  }
+ ],
+ "licitacion_agua": [
+  {
+   "texto": "Estoy autorizado para suscribir y presentar la oferta y para firmar el Contrato si resulto adjudicatario del Proceso de Contratación de la referencia.",
+   "claves": [
+    "ESTOY",
+    "AUTORIZADO",
+    "SUSCRIBIR",
+    "PRESENTAR",
+    "OFERTA",
+    "FIRMAR",
+    "CONTRATO",
+    "RESULTO",
+    "ADJUDICATARIO",
+    "PROCESO",
+    "CONTRATACION",
+    "REFERENCIA"
+   ]
+  },
+  {
+   "texto": "En caso de que la oferta le sea adjudicada al Proponente suscribiré el Contrato objeto del Proceso de Contratación en la fecha prevista para el efecto en el Cronograma contenido en los documentos del proceso.",
+   "claves": [
+    "CASO",
+    "OFERTA",
+    "SEA",
+    "ADJUDICADA",
+    "PROPONENTE",
+    "SUSCRIBIRE",
+    "CONTRATO",
+    "OBJETO",
+    "PROCESO",
+    "CONTRATACION",
+    "FECHA",
+    "PREVISTA",
+    "EFECTO",
+    "CRONOGRAMA",
+    "CONTENIDO",
+    "DOCUMENTOS",
+    "PROCESO"
+   ]
+  },
+  {
+   "texto": "Conozco los documentos del proceso, incluyendo adendas y acepto los requisitos en ellos contenidos.",
+   "claves": [
+    "CONOZCO",
+    "DOCUMENTOS",
+    "PROCESO",
+    "INCLUYENDO",
+    "ADENDAS",
+    "ACEPTO",
+    "REQUISITOS",
+    "ELLOS",
+    "CONTENIDOS"
+   ]
+  },
+  {
+   "texto": "Dentro de los documentos presentados a la Entidad conozco los ítems, la descripción, las unidades y cantidades establecidas en el Formulario 1 – Propuesta económica.",
+   "claves": [
+    "DENTRO",
+    "DOCUMENTOS",
+    "PRESENTADOS",
+    "ENTIDAD",
+    "CONOZCO",
+    "ITEMS",
+    "DESCRIPCION",
+    "UNIDADES",
+    "CANTIDADES",
+    "ESTABLECIDAS",
+    "FORMULARIO",
+    "PROPUESTA",
+    "ECONOMICA"
+   ]
+  },
+  {
+   "texto": "Conozco las leyes de la República de Colombia que rigen el Proceso de Contratación.",
+   "claves": [
+    "CONOZCO",
+    "LEYES",
+    "REPUBLICA",
+    "COLOMBIA",
+    "RIGEN",
+    "PROCESO",
+    "CONTRATACION"
+   ]
+  },
+  {
+   "texto": "Tengo conocimiento acerca de las características y condiciones del sitio de ejecución del proyecto y asumo los Riesgos previsibles inherentes al mismo, así como aquellos asignados en el Pliego de Condiciones.",
+   "claves": [
+    "TENGO",
+    "CONOCIMIENTO",
+    "ACERCA",
+    "CARACTERISTICAS",
+    "CONDICIONES",
+    "SITIO",
+    "EJECUCION",
+    "PROYECTO",
+    "ASUMO",
+    "RIESGOS",
+    "PREVISIBLES",
+    "INHERENTES",
+    "MISMO",
+    "ASI",
+    "AQUELLOS",
+    "ASIGNADOS",
+    "PLIEGO",
+    "CONDICIONES"
+   ]
+  },
+  {
+   "texto": "Conozco el sitio donde se ejecutará el contrato y asumo los riesgos previsibles inherentes al mismo, así como aquellos asignados en el pliego de condiciones.",
+   "claves": [
+    "CONOZCO",
+    "SITIO",
+    "DONDE",
+    "EJECUTARA",
+    "CONTRATO",
+    "ASUMO",
+    "RIESGOS",
+    "PREVISIBLES",
+    "INHERENTES",
+    "MISMO",
+    "ASI",
+    "AQUELLOS",
+    "ASIGNADOS",
+    "PLIEGO",
+    "CONDICIONES"
+   ]
+  },
+  {
+   "texto": "La información contenida en todos los documentos de la oferta es veraz y asumo total responsabilidad frente a la Entidad cuando los datos suministrados sean falsos o contrarios a la realidad, sin perjuicio de lo dispuesto en el Código Penal y demás normas concordantes.",
+   "claves": [
+    "INFORMACION",
+    "CONTENIDA",
+    "TODOS",
+    "DOCUMENTOS",
+    "OFERTA",
+    "VERAZ",
+    "ASUMO",
+    "TOTAL",
+    "RESPONSABILIDAD",
+    "FRENTE",
+    "ENTIDAD",
+    "DATOS",
+    "SUMINISTRADOS",
+    "SEAN",
+    "FALSOS",
+    "CONTRARIOS",
+    "REALIDAD",
+    "PERJUICIO",
+    "DISPUESTO",
+    "CODIGO",
+    "PENAL",
+    "DEMAS",
+    "NORMAS",
+    "CONCORDANTES"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento, ni yo nos hallamos incursos en causal alguna de conflicto de interés, inhabilidad o incompatibilidad de las señaladas en la Constitución y en la ley.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "HALLAMOS",
+    "INCURSOS",
+    "CAUSAL",
+    "ALGUNA",
+    "CONFLICTO",
+    "INTERES",
+    "INHABILIDAD",
+    "INCOMPATIBILIDAD",
+    "SENALADAS",
+    "CONSTITUCION",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento, ni yo nos encontramos en ninguno de los eventos de prohibiciones especiales para contratar, ni estamos incursos en ninguno de los conflictos de intereses para participar establecidos en la ley.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "ENCONTRAMOS",
+    "NINGUNO",
+    "EVENTOS",
+    "PROHIBICIONES",
+    "ESPECIALES",
+    "CONTRATAR",
+    "ESTAMOS",
+    "INCURSOS",
+    "NINGUNO",
+    "CONFLICTOS",
+    "INTERESES",
+    "PARTICIPAR",
+    "ESTABLECIDOS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "En caso de llegar a conocer que los integrantes del Proponente Plural, los socios de la persona jurídica que represento o yo nos encontramos incursos en alguna inhabilidad, incompatibilidad o conflicto de interés sobreviniente, contemplados en la normativa vigente, nos comprometemos a informar de ma",
+   "claves": [
+    "CASO",
+    "LLEGAR",
+    "CONOCER",
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "INHABILIDAD",
+    "INCOMPATIBILIDAD",
+    "CONFLICTO",
+    "INTERES",
+    "SOBREVINIENTE",
+    "CONTEMPLADOS",
+    "NORMATIVA",
+    "VIGENTE",
+    "NOS",
+    "COMPROMETEMOS",
+    "INFORMAR",
+    "MANERA",
+    "INMEDIATA",
+    "TAL",
+    "CIRCUNSTANCIA",
+    "ENTIDAD",
+    "TOME",
+    "MEDIDAS",
+    "PERTINENTES"
+   ]
+  },
+  {
+   "texto": "Este compromiso lo adquirimos con total independencia de la etapa en que se encuentre el Proceso de Contratación (precontractual, contractual y/o post contractual).",
+   "claves": [
+    "COMPROMISO",
+    "ADQUIRIMOS",
+    "TOTAL",
+    "INDEPENDENCIA",
+    "ETAPA",
+    "ENCUENTRE",
+    "PROCESO",
+    "CONTRATACION",
+    "PRECONTRACTUAL",
+    "CONTRACTUAL",
+    "POST",
+    "CONTRACTUAL"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento, ni yo estamos incursos en la situación descrita en el numeral 1 del artículo 38 de la Ley 1116 de 2006.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "ESTAMOS",
+    "INCURSOS",
+    "SITUACION",
+    "DESCRITA",
+    "NUMERAL",
+    "ARTICULO",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Conozco el Anexo denominado “Pacto de Transparencia” relacionado en el Pliego de Condiciones y me comprometo a darle estricto cumplimiento.",
+   "claves": [
+    "CONOZCO",
+    "ANEXO",
+    "DENOMINADO",
+    "PACTO",
+    "TRANSPARENCIA",
+    "RELACIONADO",
+    "PLIEGO",
+    "CONDICIONES",
+    "COMPROMETO",
+    "DARLE",
+    "ESTRICTO",
+    "CUMPLIMIENTO"
+   ]
+  },
+  {
+   "texto": "Los recursos destinados al proyecto son de origen lícito y no hemos participado en actividades delictivas, así como no hemos recibido recursos o facilitado actividades contrarias a la ley.",
+   "claves": [
+    "RECURSOS",
+    "DESTINADOS",
+    "PROYECTO",
+    "SON",
+    "ORIGEN",
+    "LICITO",
+    "HEMOS",
+    "PARTICIPADO",
+    "ACTIVIDADES",
+    "DELICTIVAS",
+    "ASI",
+    "HEMOS",
+    "RECIBIDO",
+    "RECURSOS",
+    "FACILITADO",
+    "ACTIVIDADES",
+    "CONTRARIAS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Al momento de la presentación de la oferta, ni mis representados ni yo nos encontramos incursos en alguna de las causales de rechazo señaladas en la sección 1.15 del Documento Base.",
+   "claves": [
+    "MOMENTO",
+    "PRESENTACION",
+    "OFERTA",
+    "MIS",
+    "REPRESENTADOS",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "CAUSALES",
+    "RECHAZO",
+    "SENALADAS",
+    "SECCION",
+    "DOCUMENTO",
+    "BASE"
+   ]
+  },
+  {
+   "texto": "Si se adjudica el Contrato me comprometo a constituir las Garantías requeridas dentro del término señalado para ello.",
+   "claves": [
+    "ADJUDICA",
+    "CONTRATO",
+    "COMPROMETO",
+    "CONSTITUIR",
+    "GARANTIAS",
+    "REQUERIDAS",
+    "DENTRO",
+    "TERMINO",
+    "SENALADO",
+    "ELLO"
+   ]
+  },
+  {
+   "texto": "La oferta está constituida por todos los Formatos, Formularios, Anexos y Matrices requeridos en los Documentos del Proceso aplicables al Proponente y documentos de soporte presentados.",
+   "claves": [
+    "OFERTA",
+    "CONSTITUIDA",
+    "TODOS",
+    "FORMATOS",
+    "FORMULARIOS",
+    "ANEXOS",
+    "MATRICES",
+    "REQUERIDOS",
+    "DOCUMENTOS",
+    "PROCESO",
+    "APLICABLES",
+    "PROPONENTE",
+    "DOCUMENTOS",
+    "SOPORTE",
+    "PRESENTADOS"
+   ]
+  },
+  {
+   "texto": "La oferta fue elaborada teniendo en cuenta todos los gastos, costos, derechos, impuestos, tasas y demás contribuciones que se causen con ocasión de su presentación y suscripción del Contrato y el lugar de su ejecución, por lo que no presentaré reclamos con ocasión del pago de tales gastos.",
+   "claves": [
+    "OFERTA",
+    "FUE",
+    "ELABORADA",
+    "TENIENDO",
+    "CUENTA",
+    "TODOS",
+    "GASTOS",
+    "COSTOS",
+    "DERECHOS",
+    "IMPUESTOS",
+    "TASAS",
+    "DEMAS",
+    "CONTRIBUCIONES",
+    "CAUSEN",
+    "OCASION",
+    "PRESENTACION",
+    "SUSCRIPCION",
+    "CONTRATO",
+    "LUGAR",
+    "EJECUCION",
+    "PRESENTARE",
+    "RECLAMOS",
+    "OCASION",
+    "PAGO",
+    "TALES",
+    "GASTOS"
+   ]
+  },
+  {
+   "texto": "Declaro que me informaré de todas las etapas y decisiones del Proceso de Contratación, consultando el Sistema Electrónico Para la Contratación Pública y en caso de que me deban comunicar o notificar alguna decisión, autorizo a la Entidad para que lo haga al correo electrónico indicado al final de es",
+   "claves": [
+    "DECLARO",
+    "INFORMARE",
+    "TODAS",
+    "ETAPAS",
+    "DECISIONES",
+    "PROCESO",
+    "CONTRATACION",
+    "CONSULTANDO",
+    "SISTEMA",
+    "ELECTRONICO",
+    "CONTRATACION",
+    "PUBLICA",
+    "CASO",
+    "DEBAN",
+    "COMUNICAR",
+    "NOTIFICAR",
+    "ALGUNA",
+    "DECISION",
+    "AUTORIZO",
+    "ENTIDAD",
+    "HAGA",
+    "CORREO",
+    "ELECTRONICO",
+    "INDICADO",
+    "FINAL",
+    "DOCUMENTO"
+   ]
+  },
+  {
+   "texto": "Me comprometo a cumplir todos los ítems relacionados con el “Formulario 1 - Presupuesto oficial” en caso de resultar adjudicatario.",
+   "claves": [
+    "COMPROMETO",
+    "CUMPLIR",
+    "TODOS",
+    "ITEMS",
+    "RELACIONADOS",
+    "FORMULARIO",
+    "PRESUPUESTO",
+    "OFICIAL",
+    "CASO",
+    "RESULTAR",
+    "ADJUDICATARIO"
+   ]
+  }
+ ],
+ "menor_cuantia_transporte": [
+  {
+   "texto": "Estoy autorizado para suscribir y presentar la oferta y para suscribir el contrato si resulto adjudicatario del proceso de contratación de la referencia.",
+   "claves": [
+    "ESTOY",
+    "AUTORIZADO",
+    "SUSCRIBIR",
+    "PRESENTAR",
+    "OFERTA",
+    "SUSCRIBIR",
+    "CONTRATO",
+    "RESULTO",
+    "ADJUDICATARIO",
+    "PROCESO",
+    "CONTRATACION",
+    "REFERENCIA"
+   ]
+  },
+  {
+   "texto": "En caso de que la oferta me sea adjudicada suscribiré el contrato objeto del proceso de contratación en la fecha prevista para el efecto en el cronograma contenido en los documentos del proceso.",
+   "claves": [
+    "CASO",
+    "OFERTA",
+    "SEA",
+    "ADJUDICADA",
+    "SUSCRIBIRE",
+    "CONTRATO",
+    "OBJETO",
+    "PROCESO",
+    "CONTRATACION",
+    "FECHA",
+    "PREVISTA",
+    "EFECTO",
+    "CRONOGRAMA",
+    "CONTENIDO",
+    "DOCUMENTOS",
+    "PROCESO"
+   ]
+  },
+  {
+   "texto": "Conozco los documentos del proceso, incluyendo adendas, y acepto los requisitos en ellos contenidos.",
+   "claves": [
+    "CONOZCO",
+    "DOCUMENTOS",
+    "PROCESO",
+    "INCLUYENDO",
+    "ADENDAS",
+    "ACEPTO",
+    "REQUISITOS",
+    "ELLOS",
+    "CONTENIDOS"
+   ]
+  },
+  {
+   "texto": "Dentro de los documentos presentados a la entidad conozco los ítems, la descripción, las unidades y cantidades establecidas en el Formulario",
+   "claves": [
+    "DENTRO",
+    "DOCUMENTOS",
+    "PRESENTADOS",
+    "ENTIDAD",
+    "CONOZCO",
+    "ITEMS",
+    "DESCRIPCION",
+    "UNIDADES",
+    "CANTIDADES",
+    "ESTABLECIDAS",
+    "FORMULARIO"
+   ]
+  },
+  {
+   "texto": "Conozco las leyes de la República de Colombia que rigen el proceso de contratación.",
+   "claves": [
+    "CONOZCO",
+    "LEYES",
+    "REPUBLICA",
+    "COLOMBIA",
+    "RIGEN",
+    "PROCESO",
+    "CONTRATACION"
+   ]
+  },
+  {
+   "texto": "Tengo conocimiento acerca de las características y condiciones del sitio de ejecución del proyecto, por lo que asumo la responsabilidad de su revisión con la presentación de esta oferta.",
+   "claves": [
+    "TENGO",
+    "CONOCIMIENTO",
+    "ACERCA",
+    "CARACTERISTICAS",
+    "CONDICIONES",
+    "SITIO",
+    "EJECUCION",
+    "PROYECTO",
+    "ASUMO",
+    "RESPONSABILIDAD",
+    "REVISION",
+    "PRESENTACION",
+    "OFERTA"
+   ]
+  },
+  {
+   "texto": "Conozco el sitio donde se ejecutará el contrato y asumo los riesgos previsibles inherentes al mismo, así como aquellos asignados en el pliego de condiciones.",
+   "claves": [
+    "CONOZCO",
+    "SITIO",
+    "DONDE",
+    "EJECUTARA",
+    "CONTRATO",
+    "ASUMO",
+    "RIESGOS",
+    "PREVISIBLES",
+    "INHERENTES",
+    "MISMO",
+    "ASI",
+    "AQUELLOS",
+    "ASIGNADOS",
+    "PLIEGO",
+    "CONDICIONES"
+   ]
+  },
+  {
+   "texto": "La información contenida en todos los documentos de la oferta es veraz y asumo total responsabilidad frente a la entidad cuando los datos suministrados sean falsos o contrarios a la realidad, sin perjuicio de lo dispuesto en el Código Penal y demás normas concordantes.",
+   "claves": [
+    "INFORMACION",
+    "CONTENIDA",
+    "TODOS",
+    "DOCUMENTOS",
+    "OFERTA",
+    "VERAZ",
+    "ASUMO",
+    "TOTAL",
+    "RESPONSABILIDAD",
+    "FRENTE",
+    "ENTIDAD",
+    "DATOS",
+    "SUMINISTRADOS",
+    "SEAN",
+    "FALSOS",
+    "CONTRARIOS",
+    "REALIDAD",
+    "PERJUICIO",
+    "DISPUESTO",
+    "CODIGO",
+    "PENAL",
+    "DEMAS",
+    "NORMAS",
+    "CONCORDANTES"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del proponente plural, ni los socios de la persona jurídica que represento, ni yo nos hallamos incursos en causal alguna de conflicto de interés, inhabilidad o incompatibilidad de las señaladas en la Constitución y en la Ley.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "HALLAMOS",
+    "INCURSOS",
+    "CAUSAL",
+    "ALGUNA",
+    "CONFLICTO",
+    "INTERES",
+    "INHABILIDAD",
+    "INCOMPATIBILIDAD",
+    "SENALADAS",
+    "CONSTITUCION",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del proponente plural, ni los socios de la persona jurídica que represento, ni yo nos encontramos en ninguno de los eventos de prohibiciones especiales para contratar, ni nos encontramos incursos en ninguno de los conflictos de intereses para participar establecidos en la ley.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "ENCONTRAMOS",
+    "NINGUNO",
+    "EVENTOS",
+    "PROHIBICIONES",
+    "ESPECIALES",
+    "CONTRATAR",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "NINGUNO",
+    "CONFLICTOS",
+    "INTERESES",
+    "PARTICIPAR",
+    "ESTABLECIDOS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "En caso de llegar a conocer que los integrantes del proponente plural, los socios de la persona jurídica que representó o yo nos encontramos incursos en alguna inhabilidad o conflicto de interés sobreviniente, contemplados en la normativa vigente, nos comprometemos a informar de manera inmediata tal",
+   "claves": [
+    "CASO",
+    "LLEGAR",
+    "CONOCER",
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "INHABILIDAD",
+    "CONFLICTO",
+    "INTERES",
+    "SOBREVINIENTE",
+    "CONTEMPLADOS",
+    "NORMATIVA",
+    "VIGENTE",
+    "NOS",
+    "COMPROMETEMOS",
+    "INFORMAR",
+    "MANERA",
+    "INMEDIATA",
+    "TAL",
+    "CIRCUNSTANCIA",
+    "ENTIDAD",
+    "TOME",
+    "MEDIDAS",
+    "PERTINENTES"
+   ]
+  },
+  {
+   "texto": "Este compromiso lo adquirimos en total independencia de la etapa procesal en que se encuentre el proceso de contratación (precontractual, contractual y/o post contractual).",
+   "claves": [
+    "COMPROMISO",
+    "ADQUIRIMOS",
+    "TOTAL",
+    "INDEPENDENCIA",
+    "ETAPA",
+    "PROCESAL",
+    "ENCUENTRE",
+    "PROCESO",
+    "CONTRATACION",
+    "PRECONTRACTUAL",
+    "CONTRACTUAL",
+    "POST",
+    "CONTRACTUAL"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del proponente plural, ni los socios de la persona jurídica que represento, ni yo estamos incursos en la situación descrita en el numeral 1del artículo 38 de la ley 1116 de 2006.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "ESTAMOS",
+    "INCURSOS",
+    "SITUACION",
+    "DESCRITA",
+    "NUMERAL",
+    "ARTICULO",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Conozco el Anexo denominado “pacto de transparencia” relacionado en el pliego de condiciones y me comprometo a darle estricto cumplimiento.",
+   "claves": [
+    "CONOZCO",
+    "ANEXO",
+    "DENOMINADO",
+    "PACTO",
+    "TRANSPARENCIA",
+    "RELACIONADO",
+    "PLIEGO",
+    "CONDICIONES",
+    "COMPROMETO",
+    "DARLE",
+    "ESTRICTO",
+    "CUMPLIMIENTO"
+   ]
+  },
+  {
+   "texto": "Los recursos destinados al proyecto son de origen lícito y no hemos participado en actividades delictivas, así como no hemos recibido recursos o facilitado actividades contrarias a la ley.",
+   "claves": [
+    "RECURSOS",
+    "DESTINADOS",
+    "PROYECTO",
+    "SON",
+    "ORIGEN",
+    "LICITO",
+    "HEMOS",
+    "PARTICIPADO",
+    "ACTIVIDADES",
+    "DELICTIVAS",
+    "ASI",
+    "HEMOS",
+    "RECIBIDO",
+    "RECURSOS",
+    "FACILITADO",
+    "ACTIVIDADES",
+    "CONTRARIAS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Al momento de la presentación de la oferta, ni mis representados ni yo nos encontramos incursos en alguna de las causales de rechazo señaladas en la sección 1.15 del Documento Base.",
+   "claves": [
+    "MOMENTO",
+    "PRESENTACION",
+    "OFERTA",
+    "MIS",
+    "REPRESENTADOS",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "CAUSALES",
+    "RECHAZO",
+    "SENALADAS",
+    "SECCION",
+    "DOCUMENTO",
+    "BASE"
+   ]
+  },
+  {
+   "texto": "Si se me adjudica el contrato me comprometo a constituir las garantías requeridas y a suscribir estas y aquel dentro de los términos señalados para ello.",
+   "claves": [
+    "ADJUDICA",
+    "CONTRATO",
+    "COMPROMETO",
+    "CONSTITUIR",
+    "GARANTIAS",
+    "REQUERIDAS",
+    "SUSCRIBIR",
+    "AQUEL",
+    "DENTRO",
+    "TERMINOS",
+    "SENALADOS",
+    "ELLO"
+   ]
+  },
+  {
+   "texto": "La oferta está constituida por todos los Formatos, Formularios, Anexos y Matrices requeridos en los documentos del proceso aplicables al proponente y documentos de soporte presentados.",
+   "claves": [
+    "OFERTA",
+    "CONSTITUIDA",
+    "TODOS",
+    "FORMATOS",
+    "FORMULARIOS",
+    "ANEXOS",
+    "MATRICES",
+    "REQUERIDOS",
+    "DOCUMENTOS",
+    "PROCESO",
+    "APLICABLES",
+    "PROPONENTE",
+    "DOCUMENTOS",
+    "SOPORTE",
+    "PRESENTADOS"
+   ]
+  },
+  {
+   "texto": "La oferta fue elaborada teniendo en cuenta todos los gastos, costos, derechos, impuestos, tasas y demás contribuciones que se causen con ocasión de la presentación de la oferta y suscripción del contrato, en tanto además conozco el lugar donde se ejecutará el contrato, y en consecuencia, no presenta",
+   "claves": [
+    "OFERTA",
+    "FUE",
+    "ELABORADA",
+    "TENIENDO",
+    "CUENTA",
+    "TODOS",
+    "GASTOS",
+    "COSTOS",
+    "DERECHOS",
+    "IMPUESTOS",
+    "TASAS",
+    "DEMAS",
+    "CONTRIBUCIONES",
+    "CAUSEN",
+    "OCASION",
+    "PRESENTACION",
+    "OFERTA",
+    "SUSCRIPCION",
+    "CONTRATO",
+    "TANTO",
+    "ADEMAS",
+    "CONOZCO",
+    "LUGAR",
+    "DONDE",
+    "EJECUTARA",
+    "CONTRATO",
+    "CONSECUENCIA",
+    "PRESENTARE",
+    "RECLAMOS",
+    "OCASION",
+    "PAGO",
+    "TALES",
+    "GASTOS"
+   ]
+  },
+  {
+   "texto": "Declaro que me informaré de todas las etapas y decisiones del proceso de contratación, consultando el Sistema Electrónico Para la Contratación Pública;",
+   "claves": [
+    "DECLARO",
+    "INFORMARE",
+    "TODAS",
+    "ETAPAS",
+    "DECISIONES",
+    "PROCESO",
+    "CONTRATACION",
+    "CONSULTANDO",
+    "SISTEMA",
+    "ELECTRONICO",
+    "CONTRATACION",
+    "PUBLICA"
+   ]
+  },
+  {
+   "texto": "y en caso de que me deban comunicar o notificar alguna decisión, autorizo a la entidad para que lo haga al correo electrónico indicado al final de este documento.",
+   "claves": [
+    "CASO",
+    "DEBAN",
+    "COMUNICAR",
+    "NOTIFICAR",
+    "ALGUNA",
+    "DECISION",
+    "AUTORIZO",
+    "ENTIDAD",
+    "HAGA",
+    "CORREO",
+    "ELECTRONICO",
+    "INDICADO",
+    "FINAL",
+    "DOCUMENTO"
+   ]
+  },
+  {
+   "texto": "Me comprometo a cumplir todos los ítems relacionados con el “Formulario 1 - Presupuesto oficial” en caso de resultar adjudicatario.",
+   "claves": [
+    "COMPROMETO",
+    "CUMPLIR",
+    "TODOS",
+    "ITEMS",
+    "RELACIONADOS",
+    "FORMULARIO",
+    "PRESUPUESTO",
+    "OFICIAL",
+    "CASO",
+    "RESULTAR",
+    "ADJUDICATARIO"
+   ]
+  }
+ ],
+ "minima_cuantia_transporte": [
+  {
+   "texto": "Estoy autorizado para suscribir y presentar la oferta y firmar el contrato si resulto adjudicatario del Proceso de Contratación de la referencia.",
+   "claves": [
+    "ESTOY",
+    "AUTORIZADO",
+    "SUSCRIBIR",
+    "PRESENTAR",
+    "OFERTA",
+    "FIRMAR",
+    "CONTRATO",
+    "RESULTO",
+    "ADJUDICATARIO",
+    "PROCESO",
+    "CONTRATACION",
+    "REFERENCIA"
+   ]
+  },
+  {
+   "texto": "En caso de que la oferta me sea aceptada suscribiré el contrato objeto del Proceso de Contratación en la fecha prevista para el efecto en el Cronograma contenido en la invitación.",
+   "claves": [
+    "CASO",
+    "OFERTA",
+    "SEA",
+    "ACEPTADA",
+    "SUSCRIBIRE",
+    "CONTRATO",
+    "OBJETO",
+    "PROCESO",
+    "CONTRATACION",
+    "FECHA",
+    "PREVISTA",
+    "EFECTO",
+    "CRONOGRAMA",
+    "CONTENIDO",
+    "INVITACION"
+   ]
+  },
+  {
+   "texto": "Conozco los Documentos del Proceso, incluyendo Adendas, y acepto los requisitos en ellos contenidos.",
+   "claves": [
+    "CONOZCO",
+    "DOCUMENTOS",
+    "PROCESO",
+    "INCLUYENDO",
+    "ADENDAS",
+    "ACEPTO",
+    "REQUISITOS",
+    "ELLOS",
+    "CONTENIDOS"
+   ]
+  },
+  {
+   "texto": "Dentro de los documentos presentados a la Entidad conozco los ítems, la descripción, las unidades y cantidades establecidas en el Formulario 1 – Presupuesto Oficial.",
+   "claves": [
+    "DENTRO",
+    "DOCUMENTOS",
+    "PRESENTADOS",
+    "ENTIDAD",
+    "CONOZCO",
+    "ITEMS",
+    "DESCRIPCION",
+    "UNIDADES",
+    "CANTIDADES",
+    "ESTABLECIDAS",
+    "FORMULARIO",
+    "PRESUPUESTO",
+    "OFICIAL"
+   ]
+  },
+  {
+   "texto": "Conozco las leyes de la República de Colombia que rigen el Proceso de Contratación.",
+   "claves": [
+    "CONOZCO",
+    "LEYES",
+    "REPUBLICA",
+    "COLOMBIA",
+    "RIGEN",
+    "PROCESO",
+    "CONTRATACION"
+   ]
+  },
+  {
+   "texto": "Tengo conocimiento acerca de las características y condiciones del sitio de ejecución del contrato.",
+   "claves": [
+    "TENGO",
+    "CONOCIMIENTO",
+    "ACERCA",
+    "CARACTERISTICAS",
+    "CONDICIONES",
+    "SITIO",
+    "EJECUCION",
+    "CONTRATO"
+   ]
+  },
+  {
+   "texto": "Conozco el sitio donde se ejecutará el contrato y asumo los Riesgos previsibles inherentes al mismo, así como aquellos asignados en la invitación.",
+   "claves": [
+    "CONOZCO",
+    "SITIO",
+    "DONDE",
+    "EJECUTARA",
+    "CONTRATO",
+    "ASUMO",
+    "RIESGOS",
+    "PREVISIBLES",
+    "INHERENTES",
+    "MISMO",
+    "ASI",
+    "AQUELLOS",
+    "ASIGNADOS",
+    "INVITACION"
+   ]
+  },
+  {
+   "texto": "La información contenida en todos los documentos de la oferta es veraz y asumo total responsabilidad frente a la Entidad cuando los datos suministrados sean falsos o contrarios a la realidad, sin perjuicio de lo dispuesto en el Código Penal y demás normas concordantes.",
+   "claves": [
+    "INFORMACION",
+    "CONTENIDA",
+    "TODOS",
+    "DOCUMENTOS",
+    "OFERTA",
+    "VERAZ",
+    "ASUMO",
+    "TOTAL",
+    "RESPONSABILIDAD",
+    "FRENTE",
+    "ENTIDAD",
+    "DATOS",
+    "SUMINISTRADOS",
+    "SEAN",
+    "FALSOS",
+    "CONTRARIOS",
+    "REALIDAD",
+    "PERJUICIO",
+    "DISPUESTO",
+    "CODIGO",
+    "PENAL",
+    "DEMAS",
+    "NORMAS",
+    "CONCORDANTES"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que representó (se exceptúan las sociedades anónimas abiertas), ni yo nos hallamos incursos en causal alguna de Conflicto de interés, inhabilidad o incompatibilidad de las señaladas en la Constitución y en la ley.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "EXCEPTUAN",
+    "SOCIEDADES",
+    "ANONIMAS",
+    "ABIERTAS",
+    "NOS",
+    "HALLAMOS",
+    "INCURSOS",
+    "CAUSAL",
+    "ALGUNA",
+    "CONFLICTO",
+    "INTERES",
+    "INHABILIDAD",
+    "INCOMPATIBILIDAD",
+    "SENALADAS",
+    "CONSTITUCION",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que representó (se exceptúa las sociedades anónimas abiertas), ni yo nos encontramos en ninguno de los eventos de prohibiciones especiales para contratar, ni estamos incursos en ninguno de los conflictos de intereses para",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "EXCEPTUA",
+    "SOCIEDADES",
+    "ANONIMAS",
+    "ABIERTAS",
+    "NOS",
+    "ENCONTRAMOS",
+    "NINGUNO",
+    "EVENTOS",
+    "PROHIBICIONES",
+    "ESPECIALES",
+    "CONTRATAR",
+    "ESTAMOS",
+    "INCURSOS",
+    "NINGUNO",
+    "CONFLICTOS",
+    "INTERESES",
+    "PARTICIPAR",
+    "ESTABLECIDOS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "En caso de conocer que los integrantes del Proponente Plural, los socios de la persona jurídica que representó (se exceptúa las sociedades anónimas abiertas) o yo nos encontramos incursos en alguna inhabilidad o Conflicto de Interés sobreviniente, contemplados en la normativa vigente, nos compromete",
+   "claves": [
+    "CASO",
+    "CONOCER",
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "EXCEPTUA",
+    "SOCIEDADES",
+    "ANONIMAS",
+    "ABIERTAS",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "INHABILIDAD",
+    "CONFLICTO",
+    "INTERES",
+    "SOBREVINIENTE",
+    "CONTEMPLADOS",
+    "NORMATIVA",
+    "VIGENTE",
+    "NOS",
+    "COMPROMETEMOS",
+    "INFORMAR",
+    "MANERA",
+    "INMEDIATA",
+    "TAL",
+    "CIRCUNSTANCIA",
+    "ENTIDAD",
+    "TOME",
+    "MEDIDAS",
+    "LEGALES",
+    "PERTINENTES"
+   ]
+  },
+  {
+   "texto": "Este compromiso lo adquirimos en total independencia de la etapa en que se encuentre el Proceso de Contratación (precontractual, contractual y/o post contractual).",
+   "claves": [
+    "COMPROMISO",
+    "ADQUIRIMOS",
+    "TOTAL",
+    "INDEPENDENCIA",
+    "ETAPA",
+    "ENCUENTRE",
+    "PROCESO",
+    "CONTRATACION",
+    "PRECONTRACTUAL",
+    "CONTRACTUAL",
+    "POST",
+    "CONTRACTUAL"
+   ]
+  },
+  {
+   "texto": "Ni los integrantes del Proponente Plural, ni los socios de la persona jurídica que represento (se exceptúa las sociedades anónimas abiertas), ni yo estamos incursos en la situación descrita en el numeral 1 del artículo 38 de la Ley 1116 de 2006.",
+   "claves": [
+    "INTEGRANTES",
+    "PROPONENTE",
+    "PLURAL",
+    "SOCIOS",
+    "PERSONA",
+    "JURIDICA",
+    "REPRESENTO",
+    "EXCEPTUA",
+    "SOCIEDADES",
+    "ANONIMAS",
+    "ABIERTAS",
+    "ESTAMOS",
+    "INCURSOS",
+    "SITUACION",
+    "DESCRITA",
+    "NUMERAL",
+    "ARTICULO",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Conozco y acepto el Anexo 1 denominado “Pacto de Transparencia” relacionado en la invitación y me comprometo a darle estricto cumplimiento.",
+   "claves": [
+    "CONOZCO",
+    "ACEPTO",
+    "ANEXO",
+    "DENOMINADO",
+    "PACTO",
+    "TRANSPARENCIA",
+    "RELACIONADO",
+    "INVITACION",
+    "COMPROMETO",
+    "DARLE",
+    "ESTRICTO",
+    "CUMPLIMIENTO"
+   ]
+  },
+  {
+   "texto": "Los recursos destinados al contrato son de origen lícito y no hemos participado en actividades delictivas, así como no hemos recibido recursos o facilitado actividades contrarias a la ley.",
+   "claves": [
+    "RECURSOS",
+    "DESTINADOS",
+    "CONTRATO",
+    "SON",
+    "ORIGEN",
+    "LICITO",
+    "HEMOS",
+    "PARTICIPADO",
+    "ACTIVIDADES",
+    "DELICTIVAS",
+    "ASI",
+    "HEMOS",
+    "RECIBIDO",
+    "RECURSOS",
+    "FACILITADO",
+    "ACTIVIDADES",
+    "CONTRARIAS",
+    "LEY"
+   ]
+  },
+  {
+   "texto": "Al momento de la presentación de la oferta, ni mis representados ni yo nos encontramos incursos en alguna de las causales de rechazo señaladas en la sección 1.15 de la invitación.",
+   "claves": [
+    "MOMENTO",
+    "PRESENTACION",
+    "OFERTA",
+    "MIS",
+    "REPRESENTADOS",
+    "NOS",
+    "ENCONTRAMOS",
+    "INCURSOS",
+    "ALGUNA",
+    "CAUSALES",
+    "RECHAZO",
+    "SENALADAS",
+    "SECCION",
+    "INVITACION"
+   ]
+  },
+  {
+   "texto": "Si se acepta la oferta me comprometo a constituir las Garantías requeridas y a suscribir estas dentro de los términos señalados para ello.",
+   "claves": [
+    "ACEPTA",
+    "OFERTA",
+    "COMPROMETO",
+    "CONSTITUIR",
+    "GARANTIAS",
+    "REQUERIDAS",
+    "SUSCRIBIR",
+    "DENTRO",
+    "TERMINOS",
+    "SENALADOS",
+    "ELLO"
+   ]
+  },
+  {
+   "texto": "La oferta fue elaborada teniendo en cuenta todos los gastos, costos, derechos, impuestos, tasas y demás contribuciones que se causen con ocasión de la suscripción del contrato y que en consecuencia no haré reclamos con ocasión del pago de tales gastos.",
+   "claves": [
+    "OFERTA",
+    "FUE",
+    "ELABORADA",
+    "TENIENDO",
+    "CUENTA",
+    "TODOS",
+    "GASTOS",
+    "COSTOS",
+    "DERECHOS",
+    "IMPUESTOS",
+    "TASAS",
+    "DEMAS",
+    "CONTRIBUCIONES",
+    "CAUSEN",
+    "OCASION",
+    "SUSCRIPCION",
+    "CONTRATO",
+    "CONSECUENCIA",
+    "HARE",
+    "RECLAMOS",
+    "OCASION",
+    "PAGO",
+    "TALES",
+    "GASTOS"
+   ]
+  },
+  {
+   "texto": "Declaro que me informaré de todas las etapas y decisiones del Proceso de Contratación, consultado el Sistema Electrónico Para la Contratación Pública (SECOP);",
+   "claves": [
+    "DECLARO",
+    "INFORMARE",
+    "TODAS",
+    "ETAPAS",
+    "DECISIONES",
+    "PROCESO",
+    "CONTRATACION",
+    "CONSULTADO",
+    "SISTEMA",
+    "ELECTRONICO",
+    "CONTRATACION",
+    "PUBLICA",
+    "SECOP"
+   ]
+  },
+  {
+   "texto": "y en caso de que me deban comunicar o notificar alguna decisión autorizo a la Entidad para que lo haga al correo electrónico indicado al final de este documento.",
+   "claves": [
+    "CASO",
+    "DEBAN",
+    "COMUNICAR",
+    "NOTIFICAR",
+    "ALGUNA",
+    "DECISION",
+    "AUTORIZO",
+    "ENTIDAD",
+    "HAGA",
+    "CORREO",
+    "ELECTRONICO",
+    "INDICADO",
+    "FINAL",
+    "DOCUMENTO"
+   ]
+  },
+  {
+   "texto": "Autorizo que la Entidad consulte la información comercial o financiera pertinente para el Proceso de Contratación, bajo el entendido que debe guardar confidencialidad sobre la información sujeta a reserva.",
+   "claves": [
+    "AUTORIZO",
+    "ENTIDAD",
+    "CONSULTE",
+    "INFORMACION",
+    "COMERCIAL",
+    "FINANCIERA",
+    "PERTINENTE",
+    "PROCESO",
+    "CONTRATACION",
+    "BAJO",
+    "ENTENDIDO",
+    "DEBE",
+    "GUARDAR",
+    "CONFIDENCIALIDAD",
+    "INFORMACION",
+    "SUJETA",
+    "RESERVA"
+   ]
+  },
+  {
+   "texto": "Me comprometo a cumplir todos los ítems relacionados con el “Formulario 1 – Presupuesto oficial”, en caso de resultar adjudicatario.",
+   "claves": [
+    "COMPROMETO",
+    "CUMPLIR",
+    "TODOS",
+    "ITEMS",
+    "RELACIONADOS",
+    "FORMULARIO",
+    "PRESUPUESTO",
+    "OFICIAL",
+    "CASO",
+    "RESULTAR",
+    "ADJUDICATARIO"
    ]
   }
  ]

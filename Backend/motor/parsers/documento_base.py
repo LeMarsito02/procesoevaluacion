@@ -252,7 +252,8 @@ def parse_documento_base(pdf_bytes: bytes) -> ParseResult:
         objeto_general, lotes = _find_budget_rows(pdf)
         garantia = _find_garantia_seriedad(pdf)
         # La modalidad se lee del encabezado de las primeras páginas.
-        modalidad = modalidad_de(" ".join((p.extract_text() or "") for p in pdf.pages[:3]))
+        primeras = [(p.extract_text() or "") for p in pdf.pages[:8]]
+        modalidad = modalidad_de(" ".join(primeras[:3]), " ".join(primeras))
         tarjeta_suplible = False
         for page in pdf.pages:
             if TARJETA_SUPLIBLE_RE.search(re.sub(r"\s+", " ", page.extract_text() or "")):

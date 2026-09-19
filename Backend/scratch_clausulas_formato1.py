@@ -13,6 +13,7 @@ import json
 import re
 import sys
 from datetime import date
+from pathlib import Path
 
 sys.path.insert(0, ".")
 from motor.evaluacion.formato1_contenido import _norm, _presente_en, _secuencia, oraciones
@@ -20,11 +21,13 @@ from motor.parsers.documento_base import build_proceso
 
 CARTAS = ".scratch/cartas.json"
 PROCESOS = {
-    "p1": ("interventoria", "../Documento Base v3 - definitivos apertura.pdf"),
-    "p2": ("obra_social", "../PRUEBASMIEVALUADOR/Prueba2/4. Pliego Definitivo IED Tibacuy.pdf"),
-    "p3": ("obra_transporte", "../PRUEBASMIEVALUADOR/Prueba3/Documento base def.pdf"),
-    "p4": ("menor_cuantia", "../PRUEBASMIEVALUADOR/Prueba4/Documento Base o Documento Tipo CCE-EICP-GI-02 Menor Cuantia-DEFINITIVO (1).pdf"),
+    "p1": ("interventoria_transporte", "../Documento Base v3 - definitivos apertura.pdf"),
+    "p2": ("licitacion_social", "../PRUEBASMIEVALUADOR/Prueba2/4. Pliego Definitivo IED Tibacuy.pdf"),
+    "p3": ("licitacion_transporte", "../PRUEBASMIEVALUADOR/Prueba3/Documento base def.pdf"),
+    "p4": ("menor_cuantia_social", "../PRUEBASMIEVALUADOR/Prueba4/Documento Base o Documento Tipo CCE-EICP-GI-02 Menor Cuantia-DEFINITIVO (1).pdf"),
 }
+# Modalidades sin cartas reales: el Formato 1 oficial de Colombia Compra.
+FORMATOS_CCE = "motor/evaluacion/formatos_cce"
 UMBRAL_ESENCIAL = 0.9
 MINIMO_CLAVES = 6
 # Partes de la carta que no son declaraciones: encabezado, introducción con
@@ -86,7 +89,31 @@ def main():
                 elegidas.append((texto, claves))
         resultado[modalidad] = [{"texto": _recortar(t, c)[:300], "claves": c} for t, c in elegidas]
         print(f"{modalidad}: {len(textos)} cartas, {len(candidatas)} candidatas, {len(elegidas)} esenciales")
+    for archivo in sorted(Path(FORMATOS_CCE).glob("formato1_*.docx")):
+        modalidad = archivo.stem.removeprefix("formato1_")
+        if modalidad in resultado:
+            continue  # ya hay cartas reales de esta modalidad: mandan ellas
+        resultado[modalidad] = clausulas_oficiales(archivo)
+        print(f"{modalidad}: formato oficial, {len(resultado[modalidad])} esenciales")
     json.dump(resultado, open(SALIDA, "w"), ensure_ascii=False, indent=1)
+
+
+def clausulas_oficiales(archivo: Path) -> list[dict]:
+    """Declaraciones del Formato 1 oficial: sin instrucciones ni campos por
+    llenar ("[…]"), sin partes estructurales (cuadros, firma)."""
+    import docx
+
+    d = docx.Document(str(archivo))
+    texto = "\n".join(p.text for p in d.paragraphs)
+    elegidas = []
+    for o in oraciones(texto):
+        o = re.sub(r"^\d{1,2}\s*[.)]\s*", "", o)
+        if "[" in o or "]" in o or "__" in o or ESTRUCTURA_RE.search(_norm(o)):
+            continue
+        claves = _secuencia(o)
+        if len(set(claves)) >= MINIMO_CLAVES and not any(set(claves) <= set(c["claves"]) for c in elegidas):
+            elegidas.append({"texto": o[:300], "claves": claves})
+    return elegidas
 
 
 if __name__ == "__main__":
