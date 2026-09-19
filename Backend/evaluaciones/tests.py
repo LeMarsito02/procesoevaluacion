@@ -2166,7 +2166,8 @@ class CatalogoPliegoTests(TestCase):
         from motor.pliego.catalogo import config_desde_pliego
 
         r = _requisito_pliego(requisito="Certificado de la ARL", titulo_documento=["CERTIFICADO DE AFILIACION ARL"],
-                              vigencia_dias=45, condiciones=["que cubra a todo el personal"], aplica_a=["plural"])
+                              vigencia_dias=45, condiciones=["que cubra a todo el personal"], aplica_a=["plural", "persona_juridica"],
+                              cita="cada integrante del consorcio o unión temporal debe aportar el certificado de la ARL")
         config = config_desde_pliego(r)
         criterios.ConfigPersonalizado.model_validate(config)
         self.assertEqual(config["bloques"][0], {"tipo": "vigencia_maxima", "meses": 2})
@@ -2327,3 +2328,29 @@ class FiltrosLecturaIATests(TestCase):
         rup = "D. Los Proponentes obligados a estar inscritos en el Registro Único de Proponentes (RUP), deben aportar certificado"
         self.assertTrue(_se_lee(Seccion(numero="3.1", titulo="GENERALIDADES", pagina=25, texto=rup), "puntaje"))
         self.assertFalse(_se_lee(Seccion(numero="3.5", titulo="EXPERIENCIA", pagina=32, texto=rup), "tecnica"))
+
+
+class AQuienSeExigeTests(TestCase):
+    def test_solo_se_restringe_si_el_pliego_lo_dice(self):
+        from motor.pliego.catalogo import aplica_a_de
+
+        general = _requisito_pliego(requisito="El plazo ofrecido no debe ser superior al de la Entidad", aplica_a=["persona_juridica"])
+        self.assertEqual(aplica_a_de(general), [])
+        natural = _requisito_pliego(requisito="El proponente persona natural debe acreditar la afiliación", aplica_a=["persona_natural"])
+        self.assertEqual(aplica_a_de(natural), ["persona_natural"])
+        ambos = _requisito_pliego(requisito="Ser persona natural o jurídica", aplica_a=["persona_natural", "persona_juridica"])
+        self.assertEqual(aplica_a_de(ambos), [])
+
+    def test_mipyme_en_titulos_vecinos_no_tapa_la_carta(self):
+        from motor.pliego.catalogo import verificacion_de
+
+        carta = _requisito_pliego(requisito="Presentar la carta de presentación de la oferta", documento="Carta de presentación de la oferta",
+                                  titulo_documento=["Carta de presentación de la oferta", "Acreditación de Mipyme"])
+        self.assertEqual(verificacion_de(carta), "juridica.carta")
+
+    def test_extranjero_junto_a_otros_no_es_exclusivo(self):
+        from motor.pliego.lector_ia import es_de_extranjeros
+
+        self.assertFalse(es_de_extranjeros(_requisito_pliego(requisito="Tener capacidad jurídica",
+                                                            aplica_a=["persona_natural", "persona_juridica", "extranjero"])))
+        self.assertTrue(es_de_extranjeros(_requisito_pliego(requisito="Tener capacidad jurídica", aplica_a=["extranjero"])))

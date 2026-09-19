@@ -501,7 +501,7 @@ def _corto(r) -> str:
 
 def mapa_de_requisitos(requisitos, definicion: criterios.DefinicionEvaluacion) -> list[dict]:
     """Cada requisito jurídico del pliego y cómo se verificará, para mostrarlo."""
-    from motor.pliego.catalogo import config_desde_pliego, es_condicional, parametros_de
+    from motor.pliego.catalogo import config_desde_pliego, es_condicional, parametros_de, tipos_del_pliego
     from motor.pliego.lector_ia import es_de_extranjeros
 
     en_plantilla = {r.verificacion for r in definicion.requisitos}
@@ -519,7 +519,8 @@ def mapa_de_requisitos(requisitos, definicion: criterios.DefinicionEvaluacion) -
             como, estado = "Se busca el documento en la oferta (verificación armada desde el pliego)", "documento"
         else:
             como, estado = "Lo revisa una persona", "revision"
-        salida.append({**r.model_dump(), "como": como, "estado": estado, "parametros": parametros_de(r) if r.verificacion else {}})
+        salida.append({**r.model_dump(), "aplica_a": tipos_del_pliego(r), "como": como, "estado": estado,
+                       "parametros": parametros_de(r) if r.verificacion else {}})
     return salida
 
 

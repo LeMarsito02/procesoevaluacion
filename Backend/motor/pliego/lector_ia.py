@@ -135,6 +135,8 @@ LARGO_SECCION_DE_PASO = 6000
 
 def _se_lee(s: Seccion, ambito: str) -> bool:
     titulo = _norm(s.titulo)
+    if "CAUSALES DE RECHAZO" in titulo:  # las detecta el análisis por reglas; aquí solo meten ruido
+        return False
     if ambito == "juridica":
         return True
     if ambito == "general" and _TEMA_JURIDICO_RE.search(titulo):
@@ -200,6 +202,12 @@ def _entero(valor) -> int | None:
     return n if 0 < n < 3650 else None
 
 
+def _texto_o_nada(valor) -> str | None:
+    """El modelo a veces escribe "null" o "N/A" como texto."""
+    texto = str(valor).strip() if valor is not None else ""
+    return None if texto.lower() in ("", "null", "none", "n/a", "na", "no aplica", "-") else texto
+
+
 def _limpiar(crudo: dict, trozo: Trozo, pagina_de: Callable[[str, int], int]) -> RequisitoPliego | None:
     requisito = str(crudo.get("requisito") or "").strip()
     cita = str(crudo.get("cita") or "").strip()
@@ -210,13 +218,13 @@ def _limpiar(crudo: dict, trozo: Trozo, pagina_de: Callable[[str, int], int]) ->
     aplica = [a for a in (crudo.get("aplica_a") or []) if a in APLICA_A] or ["todos"]
     titulos = [str(t).strip() for t in (crudo.get("titulo_documento") or []) if isinstance(t, str) and len(t.strip()) >= 6]
     condiciones = [str(c).strip() for c in (crudo.get("condiciones") or []) if isinstance(c, str) and c.strip()]
-    documento = crudo.get("documento")
+    documento = _texto_o_nada(crudo.get("documento"))
     return RequisitoPliego(
         id=hashlib.sha1(_norm(requisito + (documento or "")).encode()).hexdigest()[:12],
         requisito=requisito[:300],
         documento=str(documento).strip()[:200] if documento else None,
         titulo_documento=titulos[:4],
-        expide=str(crudo.get("expide")).strip()[:120] if crudo.get("expide") else None,
+        expide=(_texto_o_nada(crudo.get("expide")) or "")[:120] or None,
         aplica_a=aplica,
         vigencia_dias=_entero(crudo.get("vigencia_dias")),
         vigencia_meses=_entero(crudo.get("vigencia_meses")),
@@ -256,7 +264,8 @@ _NACIONAL_O_EXTRANJERO_RE = re.compile(r"NACIONAL(?:ES)?\s+(?:O|Y|U)\s+EXTRANJER
 
 def es_de_extranjeros(r: "RequisitoPliego") -> bool:
     texto = _NACIONAL_O_EXTRANJERO_RE.sub(" ", _norm(f"{r.requisito} {r.documento or ''} {r.cita}"))
-    return "extranjero" in r.aplica_a or bool(EXTRANJEROS_RE.search(texto))
+    # "extranjero" junto a otros tipos no lo vuelve exclusivo de extranjeros.
+    return r.aplica_a == ["extranjero"] or bool(EXTRANJEROS_RE.search(texto))
 
 
 def leer(

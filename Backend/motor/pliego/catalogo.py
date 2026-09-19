@@ -77,7 +77,10 @@ def verificacion_de(req) -> str | None:
     exige y el documento con que se acredita), o None si el motor no la
     tiene."""
     texto = _norm(f"{req.requisito} {req.documento or ''} {' '.join(req.titulo_documento)}")
-    if _PROPIOS_RE.search(texto) or re.search(r"MIPYME|EMPRENDIMIENTO", texto):
+    # Lo propio se decide por lo que se exige (los títulos del documento a
+    # veces traen formatos vecinos: "Carta de presentación", "Acreditación de Mipyme").
+    propio = _norm(f"{req.requisito} {req.documento or ''}")
+    if _PROPIOS_RE.search(propio) or re.search(r"MIPYME|EMPRENDIMIENTO", propio):
         return None
     for clave, patron in _REGLAS:
         if patron.search(texto) and clave in criterios.VERIFICACIONES:
@@ -120,10 +123,27 @@ def config_desde_pliego(req) -> dict | None:
         bloques.append({"tipo": "vigencia_maxima", "meses": meses})
     for c in req.condiciones:
         bloques.append({"tipo": "confirmar", "frases": [c[:200]]})
-    aplica = {
-        "persona_natural": ["persona_natural"],
-        "persona_juridica": ["persona_juridica"],
-        "plural": ["consorcio", "union_temporal"],
-    }
-    aplica_a = sorted({t for a in req.aplica_a for t in aplica.get(a, [])})
-    return {"frases_documento": frases[:4], "paginas": 3, "bloques": bloques, "aplica_a": aplica_a}
+    return {"frases_documento": frases[:4], "paginas": 3, "bloques": bloques, "aplica_a": aplica_a_de(req)}
+
+
+# A quién se le exige, solo si el mismo pliego lo dice: el modelo tiende a
+# poner "persona jurídica" a todo, y restringir de más deja a otros como "no
+# aplica" sin revisar.
+_TIPO_EN_TEXTO = {
+    "persona_natural": (re.compile(r"PERSONAS? (?:JURIDICAS? (?:O|Y) )?NATURAL"), ["persona_natural"]),
+    "persona_juridica": (re.compile(r"PERSONAS? (?:NATURAL(?:ES)? (?:O|Y) )?JURIDICA"), ["persona_juridica"]),
+    "plural": (re.compile(r"PLURAL|CONSORCIO|UNION TEMPORAL|INTEGRANTE"), ["consorcio", "union_temporal"]),
+}
+
+
+def tipos_del_pliego(req) -> list[str]:
+    """El tipo de proponente al que se restringe el requisito, si el pliego
+    lo nombra y es uno solo ("el proponente persona natural debe…"); vacío =
+    a todos."""
+    texto = _norm(f"{req.requisito} {req.cita}")
+    tipos = [t for t in dict.fromkeys(req.aplica_a) if t in _TIPO_EN_TEXTO and _TIPO_EN_TEXTO[t][0].search(texto)]
+    return tipos if len(tipos) == 1 else []
+
+
+def aplica_a_de(req) -> list[str]:
+    return sorted({x for t in tipos_del_pliego(req) for x in _TIPO_EN_TEXTO[t][1]})
