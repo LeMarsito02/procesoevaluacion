@@ -2619,3 +2619,41 @@ class ErroresDeConsultaClarosTests(TestCase):
         # resultado significa que la persona está limpia.
         titulo = linea._norm("Sistema Registro Nacional de Medidas Correctivas RNMC")
         self.assertNotIn("NO TIENE MEDIDAS CORRECTIVAS PENDIENTES", titulo)
+
+
+class CedulaConIATests(TestCase):
+    """Cuando el OCR no puede, la IA local mira la imagen de la cédula. Nunca
+    se acepta una fecha que no sea de esa persona ni una imposible."""
+
+    def leer(self, respuesta, cedula="52371321"):
+        from motor.llm import vision
+
+        with mock.patch.object(vision, "disponible", return_value=True), \
+             mock.patch.object(vision, "_imagenes", return_value=[b"PNG"]), \
+             mock.patch.object(vision, "_preguntar", return_value=respuesta):
+            return vision.leer_cedula(b"%PDF", cedula)
+
+    def test_lee_la_fecha_de_expedicion(self):
+        from datetime import date
+
+        fecha = self.leer({"numero": "52.371.321", "fecha_expedicion": "2002-05-22", "fecha_nacimiento": "1984-05-19"})
+        self.assertEqual(fecha, date(2002, 5, 22))
+
+    def test_no_acepta_la_cedula_de_otra_persona(self):
+        self.assertIsNone(self.leer({"numero": "43001767", "fecha_expedicion": "1979-03-01"}))
+
+    def test_no_acepta_fecha_sin_saber_de_quien_es(self):
+        self.assertIsNone(self.leer({"numero": None, "fecha_expedicion": "2002-05-22"}))
+
+    def test_descarta_fechas_imposibles(self):
+        self.assertIsNone(self.leer({"numero": "52371321", "fecha_expedicion": "2045-01-01"}))
+        self.assertIsNone(self.leer({"numero": "52371321", "fecha_expedicion": "1930-01-01"}))
+
+    def test_descarta_la_expedicion_anterior_al_nacimiento(self):
+        self.assertIsNone(self.leer({"numero": "52371321", "fecha_expedicion": "1980-01-01", "fecha_nacimiento": "1984-05-19"}))
+
+    def test_sin_modelo_de_vision_no_falla(self):
+        from motor.llm import vision
+
+        with mock.patch.object(vision, "disponible", return_value=False):
+            self.assertIsNone(vision.leer_cedula(b"%PDF", "52371321"))

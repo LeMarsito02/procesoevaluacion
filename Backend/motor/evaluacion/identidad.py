@@ -220,8 +220,18 @@ def fecha_expedicion_cedula(pdfs: dict[str, bytes], nombre: str, cedula: str | N
     try:
         reforzado = _norm(texto_ocr_reforzado(pdfs[archivo], max_paginas=PAGINAS_REFORZADAS))
     except Exception:  # noqa: BLE001
+        reforzado = ""
+    if reforzado and _es_suyo(nombre, numero, reforzado) and (fecha := fecha_expedicion_en(reforzado)):
+        return fecha
+    # Último recurso: mostrarle la cédula a la IA local. El OCR falla con
+    # escaneos torcidos o con sombras, y sin esta fecha no se puede consultar
+    # el RNMC de la persona.
+    from motor.llm.vision import leer_cedula
+
+    try:
+        return leer_cedula(pdfs[archivo], cedula)
+    except Exception:  # noqa: BLE001
         return None
-    return fecha_expedicion_en(reforzado) if _es_suyo(nombre, numero, reforzado) else None
 
 
 class ResultadoIdentidad:

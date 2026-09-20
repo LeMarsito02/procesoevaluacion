@@ -118,8 +118,10 @@ servicio de IA externo.
     llama3.1:8b   lectura puntual de documentos de la oferta   (LLM_MODELO)
     qwen3:4b      lectura completa del pliego, desarrollo      (PLIEGO_IA_MODELO)
     qwen3:14b     lectura completa del pliego, producción con GPU de 24 GB
+    qwen2.5vl:3b  leer cédulas escaneadas que el OCR no puede  (VISION_MODELO)
+                  (con GPU de 24 GB: qwen2.5vl:7b)
 
-  Descarga:  ollama pull llama3.1:8b && ollama pull qwen3:14b
+  Descarga:  ollama pull llama3.1:8b && ollama pull qwen3:14b && ollama pull qwen2.5vl:7b
 
   Con GPU de 24 GB, en producción conviene:
     PLIEGO_IA_MODELO=qwen3:14b
@@ -245,6 +247,9 @@ IA local:
   LLM_CONTEXTO_TOKENS, LLM_CANDADO
   PLIEGO_IA_MODELO, PLIEGO_IA_CONTEXTO, PLIEGO_IA_TROZO, PLIEGO_IA_TIMEOUT,
   PLIEGO_IA_HABILITADO
+  VISION_MODELO, VISION_HABILITADO, VISION_TIMEOUT, VISION_RESOLUCION
+                               Lectura de cédulas escaneadas con IA (la fecha
+                               de expedición que pide el RNMC)
 
 Otras:
 
