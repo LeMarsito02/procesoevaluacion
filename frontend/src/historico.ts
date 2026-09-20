@@ -77,6 +77,10 @@ export async function aportarDocumento(
   return res.json()
 }
 
+/** Consulta el certificado en la página oficial y lo adjunta (solo RNMC y COPNIA: las demás piden captcha). */
+export const consultarEnLinea = (ev: string, prop: string, datos: { requisito: number; persona_id?: string; matricula?: string }) =>
+  enviarJson<DocumentoAportado>(`${base(ev)}/proponentes/${prop}/consultar`, 'POST', datos)
+
 export const quitarAportado = (ev: string, id: string) => enviarJson<void>(`${base(ev)}/aportados/${id}`, 'DELETE')
 
 async function blob(ruta: string): Promise<{ blob: Blob; nombre: string | null }> {
@@ -111,7 +115,16 @@ export const FUENTES: { clave: string; nombre: string; url: string; pide: string
   { clave: 'procuradur', nombre: 'Procuraduría General de la Nación', url: 'https://www.procuraduria.gov.co/CertWEB/Certificado.aspx?tpo=1', pide: 'cédula o NIT' },
   { clave: 'contralor', nombre: 'Contraloría General de la República', url: 'https://www.contraloria.gov.co/control-fiscal/responsabilidad-fiscal/certificado-de-antecedentes-fiscales', pide: 'cédula o NIT' },
   { clave: 'redam', nombre: 'REDAM · deudores alimentarios morosos', url: 'https://redam.sisben.gov.co/', pide: 'cédula' },
+  {
+    clave: 'copnia',
+    nombre: 'COPNIA · vigencia y antecedentes disciplinarios',
+    url: 'https://tramites.copnia.gov.co/Copnia_Microsite/CertificateOfGoodStanding/CertificateOfGoodStandingStart',
+    pide: 'cédula o matrícula profesional',
+  },
 ]
+
+/** Fuentes cuya página oficial no pide captcha: el programa puede traer el certificado solo. */
+export const FUENTES_AUTOMATICAS = ['rnmc', 'copnia']
 
 export function fuenteDe(pistas: string[]): (typeof FUENTES)[number] | null {
   return FUENTES.find((f) => pistas.some((p) => p.toLowerCase().includes(f.clave))) ?? null

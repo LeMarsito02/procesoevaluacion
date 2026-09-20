@@ -31,6 +31,7 @@ import {
   type EvaluacionResumen,
   type MiembroCarga,
 } from '../evaluaciones'
+import { consultarEnLinea } from '../historico'
 import { ErrorApi, mensajeDe } from '../http'
 import { establecerCatalogo, REQUISITOS } from '../requisitos'
 import { navegar } from '../rutas'
@@ -111,6 +112,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const [panel, setPanel] = useState<{ hoja: string; requisito: number | null } | null>(null)
   // Requisito cuyo certificado consultado se va a subir desde su tarjeta.
   const [subirCertificado, setSubirCertificado] = useState<number | null>(null)
+  // Requisito cuyo COPNIA se está consultando en línea.
+  const [consultandoCopnia, setConsultandoCopnia] = useState<number | null>(null)
   const [visor, setVisor] = useState<{ url: string; archivo: string; resultado: ResultadoRequisito } | null>(null)
   const [abriendoDocumento, setAbriendoDocumento] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
@@ -425,6 +428,22 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           onRevisar={onRevisar}
           onVerDocumento={abrirDocumento}
           onSubirCertificado={soloLectura ? null : (requisito) => setSubirCertificado(requisito)}
+          consultandoCopnia={consultandoCopnia}
+          onConsultarCopnia={
+            soloLectura || !panelProponente
+              ? null
+              : async (requisito, matricula) => {
+                  setConsultandoCopnia(requisito)
+                  try {
+                    await consultarEnLinea(id, panelProponente.id, { requisito, matricula })
+                    setAviso('El certificado del COPNIA quedó adjunto al expediente.')
+                  } catch (e) {
+                    setAviso(mensajeDe(e))
+                  } finally {
+                    setConsultandoCopnia(null)
+                  }
+                }
+          }
           onAnterior={indicePanel > 0 ? () => setPanel({ hoja: evaluadosEnOrden[indicePanel - 1].hoja, requisito: null }) : null}
           onSiguiente={
             indicePanel >= 0 && indicePanel < evaluadosEnOrden.length - 1

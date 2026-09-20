@@ -6,6 +6,9 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
+import logging
+
+from django.core.files.base import ContentFile
 from django.db import transaction
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -30,6 +33,8 @@ from evaluaciones.models import (
 )
 from evaluaciones.permisos import exigir_gestion, exigir_trabajo
 from evaluaciones.reporte import generar_reporte
+
+log = logging.getLogger(__name__)
 
 MAX_PDF = 20 * 1024 * 1024
 
@@ -259,6 +264,99 @@ def aportar_documento(
             requisito=requisito,
             persona=persona.nombre if persona else None,
             fecha_expedicion=fecha_expedicion.isoformat(),
+        )
+    return 201, _aportado_out(doc)
+
+
+class ConsultaIn(Schema):
+    requisito: int
+    persona_id: UUID | None = None
+    # El COPNIA se consulta por la matrícula del profesional que avala la
+    # propuesta, que no es una de las personas con antecedentes.
+    matricula: str | None = None
+
+
+# Certificados que el programa puede traer solo: su página oficial no pide
+# captcha. Los demás (Procuraduría, Contraloría, antecedentes judiciales) los
+# consulta una persona y los sube con el botón de siempre.
+FUENTES_EN_LINEA = {"juridica.rnmc": "rnmc", "juridica.copnia_antecedentes": "copnia", "juridica.aval_ingeniero": "copnia"}
+
+
+@router.post("/{evaluacion_id}/proponentes/{proponente_id}/consultar", response={201: AportadoOut})
+def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, datos: ConsultaIn):
+    """Consulta el certificado en la página oficial y lo adjunta al expediente,
+    igual que si el evaluador lo hubiera descargado y subido."""
+    from motor.consultas.linea import ConsultaError, consultar_copnia, consultar_rnmc
+
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    proponente = _proponente(evaluacion, proponente_id)
+    requisito = next((r for r in servicios.definicion_de(evaluacion).requisitos if r.numero == datos.requisito), None)
+    if requisito is None:
+        raise HttpError(400, "Ese requisito no existe en la plantilla de la evaluación.")
+    fuente = FUENTES_EN_LINEA.get(requisito.verificacion)
+    if fuente is None:
+        raise HttpError(400, "Este certificado no se puede consultar en línea: su página pide captcha.")
+    persona = get_object_or_404(PersonaVerificada, pk=datos.persona_id, evaluacion=evaluacion, proponente=proponente) if datos.persona_id else None
+    if persona is None and not (fuente == "copnia" and datos.matricula):
+        raise HttpError(400, "Indique de quién es el certificado.")
+
+    try:
+        if fuente == "rnmc":
+            certificado = consultar_rnmc(
+                persona.documento,
+                tipo="nit" if persona.tipo == "juridica" else "cedula",
+                fecha_expedicion=persona.fecha_expedicion_documento,
+            )
+        elif datos.matricula:
+            certificado = consultar_copnia(datos.matricula.strip(), por="matricula")
+        elif persona.tipo == "juridica":
+            raise HttpError(400, "El COPNIA certifica personas naturales, no empresas.")
+        else:
+            certificado = consultar_copnia(persona.documento, por="cedula")
+    except ConsultaError as exc:
+        # Algo que la persona puede resolver (falta un dato, no existe el registro).
+        raise HttpError(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Falló la consulta en línea de %s", fuente)
+        raise HttpError(502, "No se pudo consultar la página oficial. Intente de nuevo o suba el certificado a mano.") from exc
+
+    # Si la página no dice claramente que la persona está sin novedades, el
+    # certificado igual se guarda: lo revisa el evaluador, nunca se aprueba solo.
+    de_quien = f" a nombre de {certificado.nombre}" if certificado.nombre else ""
+    nota = f"Consultado en línea por MiEvaluador en la página oficial ({'RNMC' if fuente == 'rnmc' else 'COPNIA'}){de_quien}."
+    if certificado.sin_novedades is True:
+        nota += (
+            " La matrícula está vigente y sin antecedentes disciplinarios."
+            if fuente == "copnia"
+            else " No tiene medidas correctivas pendientes por cumplir."
+        )
+    else:
+        nota += " La página no confirmó que esté libre de novedades: revíselo."
+    with transaction.atomic():
+        doc = DocumentoAportado(
+            entidad_id=evaluacion.entidad_id,
+            evaluacion=evaluacion,
+            proponente=proponente,
+            persona=persona,
+            requisito=datos.requisito,
+            fecha_expedicion=certificado.fecha_expedicion,
+            nombre_original=certificado.nombre_archivo[:255],
+            observacion=nota,
+            subido_por=usuario,
+        )
+        doc.archivo.save(certificado.nombre_archivo, ContentFile(certificado.pdf), save=False)
+        doc.save()
+        auditar(
+            request,
+            "antecedente.consultado",
+            objeto=evaluacion,
+            hoja=proponente.hoja,
+            requisito=datos.requisito,
+            persona=persona.nombre if persona else datos.matricula,
+            fuente=fuente,
+            sin_novedades=certificado.sin_novedades,
         )
     return 201, _aportado_out(doc)
 

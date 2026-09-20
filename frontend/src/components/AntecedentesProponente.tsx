@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   agregarPersona,
+  consultarEnLinea,
   fuenteDe,
   FUENTES,
+  FUENTES_AUTOMATICAS,
   aportarDocumento,
   archivoAportado,
   obtenerAntecedentes,
@@ -50,6 +52,21 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   const [agregando, setAgregando] = useState<{ de: PersonaVerificada | null } | null>(null)
   const [subiendo, setSubiendo] = useState<{ persona: PersonaVerificada | null; requisito: number } | null>(null)
   const [copiado, setCopiado] = useState<string | null>(null)
+  // Consulta en curso: "<persona>|<requisito>".
+  const [consultando, setConsultando] = useState<string | null>(null)
+
+  async function consultar(persona: PersonaVerificada, requisito: number) {
+    setConsultando(`${persona.id}|${requisito}`)
+    try {
+      await consultarEnLinea(evaluacionId, proponenteId, { requisito, persona_id: persona.id })
+      recargar()
+      setError(null)
+    } catch (e) {
+      setError(mensajeDe(e))
+    } finally {
+      setConsultando(null)
+    }
+  }
 
   const recargar = useCallback(() => {
     obtenerAntecedentes(evaluacionId, proponenteId)
@@ -212,9 +229,24 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                             <span className="small muted">—</span>
                           ) : (
                             <div className="falta-certificado">
-                              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSubiendo({ persona: per, requisito: r.numero })}>
-                                <Icono nombre="subir" tam={13} /> Subir
-                              </button>
+                              {FUENTES_AUTOMATICAS.includes(fuenteDe(r.pistas)?.clave ?? '') ? (
+                                // Esta página no pide captcha: el programa trae el certificado y lo adjunta.
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  disabled={consultando !== null}
+                                  onClick={() => void consultar(per, r.numero)}
+                                  title={`Consulta en ${fuenteDe(r.pistas)!.nombre} y lo adjunta al expediente`}
+                                >
+                                  {consultando === `${per.id}|${r.numero}` ? <span className="spinner oscuro" /> : <Icono nombre="descargar" tam={13} />}
+                                  Consultar
+                                </button>
+                              ) : null}
+                              {
+                                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSubiendo({ persona: per, requisito: r.numero })}>
+                                  <Icono nombre="subir" tam={13} /> Subir
+                                </button>
+                              }
                               {fuenteDe(r.pistas) && (
                                 <a
                                   className="enlace"
@@ -223,7 +255,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                                   rel="noopener noreferrer"
                                   title={`${fuenteDe(r.pistas)!.nombre} · pide ${fuenteDe(r.pistas)!.pide}`}
                                 >
-                                  consultar
+                                  {FUENTES_AUTOMATICAS.includes(fuenteDe(r.pistas)?.clave ?? '') ? 'ver página' : 'consultar'}
                                 </a>
                               )}
                             </div>

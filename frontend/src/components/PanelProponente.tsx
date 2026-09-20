@@ -29,6 +29,9 @@ interface Props {
   extra?: React.ReactNode
   /** Subir el certificado que el evaluador consultó en línea (null = solo lectura). */
   onSubirCertificado: ((requisito: number) => void) | null
+  /** Consultar el COPNIA en línea por la matrícula que se leyó del documento. */
+  onConsultarCopnia: ((requisito: number, matricula: string) => Promise<void>) | null
+  consultandoCopnia: number | null
 }
 
 function nombreArchivo(ruta: string): string {
@@ -151,7 +154,23 @@ export default function PanelProponente(p: Props) {
                             {texto}
                           </div>
                         )}
-                        {fuente(info.numero) && esPendiente(estado) && (
+                        {p.onConsultarCopnia && r.matricula_profesional && fuente(info.numero)?.clave === 'copnia' && esPendiente(estado) && (
+                          <div className="acciones">
+                            <span className="small muted">
+                              El COPNIA entrega este certificado en línea con la matrícula {r.matricula_profesional}.
+                            </span>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              type="button"
+                              disabled={p.consultandoCopnia !== null}
+                              onClick={() => void p.onConsultarCopnia?.(info.numero, r.matricula_profesional!)}
+                            >
+                              {p.consultandoCopnia === info.numero ? <span className="spinner oscuro" /> : <Icono nombre="descargar" tam={15} />}
+                              Consultar el COPNIA y adjuntarlo
+                            </button>
+                          </div>
+                        )}
+                        {fuente(info.numero) && fuente(info.numero)?.clave !== 'copnia' && esPendiente(estado) && (
                           <div className="acciones">
                             <span className="small muted">
                               Si ya lo consultó en{' '}

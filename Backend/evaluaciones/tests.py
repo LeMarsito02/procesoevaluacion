@@ -2450,3 +2450,33 @@ class IntegrantesJuridicosSinCertificadoTests(TestCase):
         self.assertFalse(resultado.cumple)
         self.assertEqual([p.estado for p in resultado.personas], ["falta"])
         self.assertNotIn("NIT )", resultado.motivo or "")
+
+
+class ConsultaEnLineaTests(TestCase):
+    """Certificados que el programa trae solo de la página oficial."""
+
+    def test_rnmc_de_persona_exige_la_fecha_de_expedicion(self):
+        from motor.consultas.linea import ConsultaError, consultar_rnmc
+
+        with self.assertRaises(ConsultaError) as caso:
+            consultar_rnmc("79446297", tipo="cedula")
+        self.assertIn("fecha de expedición", str(caso.exception))
+
+    def test_tipo_de_documento_no_soportado(self):
+        from motor.consultas.linea import ConsultaError, consultar_rnmc
+
+        with self.assertRaises(ConsultaError):
+            consultar_rnmc("79446297", tipo="pasaporte_extranjero")
+
+    def test_copnia_necesita_matricula_o_cedula(self):
+        from motor.consultas.linea import ConsultaError, consultar_copnia
+
+        with self.assertRaises(ConsultaError):
+            consultar_copnia("  ")
+
+    def test_solo_se_consultan_las_fuentes_sin_captcha(self):
+        from api.historico import FUENTES_EN_LINEA
+
+        self.assertEqual(set(FUENTES_EN_LINEA), {"juridica.rnmc", "juridica.copnia_antecedentes", "juridica.aval_ingeniero"})
+        for con_captcha in ("juridica.procuraduria", "juridica.contraloria", "juridica.policia", "juridica.redam"):
+            self.assertNotIn(con_captcha, FUENTES_EN_LINEA)
