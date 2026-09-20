@@ -30,6 +30,9 @@ RNMC_TIPOS = {"cedula": "55", "nit": "1", "cedula_extranjeria": "57", "pasaporte
 
 ESPERA = float(os.environ.get("CONSULTA_ESPERA", "90"))  # segundos que se le dan a la página
 
+# Ventana de error del RNMC: "× Error <mensaje> Aceptar".
+_AVISO_RNMC_RE = re.compile(r"ERROR\s+(.{10,220}?)\s+ACEPTAR")
+
 
 class ConsultaError(RuntimeError):
     """La página no respondió o respondió algo que no se puede interpretar."""
@@ -95,23 +98,38 @@ def consultar_rnmc(numero: str, tipo: str = "cedula", fecha_expedicion: date | N
                 pagina.click("#ctl00_ContentPlaceHolder3_btnConsultar")
             try:
                 pagina.wait_for_function(
-                    "() => /MEDIDAS CORRECTIVAS PENDIENTES|NO REGISTRA|no se encontr|no existe|no coincide|no corresponde/i"
-                    ".test(document.body.innerText)",
+                    "() => /MEDIDAS CORRECTIVAS PENDIENTES|NO REGISTRA|no se encontr|no existe|no coincide|no corresponde"
+                    "|no es correcta|verifique|error/i.test(document.body.innerText)",
                     timeout=ESPERA * 1000,
                 )
             except Exception as exc:  # noqa: BLE001
-                raise ConsultaError("La página del RNMC no respondió a tiempo.") from exc
+                raise ConsultaError(
+                    f"La página de la Policía (RNMC) no respondió en {int(ESPERA)} segundos. Suele pasar cuando su "
+                    "servicio está caído: vuelve a intentarlo más tarde o sube el certificado a mano."
+                ) from exc
             texto = pagina.inner_text("body")
             pdf = pagina.pdf(format="Letter", print_background=True)
         finally:
             navegador.close()
 
     plano = _norm(texto)
+    # La página avisa sus propios errores en una ventana: "Error · La fecha de
+    # expedición de la Cedula de Ciudadania no es correcta, por favor
+    # verifique. · Aceptar". Ese mensaje es el que necesita ver la persona.
+    aviso = _AVISO_RNMC_RE.search(plano)
+    if aviso and "NO TIENE MEDIDAS CORRECTIVAS PENDIENTES" not in plano:
+        raise ConsultaError(f"La página de la Policía responde: «{aviso.group(1).strip().capitalize()}»")
+    if "NO SE ENCONTR" in plano or "NO EXISTE" in plano:
+        raise ConsultaError(
+            f"La Policía no encontró el documento {numero} en el RNMC. Verifica el número de identificación de la persona."
+        )
     if "NO TIENE MEDIDAS CORRECTIVAS PENDIENTES" in plano:
         sin_novedades: bool | None = True
     elif "NO COINCIDE" in plano or "NO CORRESPONDE" in plano:
+        cuando = fecha_expedicion.strftime("%d/%m/%Y") if fecha_expedicion else "—"
         raise ConsultaError(
-            "El RNMC dice que la cédula y su fecha de expedición no coinciden: verifique los datos de la persona."
+            f"La Policía responde que la cédula {numero} y la fecha de expedición {cuando} no corresponden entre sí. "
+            "Verifica la fecha en el reverso de la cédula (o el número del documento) y vuelve a intentarlo."
         )
     elif "TIENE MEDIDAS CORRECTIVAS" in plano or "REGISTRA" in plano:
         sin_novedades = False
@@ -155,7 +173,9 @@ def consultar_copnia(identificacion: str, por: str = "matricula") -> Certificado
                 pagina.wait_for_selector("text=Generar Certificado de Vigencia", timeout=ESPERA * 1000)
             except Exception as exc:  # noqa: BLE001
                 raise ConsultaError(
-                    "El COPNIA no encontró ese registro profesional (o la página no respondió)."
+                    f"El COPNIA no encontró el registro profesional «{identificacion}» "
+                    f"(se buscó por {'cédula' if por == 'cedula' else 'número de matrícula'}). "
+                    "Verifica el dato o consulta el certificado a mano."
                 ) from exc
             with pagina.expect_download(timeout=ESPERA * 1000) as espera:
                 pagina.click("text=Generar Certificado de Vigencia")

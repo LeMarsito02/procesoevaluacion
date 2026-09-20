@@ -298,31 +298,39 @@ def _reevaluar(evaluacion, proponente, usuario) -> None:
         log.exception("No se pudo volver a evaluar %s tras adjuntar un certificado", proponente.hoja)
 
 
-def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date | None = None) -> date | None:
+def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date | None = None) -> date:
     """La fecha de expedición de la cédula, que el RNMC pide: la que escribió
     el evaluador, la registrada, o la que dice el reverso de la cédula que el
-    proponente aportó."""
+    proponente aportó. Si no hay ninguna, explica por qué y la pide."""
     if indicada is not None:
         if indicada > date.today():
-            raise HttpError(400, "La fecha de expedición no puede ser futura.")
+            raise HttpError(400, "La fecha de expedición de la cédula no puede ser futura.")
         persona.fecha_expedicion_documento = indicada
         persona.save(update_fields=["fecha_expedicion_documento"])
         return indicada
-    if persona.fecha_expedicion_documento or persona.tipo == "juridica":
+    if persona.fecha_expedicion_documento:
         return persona.fecha_expedicion_documento
-    from motor.evaluacion.identidad import fecha_expedicion_cedula
+    from motor.evaluacion.identidad import cedula_de, fecha_expedicion_cedula
     from motor.integrations.drive import download_file_bytes
     from motor.procesamiento.zip_utils import extraer_pdfs
 
+    porque = "no se encontró la copia de su cédula en la oferta"
     try:
         pdfs = extraer_pdfs(download_file_bytes(proponente.drive_file_id))
         fecha = fecha_expedicion_cedula(pdfs, persona.nombre, persona.documento)
+        if fecha is None and cedula_de(pdfs, persona.nombre, persona.documento) is not None:
+            porque = "su cédula está en la oferta, pero no se pudo leer la fecha (el escaneo no se deja leer o solo trae una cara)"
     except Exception:  # noqa: BLE001
         log.exception("No se pudo leer la cédula de %s para sacar su fecha de expedición", persona.nombre)
-        return None
-    if fecha is not None:
-        persona.fecha_expedicion_documento = fecha
-        persona.save(update_fields=["fecha_expedicion_documento"])
+        fecha, porque = None, "no se pudieron abrir los documentos de la oferta"
+    if fecha is None:
+        raise HttpError(
+            400,
+            f"La página de la Policía pide la fecha de expedición de la cédula de {persona.nombre} y {porque}. "
+            "Escríbela aquí (está en el reverso del documento) y se consulta de una vez.",
+        )
+    persona.fecha_expedicion_documento = fecha
+    persona.save(update_fields=["fecha_expedicion_documento"])
     return fecha
 
 
@@ -348,10 +356,11 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
 
     try:
         if fuente == "rnmc":
+            es_empresa = persona.tipo == "juridica"
             certificado = consultar_rnmc(
                 persona.documento,
-                tipo="nit" if persona.tipo == "juridica" else "cedula",
-                fecha_expedicion=_fecha_de_expedicion(persona, proponente, datos.fecha_expedicion_documento),
+                tipo="nit" if es_empresa else "cedula",
+                fecha_expedicion=None if es_empresa else _fecha_de_expedicion(persona, proponente, datos.fecha_expedicion_documento),
             )
         elif datos.matricula:
             certificado = consultar_copnia(datos.matricula.strip(), por="matricula")
@@ -362,12 +371,27 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
     except ConsultaError as exc:
         # Algo que la persona puede resolver (falta un dato, no existe el registro).
         raise HttpError(400, str(exc)) from exc
+    except HttpError:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.exception("Falló la consulta en línea de %s", fuente)
-        raise HttpError(502, "No se pudo consultar la página oficial. Intente de nuevo o suba el certificado a mano.") from exc
+        donde = "la Policía (RNMC)" if fuente == "rnmc" else "el COPNIA"
+        raise HttpError(
+            502,
+            f"La página de {donde} no respondió o cambió de forma ({type(exc).__name__}). "
+            "Vuelva a intentarlo en unos minutos; si sigue igual, consúltelo usted y súbalo con el botón «Subir».",
+        ) from exc
 
     # Si la página no dice claramente que la persona está sin novedades, el
     # certificado igual se guarda: lo revisa el evaluador, nunca se aprueba solo.
+    # Si la página no dijo nada concluyente, no se adjunta un PDF que no
+    # prueba nada: se explica y el evaluador decide.
+    if certificado.sin_novedades is None:
+        raise HttpError(
+            502,
+            f"La página respondió algo que no se pudo interpretar para {persona.nombre if persona else datos.matricula}. "
+            "Revísela usted y suba el certificado con el botón «Subir».",
+        )
     de_quien = f" a nombre de {certificado.nombre}" if certificado.nombre else ""
     nota = f"Consultado en línea por MiEvaluador en la página oficial ({'RNMC' if fuente == 'rnmc' else 'COPNIA'}){de_quien}."
     if certificado.sin_novedades is True:

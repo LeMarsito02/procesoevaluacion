@@ -2598,3 +2598,24 @@ class CertificadoAportadoSeVeTests(BaseHistorico):
         proponente = servicios.proponente_motor(Proponente.objects.get(pk=self.p1), evaluacion)
         self.assertEqual([n for n, _ in proponente.documentos_aportados], ["Req 14 - contraloria.pdf"])
         self.assertTrue(proponente.documentos_aportados[0][1].startswith(b"%PDF"))
+
+
+class ErroresDeConsultaClarosTests(TestCase):
+    """Cuando de verdad no se puede, hay que decir por qué."""
+
+    def test_el_aviso_de_la_pagina_llega_tal_cual(self):
+        from motor.consultas import linea
+
+        pagina = ("Policía Nacional de Colombia × Error La fecha de expedición de la Cedula de Ciudadania no es correcta, "
+                  "por favor verifique. Aceptar Sistema Registro Nacional de Medidas Correctivas RNMC")
+        aviso = linea._AVISO_RNMC_RE.search(linea._norm(pagina))
+        self.assertIsNotNone(aviso)
+        self.assertIn("NO ES CORRECTA", aviso.group(1))
+
+    def test_el_titulo_de_la_pagina_no_se_confunde_con_un_resultado(self):
+        from motor.consultas import linea
+
+        # "Medidas Correctivas" está en el título: solo la frase completa del
+        # resultado significa que la persona está limpia.
+        titulo = linea._norm("Sistema Registro Nacional de Medidas Correctivas RNMC")
+        self.assertNotIn("NO TIENE MEDIDAS CORRECTIVAS PENDIENTES", titulo)
