@@ -40,6 +40,8 @@ interface Props {
   proponenteId: string
   soloLectura: boolean
   onVerPdf: (blob: Blob, titulo: string) => void
+  /** Abre un documento de la oferta (o un certificado aportado) por su ruta. */
+  onVerDocumento?: (archivo: string, requisito: number) => void
   /** Requisito cuyo certificado se va a subir, pedido desde la tarjeta del requisito. */
   subirRequisito?: number | null
   onSubidaAtendida?: () => void
@@ -48,7 +50,7 @@ interface Props {
 }
 
 /** Personas cuyos antecedentes se verifican y certificados que el evaluador aportó. */
-export default function AntecedentesProponente({ evaluacionId, proponenteId, soloLectura, onVerPdf, subirRequisito, onSubidaAtendida, foco }: Props) {
+export default function AntecedentesProponente({ evaluacionId, proponenteId, soloLectura, onVerPdf, onVerDocumento, subirRequisito, onSubidaAtendida, foco }: Props) {
   const [datos, setDatos] = useState<Antecedentes | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [agregando, setAgregando] = useState<{ de: PersonaVerificada | null } | null>(null)
@@ -56,19 +58,9 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   const [copiado, setCopiado] = useState<string | null>(null)
   // Consulta en curso: "<persona>|<requisito>".
   const [consultando, setConsultando] = useState<string | null>(null)
-
-  async function consultar(persona: PersonaVerificada, requisito: number) {
-    setConsultando(`${persona.id}|${requisito}`)
-    try {
-      await consultarEnLinea(evaluacionId, proponenteId, { requisito, persona_id: persona.id })
-      recargar()
-      setError(null)
-    } catch (e) {
-      setError(mensajeDe(e))
-    } finally {
-      setConsultando(null)
-    }
-  }
+  // Cuando el RNMC pide la fecha de expedición de la cédula y no la tenemos.
+  const [pideFecha, setPideFecha] = useState<{ persona: PersonaVerificada; requisito: number } | null>(null)
+  const [fechaEscrita, setFechaEscrita] = useState('')
 
   const recargar = useCallback(() => {
     obtenerAntecedentes(evaluacionId, proponenteId)
@@ -82,6 +74,28 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   useEffect(() => {
     recargar()
   }, [recargar])
+
+  async function consultar(persona: PersonaVerificada, requisito: number, fecha?: string) {
+    setConsultando(`${persona.id}|${requisito}`)
+    try {
+      await consultarEnLinea(evaluacionId, proponenteId, {
+        requisito,
+        persona_id: persona.id,
+        ...(fecha ? { fecha_expedicion_documento: fecha } : {}),
+      })
+      setPideFecha(null)
+      setFechaEscrita('')
+      recargar()
+      setError(null)
+    } catch (e) {
+      const mensaje = mensajeDe(e)
+      // La página oficial necesita ese dato: se pide aquí mismo.
+      if (/fecha de expedici/i.test(mensaje)) setPideFecha({ persona, requisito })
+      setError(mensaje)
+    } finally {
+      setConsultando(null)
+    }
+  }
 
 
   async function accion(f: () => Promise<unknown>) {
@@ -212,9 +226,17 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                           </div>
                         ))}
                         {docs.length === 0 && estado(per.id, r.numero)?.estado === 'cumple' && (
-                          <span className="pill" data-estado="cumple" title={estado(per.id, r.numero)?.archivo ?? ''}>
-                            <span className="dot" /> En la oferta
-                          </span>
+                          // El documento con el que se dio por cumplido: de la oferta o el que se aportó.
+                          <button
+                            type="button"
+                            className="pill"
+                            data-estado="cumple"
+                            title={`${estado(per.id, r.numero)?.archivo ?? ''} — clic para verlo`}
+                            disabled={!estado(per.id, r.numero)?.archivo || !onVerDocumento}
+                            onClick={() => onVerDocumento?.(estado(per.id, r.numero)!.archivo!, r.numero)}
+                          >
+                            <span className="dot" /> Ver certificado
+                          </button>
                         )}
                         {docs.length === 0 && estado(per.id, r.numero)?.estado === 'no_requerido' && (
                           <span className="small muted" title="La regla no le exige este certificado a esta persona">
@@ -315,6 +337,32 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
             })
           }
         />
+      )}
+      {pideFecha && (
+        <div className="formulario-inline">
+          <strong className="small">
+            El RNMC pide la fecha de expedición de la cédula de {pideFecha.persona.nombre} (está en el reverso del documento).
+          </strong>
+          <div className="grid-persona">
+            <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              Fecha de expedición
+              <input className="input select-sm" type="date" value={fechaEscrita} onChange={(e) => setFechaEscrita(e.target.value)} />
+            </label>
+          </div>
+          <div className="acciones" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setPideFecha(null); setError(null) }}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={!fechaEscrita || consultando !== null}
+              onClick={() => void consultar(pideFecha.persona, pideFecha.requisito, fechaEscrita)}
+            >
+              {consultando ? <span className="spinner" /> : null} Consultar
+            </button>
+          </div>
+        </div>
       )}
       {subida && (
         <FormularioCertificado

@@ -22,7 +22,7 @@ from motor import criterios
 from motor.evaluacion.antecedentes import FORMULARIO_SECOP_RE
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.procesamiento.pdf_utils import abrir_pdf, extraer_texto, texto_pagina
-from motor.procesamiento.zip_utils import extraer_pdfs
+from motor.procesamiento.zip_utils import extraer_pdfs, pdfs_con_aportados
 
 PAGINAS_A_REVISAR = 2
 
@@ -390,7 +390,7 @@ def evaluar_proponente_requisito12(proponente: Proponente, proceso: ProcesoDocum
     except Exception as exc:  # noqa: BLE001
         return ResultadoRequisito(**base, error=f"No se pudo descargar el archivo de Drive: {exc}")
 
-    pdfs = extraer_pdfs(zip_bytes)
+    pdfs = pdfs_con_aportados(zip_bytes, proponente)
     if not pdfs:
         return finalizar(
             ResultadoRequisito(**base, error="El archivo del proponente no contiene PDFs legibles (¿zip dañado?)."),

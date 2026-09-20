@@ -88,7 +88,8 @@ async def _atender(trabajo: Trabajo) -> None:
     documento.criterios = (await sync_to_async(definicion_de)(trabajo.evaluacion)).model_dump(mode="json")
     inicio = timezone.now()
     try:
-        resultados = await evaluar_todos_en_proceso(proponente_motor(trabajo.proponente), documento)
+        proponente = await sync_to_async(proponente_motor)(trabajo.proponente, trabajo.evaluacion)
+        resultados = await evaluar_todos_en_proceso(proponente, documento)
         await sync_to_async(_cerrar)(trabajo, resultados, None)
         log.info("%s %s en %.0fs", trabajo.evaluacion.proceso.codigo, trabajo.proponente.hoja, (timezone.now() - inicio).total_seconds())
     except Exception as exc:  # noqa: BLE001

@@ -35,7 +35,7 @@ from evaluaciones.models import (
 from evaluaciones.reporte import generar_reporte, validacion
 from motor.esquemas.proceso import ResultadoRequisito
 from motor.integrations.drive import download_file_bytes
-from motor.procesamiento.zip_utils import extraer_pdfs
+from motor.procesamiento.zip_utils import PREFIJO_APORTADOS, extraer_pdfs
 
 log = logging.getLogger("mievaluador.expediente")
 
@@ -120,6 +120,9 @@ def construir(expediente: Expediente) -> None:
                         pdfs = {}
                         avisos.append(f"{p.hoja}: no se pudo descargar la oferta ({exc}); se conserva el registro sin los documentos.")
                     for ruta in usados:
+                        # Los certificados aportados se guardan aparte, más abajo.
+                        if ruta.startswith(PREFIJO_APORTADOS):
+                            continue
                         contenido = pdfs.get(ruta)
                         if contenido is None:
                             if pdfs:

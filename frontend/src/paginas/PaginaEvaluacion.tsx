@@ -458,6 +458,10 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
               proponenteId={panelProponente.id}
               soloLectura={soloLectura}
               onVerPdf={(blob) => window.open(URL.createObjectURL(blob), '_blank', 'noopener')}
+              onVerDocumento={(archivo, requisito) => {
+                const resultado = (resultados[panelProponente.hoja] ?? []).find((r) => r.requisito === requisito)
+                if (resultado) void abrirDocumento(resultado, archivo)
+              }}
               subirRequisito={subirCertificado}
               onSubidaAtendida={() => setSubirCertificado(null)}
               foco={panel.persona && panel.requisito ? { persona: panel.persona, requisito: panel.requisito } : null}

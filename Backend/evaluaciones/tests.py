@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from unittest import mock
+from urllib.parse import quote
 
 from asgiref.sync import async_to_sync
 
@@ -2517,3 +2518,83 @@ class FechaExpedicionCedulaTests(TestCase):
 
         self.assertIsNone(fecha_expedicion_en("30-FEB-1999 BOGOTA FECHA Y LUGAR DE EXPEDICION"))
         self.assertIsNone(fecha_expedicion_en("05-JUN-2045 BOGOTA FECHA Y LUGAR DE EXPEDICION"))
+
+
+class FechaSoloDeSuCedulaTests(TestCase):
+    """Una carpeta puede traer las cédulas de varias personas: la fecha de
+    expedición de otro no sirve para consultar nada."""
+
+    def test_no_toma_la_fecha_de_la_cedula_de_otra_persona(self):
+        from unittest.mock import patch
+
+        from motor.evaluacion import identidad
+
+        pagina = ("REPUBLICA DE COLOMBIA CEDULA DE CIUDADANIA NUMERO 43.001.767 GARCIA BETANCUR MARTA EUGENIA "
+                  "01-MAR-1979 MEDELLIN FECHA Y LUGAR DE EXPEDICION")
+        with patch.object(identidad, "cedula_de", return_value="doc.pdf"), \
+             patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
+             patch.object(identidad, "texto_ocr_reforzado", return_value=""):
+            propia = identidad.fecha_expedicion_cedula({"doc.pdf": b"x"}, "MARTA EUGENIA GARCIA BETANCUR", "43001767")
+            ajena = identidad.fecha_expedicion_cedula({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
+        self.assertEqual(propia.isoformat(), "1979-03-01")
+        self.assertIsNone(ajena)
+
+
+class CertificadoMasRecienteTests(TestCase):
+    """Si el evaluador aportó un certificado nuevo, ese manda sobre el de la
+    oferta: si no, adjuntarlo no serviría de nada."""
+
+    def test_gana_el_expedido_mas_tarde(self):
+        from motor.evaluacion.antecedentes import _mas_reciente
+
+        viejo = ("oferta/contraloria.pdf", "SE EXPIDE EL 26 DE MAYO DE 2026")
+        nuevo = ("aportados/Req 14 - RNMC.pdf", "SE EXPIDE EL 20 DE SEPTIEMBRE DE 2026")
+        self.assertEqual(_mas_reciente([viejo, nuevo])[0], nuevo[0])
+        self.assertEqual(_mas_reciente([nuevo, viejo])[0], nuevo[0])
+        self.assertEqual(_mas_reciente([viejo])[0], viejo[0])
+        self.assertIsNone(_mas_reciente([]))
+
+    def test_los_aportados_entran_como_documentos_del_proponente(self):
+        from motor.esquemas.proceso import Proponente
+        from motor.procesamiento.zip_utils import pdfs_con_aportados
+
+        proponente = Proponente(
+            numero_orden=1, hoja="P-01", nombre_proponente="ACME", nombre_archivo="1. ACME.zip", drive_file_id="x",
+            documentos_aportados=[("Req 17 - RNMC 43001767.pdf", b"%PDF-nuevo")],
+        )
+        with mock.patch("motor.procesamiento.zip_utils.extraer_pdfs", return_value={"oferta/carta.pdf": b"%PDF-viejo"}):
+            pdfs = pdfs_con_aportados(b"zip", proponente)
+        self.assertEqual(sorted(pdfs), ["aportados/Req 17 - RNMC 43001767.pdf", "oferta/carta.pdf"])
+
+
+class CertificadoAportadoSeVeTests(BaseHistorico):
+    """El certificado que se aportó o se consultó en línea se abre desde la
+    pantalla y entra a la evaluación como un documento más de la oferta."""
+
+    def test_se_abre_por_su_ruta_de_aportado(self):
+        r = self.aportar(self.abogado, self.p1, 14, nombre="contraloria.pdf")
+        self.assertEqual(r.status_code, 201, r.content)
+        ruta = f"aportados/Req 14 - {r.json()['nombre_original']}"
+        respuesta = self.abogado.get(
+            f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/documento?archivo={quote(ruta)}"
+        )
+        self.assertEqual(respuesta.status_code, 200, respuesta.content[:200])
+        self.assertEqual(respuesta["Content-Type"], "application/pdf")
+        self.assertTrue(bytes(respuesta.content).startswith(b"%PDF"))
+
+    def test_aportar_vuelve_a_poner_al_proponente_en_la_fila(self):
+        from evaluaciones.models import Trabajo
+
+        Trabajo.objects.filter(evaluacion_id=self.ev["id"]).delete()
+        self.aportar(self.abogado, self.p1, 14, nombre="contraloria.pdf")
+        self.assertTrue(Trabajo.objects.filter(evaluacion_id=self.ev["id"], proponente_id=self.p1).exists())
+
+    def test_el_motor_recibe_el_certificado_aportado(self):
+        from evaluaciones import servicios
+        from evaluaciones.models import Evaluacion, Proponente
+
+        self.aportar(self.abogado, self.p1, 14, nombre="contraloria.pdf")
+        evaluacion = Evaluacion.objects.get(pk=self.ev["id"])
+        proponente = servicios.proponente_motor(Proponente.objects.get(pk=self.p1), evaluacion)
+        self.assertEqual([n for n, _ in proponente.documentos_aportados], ["Req 14 - contraloria.pdf"])
+        self.assertTrue(proponente.documentos_aportados[0][1].startswith(b"%PDF"))

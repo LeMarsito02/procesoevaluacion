@@ -78,7 +78,11 @@ export async function aportarDocumento(
 }
 
 /** Consulta el certificado en la página oficial y lo adjunta (solo RNMC y COPNIA: las demás piden captcha). */
-export const consultarEnLinea = (ev: string, prop: string, datos: { requisito: number; persona_id?: string; matricula?: string }) =>
+export const consultarEnLinea = (
+  ev: string,
+  prop: string,
+  datos: { requisito: number; persona_id?: string; matricula?: string; fecha_expedicion_documento?: string },
+) =>
   enviarJson<DocumentoAportado>(`${base(ev)}/proponentes/${prop}/consultar`, 'POST', datos)
 
 export const quitarAportado = (ev: string, id: string) => enviarJson<void>(`${base(ev)}/aportados/${id}`, 'DELETE')

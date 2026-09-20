@@ -1,6 +1,7 @@
 """Lógica de evaluaciones compartida por la API y el trabajador de la fila."""
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from datetime import timedelta
 from uuid import UUID
@@ -23,6 +24,8 @@ from evaluaciones.models import (
 from motor import criterios
 from motor.esquemas.proceso import Proponente as ProponenteMotor
 from motor.esquemas.proceso import ResultadoRequisito
+
+log = logging.getLogger(__name__)
 
 PENDIENTES = (EstadoTrabajo.EN_FILA, EstadoTrabajo.PROCESANDO)
 # Sin datos todavía: estimación conservadora por proponente (medición real ~45 s en frío).
@@ -111,7 +114,10 @@ def aplicar_revision(datos: dict, revision: Revision | None) -> ResultadoRequisi
     return r.model_copy(update={"cumple": False, "error": None, "motivo": motivo})
 
 
-def proponente_motor(p: Proponente) -> ProponenteMotor:
+def proponente_motor(p: Proponente, evaluacion: Evaluacion | None = None) -> ProponenteMotor:
+    """El proponente como lo ve el motor. Con `evaluacion` se le suman los
+    certificados que el evaluador aportó o que el programa consultó en línea,
+    para que el motor los lea como parte de la oferta."""
     return ProponenteMotor(
         numero_orden=p.numero_orden,
         hoja=p.hoja,
@@ -119,7 +125,21 @@ def proponente_motor(p: Proponente) -> ProponenteMotor:
         nombre_archivo=p.nombre_archivo,
         drive_file_id=p.drive_file_id,
         advertencia=p.advertencia or None,
+        documentos_aportados=_documentos_aportados(p, evaluacion) if evaluacion is not None else [],
     )
+
+
+def _documentos_aportados(p: Proponente, evaluacion: Evaluacion) -> list[tuple[str, bytes]]:
+    from evaluaciones.models import DocumentoAportado
+
+    documentos = []
+    for d in DocumentoAportado.objects.filter(evaluacion=evaluacion, proponente=p):
+        try:
+            with d.archivo.open("rb") as archivo:
+                documentos.append((f"Req {d.requisito} - {d.nombre_original}", archivo.read()))
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo leer el documento aportado %s", d.pk)
+    return documentos
 
 
 def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultados: list[ResultadoRequisito]) -> None:

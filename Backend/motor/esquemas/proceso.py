@@ -33,6 +33,9 @@ class Proponente(BaseModel):
     nombre_archivo: str = Field(..., description="Nombre original del archivo/carpeta en Drive")
     drive_file_id: str
     advertencia: str | None = Field(default=None, description="Ej. nombre de archivo que no se pudo interpretar")
+    # Certificados que el evaluador subió o que el programa consultó en línea:
+    # se evalúan como si vinieran en la oferta. (nombre, contenido del PDF)
+    documentos_aportados: list[tuple[str, bytes]] = Field(default_factory=list)
 
 
 class ProcesoDocumentoBase(BaseModel):

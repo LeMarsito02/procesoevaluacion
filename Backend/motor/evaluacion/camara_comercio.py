@@ -21,7 +21,7 @@ from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.llm.cliente import cita_literal, consultar_json
 from motor.procesamiento.pdf_utils import abrir_pdf, buscar_pagina, extraer_texto, texto_pagina
-from motor.procesamiento.zip_utils import extraer_pdfs
+from motor.procesamiento.zip_utils import extraer_pdfs, pdfs_con_aportados
 
 # Cuántas páginas se revisan buscando el título. No basta con la primera:
 # varios proponentes reales anteponen una carátula con el membrete de la
@@ -800,7 +800,7 @@ def _evaluar_proponente_camara(
     except Exception as exc:  # noqa: BLE001
         return ResultadoRequisito(**base, error=f"No se pudo descargar el archivo de Drive: {exc}")
 
-    pdfs = extraer_pdfs(zip_bytes)
+    pdfs = pdfs_con_aportados(zip_bytes, proponente)
     if not pdfs:
         return finalizar(
             ResultadoRequisito(**base, error="El archivo del proponente no contiene PDFs legibles (¿zip dañado?)."),

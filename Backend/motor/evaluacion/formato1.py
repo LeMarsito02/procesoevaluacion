@@ -66,7 +66,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 54
+VERSION_LOGICA = 55
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -77,6 +77,9 @@ def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str
         "md5": md5,
         "codigo_proceso": proceso.codigo_proceso,
         "lotes": sorted(lote.numero for lote in proceso.lotes),
+        # Un certificado aportado o consultado cambia el resultado: sin esto se
+        # serviría el resultado anterior, sin ese documento.
+        "aportados": sorted(nombre for nombre, _ in (proponente.documentos_aportados or [])),
     }
     # Datos que cambian el resultado y que el usuario puede corregir antes de
     # volver a evaluar: sin ellos se servirían resultados viejos desde la caché.

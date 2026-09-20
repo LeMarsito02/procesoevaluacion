@@ -143,3 +143,17 @@ def _extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> d
         pdfs = _deduplicar_por_contenido(pdfs)
 
     return pdfs
+
+
+PREFIJO_APORTADOS = "aportados/"
+
+
+def pdfs_con_aportados(zip_bytes: bytes, proponente) -> dict[str, bytes]:
+    """Los PDFs de la oferta más los certificados que el evaluador aportó o que
+    el programa consultó en línea: para el motor son documentos del proponente
+    como cualquier otro (así el requisito deja de estar pendiente en cuanto el
+    certificado que faltaba está)."""
+    pdfs = dict(extraer_pdfs(zip_bytes))
+    for nombre, contenido in getattr(proponente, "documentos_aportados", []) or []:
+        pdfs[f"{PREFIJO_APORTADOS}{nombre}"] = contenido
+    return pdfs

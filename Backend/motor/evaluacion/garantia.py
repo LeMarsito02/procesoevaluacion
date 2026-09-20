@@ -11,7 +11,7 @@ from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.llm.cliente import aparece_en_texto, consultar_json
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.pdf_utils import extraer_texto, texto_ocr_reforzado
-from motor.procesamiento.zip_utils import extraer_pdfs
+from motor.procesamiento.zip_utils import extraer_pdfs, pdfs_con_aportados
 
 PAGINAS_A_REVISAR = 2
 PISTAS_POLIZA = ("poliza", "garantia", "seriedad")
@@ -582,7 +582,7 @@ def evaluar_proponente_requisito11(proponente: Proponente, proceso: ProcesoDocum
     except Exception as exc:  # noqa: BLE001
         return ResultadoRequisito(**base, error=f"No se pudo descargar el archivo de Drive: {exc}")
 
-    pdfs = extraer_pdfs(zip_bytes)
+    pdfs = pdfs_con_aportados(zip_bytes, proponente)
     if not pdfs:
         return finalizar(
             ResultadoRequisito(**base, error="El archivo del proponente no contiene PDFs legibles (¿zip dañado?)."),

@@ -43,7 +43,7 @@ from evaluaciones.permisos import (
 )
 from motor.esquemas.proceso import ProcesoDocumentoBase
 from motor.integrations.drive import download_file_bytes
-from motor.procesamiento.zip_utils import extraer_pdfs
+from motor.procesamiento.zip_utils import PREFIJO_APORTADOS, extraer_pdfs
 
 router = Router(tags=["evaluaciones"], auth=sesion_activa)
 
@@ -830,6 +830,16 @@ def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
     return respuesta
 
 
+def _contenido_aportado(evaluacion, proponente, nombre: str) -> bytes | None:
+    from evaluaciones.models import DocumentoAportado
+
+    for d in DocumentoAportado.objects.filter(evaluacion=evaluacion, proponente=proponente):
+        if f"Req {d.requisito} - {d.nombre_original}" == nombre:
+            with d.archivo.open("rb") as archivo_aportado:
+                return archivo_aportado.read()
+    return None
+
+
 @router.get("/{evaluacion_id}/proponentes/{proponente_id}/documento")
 def documento(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, archivo: str) -> HttpResponse:
     usuario: Usuario = request.auth
@@ -841,6 +851,15 @@ def documento(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, ar
             f"Los documentos de este proceso se eliminaron el {timezone.localtime(evaluacion.proceso.documentos_eliminados_en):%d/%m/%Y} "
             "por la política de retención. Los resultados, decisiones e informes se conservan.",
         )
+    # Certificados que el evaluador subió o que el programa consultó en línea:
+    # el motor los evalúa como documentos del proponente, así que también se
+    # abren desde aquí ("aportados/Req 17 - RNMC 43001767.pdf").
+    if archivo.startswith(PREFIJO_APORTADOS):
+        contenido = _contenido_aportado(evaluacion, proponente, archivo[len(PREFIJO_APORTADOS) :])
+        if contenido is None:
+            raise HttpError(404, "Ese certificado aportado ya no está disponible.")
+        auditar(request, "documento.visto", objeto=evaluacion, hoja=proponente.hoja, archivo=archivo)
+        return HttpResponse(contenido, content_type="application/pdf")
     try:
         zip_bytes = download_file_bytes(proponente.drive_file_id)
     except Exception as exc:  # noqa: BLE001

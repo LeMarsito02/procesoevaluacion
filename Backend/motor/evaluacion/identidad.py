@@ -205,18 +205,23 @@ def fecha_expedicion_en(texto_norm: str) -> date | None:
 def fecha_expedicion_cedula(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False) -> date | None:
     """La fecha de expedición de la cédula de esa persona, leída de la copia
     que viene en la oferta (los proponentes la escanean por ambos lados). La
-    pide el RNMC para consultar sus antecedentes."""
+    pide el RNMC para consultar sus antecedentes.
+
+    Solo se lee de una página que sea demostrablemente suya (trae su número o
+    su nombre): una carpeta puede traer las cédulas de varias personas y una
+    fecha de otro no sirve para consultar nada."""
     archivo = cedula_de(pdfs, nombre, cedula, principal=principal)
     if archivo is None:
         return None
+    numero = _digitos(cedula or "")
     for nombre_archivo, texto in paginas_cedula(pdfs):
-        if nombre_archivo == archivo and (fecha := fecha_expedicion_en(texto)) is not None:
+        if nombre_archivo == archivo and _es_suyo(nombre, numero, texto) and (fecha := fecha_expedicion_en(texto)):
             return fecha
     try:
         reforzado = _norm(texto_ocr_reforzado(pdfs[archivo], max_paginas=PAGINAS_REFORZADAS))
     except Exception:  # noqa: BLE001
         return None
-    return fecha_expedicion_en(reforzado)
+    return fecha_expedicion_en(reforzado) if _es_suyo(nombre, numero, reforzado) else None
 
 
 class ResultadoIdentidad:
@@ -252,8 +257,10 @@ def evaluar_identidad(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase, tip
             faltan.append(nombre)
         else:
             archivo = archivo or encontrado
+            # La fecha solo si la página es suya (trae su número o su nombre).
             fecha = next(
-                (f for a, texto in paginas_cedula(pdfs) if a == encontrado and (f := fecha_expedicion_en(texto))),
+                (f for a, texto in paginas_cedula(pdfs)
+                 if a == encontrado and _es_suyo(nombre, _digitos(cedula or ""), texto) and (f := fecha_expedicion_en(texto))),
                 None,
             )
         detalle.append(PersonaAntecedente(

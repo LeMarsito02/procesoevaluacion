@@ -27,7 +27,7 @@ from motor.evaluacion.proponente_plural import (
 from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.esquemas.proceso import PersonaAntecedente, ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.pdf_utils import abrir_pdf, texto_pagina
-from motor.procesamiento.zip_utils import extraer_pdfs
+from motor.procesamiento.zip_utils import extraer_pdfs, pdfs_con_aportados
 
 # Se leen al menos estas páginas de cada PDF buscando algún certificado de
 # antecedentes. Si aparece alguno, se sigue leyendo hasta
@@ -195,6 +195,24 @@ def _con_integrantes_naturales(personas: list[tuple], integrantes: list[Integran
     return todas
 
 
+def _mas_reciente(certificados: list[tuple[str, str]]) -> tuple[str, str] | None:
+    """Entre varios certificados de la misma persona o empresa, el expedido más
+    tarde: el evaluador pudo aportar uno nuevo porque el de la oferta ya no
+    servía."""
+    from motor.evaluacion.personalizado import fecha_expedicion
+
+    if not certificados:
+        return None
+    if len(certificados) == 1:
+        return certificados[0]
+    con_fecha = [(fecha_expedicion(_norm(texto)), archivo, texto) for archivo, texto in certificados]
+    fechadas = [c for c in con_fecha if c[0] is not None]
+    if not fechadas:
+        return certificados[0]
+    fecha, archivo, texto = max(fechadas, key=lambda c: c[0])
+    return archivo, texto
+
+
 def _nit_texto(empresa: Empresa) -> str:
     return f" (NIT {empresa.nit})" if empresa.nit else ""
 
@@ -279,6 +297,14 @@ def problema_de_vigencia(config: AntecedenteConfig, texto_norm: str, fecha_cierr
     return None
 
 
+class _Certificado:
+    """Par (archivo, texto) del certificado elegido para una empresa."""
+
+    def __init__(self, archivo: str, texto: str) -> None:
+        self.archivo = archivo
+        self.texto = texto
+
+
 class ResultadoEvaluacionAntecedente:
     def __init__(
         self, cumple: bool, motivo: str | None, archivo: str | None, personas: list[PersonaAntecedente] | None = None
@@ -330,7 +356,7 @@ def evaluar_antecedente(
                 (cedula for nombre, cedula in pares_conocidos if _nombres_coinciden(nombre, nombre_persona)), None
             )
         cedula_persona_digitos = _solo_digitos(cedula_persona) if cedula_persona else None
-        encontrado = None
+        suyos = []
         for archivo, texto, nombre_doc, cedula_doc in identidades:
             if cedula_persona_digitos and cedula_doc:
                 # Con ambas cédulas manda la cédula: dos personas pueden
@@ -339,8 +365,10 @@ def evaluar_antecedente(
             else:
                 coincide = nombre_doc is not None and _nombres_coinciden(nombre_doc, nombre_persona)
             if coincide:
-                encontrado = (archivo, texto)
-                break
+                suyos.append((archivo, texto))
+        # Si la persona tiene varios certificados (el de la oferta y el que el
+        # evaluador consultó después), manda el más reciente.
+        encontrado = _mas_reciente(suyos)
         base = {"nombre": nombre_persona, "documento": cedula_persona_digitos, "tipo": "natural", "rol": rol}
         if encontrado is None:
             faltantes.append(f"no se aportó el certificado de {config.entidad} de {nombre_persona}")
@@ -365,9 +393,12 @@ def evaluar_antecedente(
                 "rol": "integrante" if plural else "proponente"}
         # Sin NIT (integrante del Formato 2 que no aportó certificado de
         # existencia) no se puede emparejar el certificado: queda para revisar.
-        suyo = next(
-            (c for c in candidatos if empresa.nit and _nit_del_certificado(config.requisito, _norm(c.texto)) == empresa.nit), None
-        )
+        suyo_par = _mas_reciente([
+            (c.archivo, c.texto)
+            for c in candidatos
+            if empresa.nit and _nit_del_certificado(config.requisito, _norm(c.texto)) == empresa.nit
+        ])
+        suyo = _Certificado(*suyo_par) if suyo_par else None
         if suyo is None:
             faltantes.append(f"no se aportó el certificado de {config.entidad} de {empresa.nombre}{_nit_texto(empresa)}")
             resultados.append(PersonaAntecedente(**base, estado="falta"))
@@ -434,7 +465,7 @@ def _evaluar_proponente_antecedente(
     except Exception as exc:  # noqa: BLE001
         return ResultadoRequisito(**base, error=f"No se pudo descargar el archivo de Drive: {exc}")
 
-    pdfs = extraer_pdfs(zip_bytes)
+    pdfs = pdfs_con_aportados(zip_bytes, proponente)
     if not pdfs:
         return finalizar(
             ResultadoRequisito(**base, error="El archivo del proponente no contiene PDFs legibles (¿zip dañado?)."),

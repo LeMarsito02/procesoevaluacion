@@ -265,6 +265,7 @@ def aportar_documento(
             persona=persona.nombre if persona else None,
             fecha_expedicion=fecha_expedicion.isoformat(),
         )
+    _reevaluar(evaluacion, proponente, usuario)
     return 201, _aportado_out(doc)
 
 
@@ -274,6 +275,9 @@ class ConsultaIn(Schema):
     # El COPNIA se consulta por la matrícula del profesional que avala la
     # propuesta, que no es una de las personas con antecedentes.
     matricula: str | None = None
+    # El RNMC pide la fecha de expedición de la cédula: si no está registrada
+    # ni se pudo leer del documento, el evaluador la escribe.
+    fecha_expedicion_documento: date | None = None
 
 
 # Certificados que el programa puede traer solo: su página oficial no pide
@@ -282,9 +286,28 @@ class ConsultaIn(Schema):
 FUENTES_EN_LINEA = {"juridica.rnmc": "rnmc", "juridica.copnia_antecedentes": "copnia", "juridica.aval_ingeniero": "copnia"}
 
 
-def _fecha_de_expedicion(persona: PersonaVerificada, proponente) -> date | None:
-    """La fecha de expedición de la cédula, que el RNMC pide: la registrada, o
-    la que dice el reverso de la cédula que el proponente aportó."""
+def _reevaluar(evaluacion, proponente, usuario) -> None:
+    """Pone al proponente en la fila para que el motor lea el certificado que
+    se acaba de adjuntar: así el requisito deja de estar pendiente solo, sin
+    que nadie tenga que decidirlo a mano."""
+    if evaluacion.estado in (EstadoEvaluacion.APROBADA,):
+        return
+    try:
+        servicios.encolar(evaluacion, [proponente.id], usuario)
+    except Exception:  # noqa: BLE001
+        log.exception("No se pudo volver a evaluar %s tras adjuntar un certificado", proponente.hoja)
+
+
+def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date | None = None) -> date | None:
+    """La fecha de expedición de la cédula, que el RNMC pide: la que escribió
+    el evaluador, la registrada, o la que dice el reverso de la cédula que el
+    proponente aportó."""
+    if indicada is not None:
+        if indicada > date.today():
+            raise HttpError(400, "La fecha de expedición no puede ser futura.")
+        persona.fecha_expedicion_documento = indicada
+        persona.save(update_fields=["fecha_expedicion_documento"])
+        return indicada
     if persona.fecha_expedicion_documento or persona.tipo == "juridica":
         return persona.fecha_expedicion_documento
     from motor.evaluacion.identidad import fecha_expedicion_cedula
@@ -328,7 +351,7 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
             certificado = consultar_rnmc(
                 persona.documento,
                 tipo="nit" if persona.tipo == "juridica" else "cedula",
-                fecha_expedicion=_fecha_de_expedicion(persona, proponente),
+                fecha_expedicion=_fecha_de_expedicion(persona, proponente, datos.fecha_expedicion_documento),
             )
         elif datos.matricula:
             certificado = consultar_copnia(datos.matricula.strip(), por="matricula")
@@ -379,6 +402,7 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
             fuente=fuente,
             sin_novedades=certificado.sin_novedades,
         )
+    _reevaluar(evaluacion, proponente, usuario)
     return 201, _aportado_out(doc)
 
 
