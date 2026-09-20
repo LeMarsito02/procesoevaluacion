@@ -85,6 +85,25 @@ export const consultarEnLinea = (
 ) =>
   enviarJson<DocumentoAportado>(`${base(ev)}/proponentes/${prop}/consultar`, 'POST', datos)
 
+/** La copia de la cédula de la persona, con la fecha que el programa alcanzó a leer. */
+export async function verCedulaPersona(
+  ev: string,
+  prop: string,
+  personaId: string,
+): Promise<{ blob: Blob; sugerida: string | null; archivo: string | null }> {
+  const res = await pedir(`${base(ev)}/proponentes/${prop}/personas/${personaId}/cedula`)
+  if (!res.ok) throw new ErrorApi(res.status, await detalleError(res))
+  return {
+    blob: await res.blob(),
+    sugerida: res.headers.get('X-Fecha-Sugerida'),
+    archivo: res.headers.get('X-Archivo'),
+  }
+}
+
+/** La fecha de expedición del documento (la piden las páginas de consulta). */
+export const guardarFechaDocumento = (ev: string, personaId: string, fecha: string | null) =>
+  enviarJson<PersonaVerificada>(`${base(ev)}/personas/${personaId}`, 'PATCH', { fecha_expedicion_documento: fecha })
+
 export const quitarAportado = (ev: string, id: string) => enviarJson<void>(`${base(ev)}/aportados/${id}`, 'DELETE')
 
 async function blob(ruta: string): Promise<{ blob: Blob; nombre: string | null }> {

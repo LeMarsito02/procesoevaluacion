@@ -137,6 +137,9 @@ if DEBUG and os.environ.get("EXPONER_EN_RED") == "1":
             CORS_ALLOWED_ORIGINS.append(_origen)
             CSRF_TRUSTED_ORIGINS.append(_origen)
 CORS_ALLOW_CREDENTIALS = True
+# Cabeceras propias que el frontend necesita leer (la fecha que el
+# programa alcanzó a leer en la cédula y el nombre del archivo).
+CORS_EXPOSE_HEADERS = ["X-Fecha-Sugerida", "X-Archivo"]
 
 # --- Seguridad en producción ---
 if not DEBUG:

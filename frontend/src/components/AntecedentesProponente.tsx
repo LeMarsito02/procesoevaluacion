@@ -3,6 +3,8 @@ import {
   agregarPersona,
   consultarEnLinea,
   fuenteDe,
+  guardarFechaDocumento,
+  verCedulaPersona,
   FUENTES,
   FUENTES_AUTOMATICAS,
   aportarDocumento,
@@ -59,8 +61,35 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   // Consulta en curso: "<persona>|<requisito>".
   const [consultando, setConsultando] = useState<string | null>(null)
   // Cuando el RNMC pide la fecha de expedición de la cédula y no la tenemos.
-  const [pideFecha, setPideFecha] = useState<{ persona: PersonaVerificada; requisito: number } | null>(null)
+  const [pideFecha, setPideFecha] = useState<{ persona: PersonaVerificada; requisito: number; motivo: string; hayCedula: boolean } | null>(null)
   const [fechaEscrita, setFechaEscrita] = useState('')
+  // La cédula abierta al lado del campo, para leer la fecha con los ojos.
+  const [cedulaALaVista, setCedulaALaVista] = useState<{ url: string; archivo: string | null } | null>(null)
+  const [abriendoCedula, setAbriendoCedula] = useState(false)
+
+  async function mostrarCedula(persona: PersonaVerificada) {
+    setAbriendoCedula(true)
+    try {
+      const { blob, sugerida, archivo } = await verCedulaPersona(evaluacionId, proponenteId, persona.id)
+      setCedulaALaVista({ url: URL.createObjectURL(blob), archivo })
+      if (sugerida && !fechaEscrita) setFechaEscrita(sugerida)
+      setError(null)
+    } catch (e) {
+      setError(mensajeDe(e))
+    } finally {
+      setAbriendoCedula(false)
+    }
+  }
+
+  function cerrarFecha() {
+    if (cedulaALaVista) URL.revokeObjectURL(cedulaALaVista.url)
+    setCedulaALaVista(null)
+    setPideFecha(null)
+    setFechaEscrita('')
+    setError(null)
+  }
+  // Persona cuya fecha de expedición se está escribiendo en su ficha.
+  const [editandoFecha, setEditandoFecha] = useState<string | null>(null)
 
   const recargar = useCallback(() => {
     obtenerAntecedentes(evaluacionId, proponenteId)
@@ -83,15 +112,19 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
         persona_id: persona.id,
         ...(fecha ? { fecha_expedicion_documento: fecha } : {}),
       })
-      setPideFecha(null)
-      setFechaEscrita('')
+      cerrarFecha()
       recargar()
       setError(null)
     } catch (e) {
       const mensaje = mensajeDe(e)
-      // La página oficial necesita ese dato: se pide aquí mismo.
-      if (/fecha de expedici/i.test(mensaje)) setPideFecha({ persona, requisito })
-      setError(mensaje)
+      // La página oficial necesita ese dato: se pide aquí mismo, con la
+      // cédula a la vista si vino en la oferta.
+      if (/fecha de expedici/i.test(mensaje)) {
+        setPideFecha({ persona, requisito, motivo: mensaje, hayCedula: !/no se encontró la copia de su cédula/i.test(mensaje) })
+        setError(null)
+      } else {
+        setError(mensaje)
+      }
     } finally {
       setConsultando(null)
     }
@@ -159,8 +192,40 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                     <div className="small muted">
                       {per.rol_nombre}
                       {per.documento ? ` · ${per.tipo === 'juridica' ? 'NIT' : 'C.C.'} ${per.documento}` : ' · documento no leído'}
-                      {per.fecha_expedicion_documento && ` · exp. ${fecha(per.fecha_expedicion_documento)}`}
+                      {per.fecha_expedicion_documento && ` · expedida el ${fecha(per.fecha_expedicion_documento)}`}
                     </div>
+                    {!soloLectura && per.tipo !== 'juridica' && (
+                      // Las páginas de consulta (RNMC, antecedentes judiciales) piden
+                      // la fecha de expedición del documento además de la cédula.
+                      editandoFecha === per.id ? (
+                        <div className="acciones" style={{ marginTop: 4 }}>
+                          <input
+                            className="input select-sm"
+                            type="date"
+                            defaultValue={per.fecha_expedicion_documento ?? ''}
+                            style={{ width: 150 }}
+                            onChange={(e) =>
+                              accion(async () => {
+                                if (e.target.value) await guardarFechaDocumento(evaluacionId, per.id, e.target.value)
+                                setEditandoFecha(null)
+                              })
+                            }
+                          />
+                          <button type="button" className="enlace" onClick={() => setEditandoFecha(null)}>
+                            cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="enlace small"
+                          onClick={() => setEditandoFecha(per.id)}
+                          title="La piden el RNMC y los antecedentes judiciales"
+                        >
+                          {per.fecha_expedicion_documento ? 'cambiar la fecha de expedición' : 'falta la fecha de expedición de la cédula'}
+                        </button>
+                      )
+                    )}
                     {!soloLectura && (
                       <div className="acciones datos-consulta" style={{ marginTop: 4 }}>
                         <button
@@ -341,16 +406,36 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
       {pideFecha && (
         <div className="formulario-inline">
           <strong className="small">
-            El RNMC pide la fecha de expedición de la cédula de {pideFecha.persona.nombre} (está en el reverso del documento).
+            Escriba la fecha de expedición de la cédula de {pideFecha.persona.nombre}
           </strong>
-          <div className="grid-persona">
+          <p className="small muted" style={{ margin: 0 }}>
+            {pideFecha.hayCedula
+              ? 'La página de la Policía la pide junto con el número de cédula, y aquí no se pudo leer con seguridad. Ábrala para verla con sus propios ojos: está en el reverso, junto a «FECHA Y LUGAR DE EXPEDICIÓN».'
+              : 'La página de la Policía la pide junto con el número de cédula, y la copia de su cédula no vino en la oferta. Tómela del documento que tenga a la mano.'}
+          </p>
+          <div className="acciones">
             <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               Fecha de expedición
               <input className="input select-sm" type="date" value={fechaEscrita} onChange={(e) => setFechaEscrita(e.target.value)} />
             </label>
+            {!cedulaALaVista && pideFecha.hayCedula && (
+              <button type="button" className="btn btn-secondary btn-sm" disabled={abriendoCedula} onClick={() => void mostrarCedula(pideFecha.persona)}>
+                {abriendoCedula ? <span className="spinner oscuro" /> : <Icono nombre="ojo" tam={14} />} Ver su cédula aquí
+              </button>
+            )}
           </div>
+          {cedulaALaVista && (
+            <div style={{ marginTop: 8 }}>
+              <div className="small muted">{cedulaALaVista.archivo}</div>
+              <iframe
+                title={`Cédula de ${pideFecha.persona.nombre}`}
+                src={cedulaALaVista.url}
+                style={{ width: '100%', height: 420, border: '1px solid var(--line)', borderRadius: 8 }}
+              />
+            </div>
+          )}
           <div className="acciones" style={{ justifyContent: 'flex-end' }}>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setPideFecha(null); setError(null) }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={cerrarFecha}>
               Cancelar
             </button>
             <button
@@ -359,7 +444,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
               disabled={!fechaEscrita || consultando !== null}
               onClick={() => void consultar(pideFecha.persona, pideFecha.requisito, fechaEscrita)}
             >
-              {consultando ? <span className="spinner" /> : null} Consultar
+              {consultando ? <span className="spinner" /> : null} Consultar con esta fecha
             </button>
           </div>
         </div>

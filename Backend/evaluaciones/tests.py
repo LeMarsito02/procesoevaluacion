@@ -2626,10 +2626,11 @@ class CedulaConIATests(TestCase):
     se acepta una fecha que no sea de esa persona ni una imposible."""
 
     def leer(self, respuesta, cedula="52371321"):
+        """Las dos miradas (recorte y página) leen lo mismo."""
         from motor.llm import vision
 
         with mock.patch.object(vision, "disponible", return_value=True), \
-             mock.patch.object(vision, "_imagenes", return_value=[b"PNG"]), \
+             mock.patch.object(vision, "_imagenes", return_value=[b"recorte", b"pagina"]), \
              mock.patch.object(vision, "_preguntar", return_value=respuesta):
             return vision.leer_cedula(b"%PDF", cedula)
 
@@ -2657,3 +2658,153 @@ class CedulaConIATests(TestCase):
 
         with mock.patch.object(vision, "disponible", return_value=False):
             self.assertIsNone(vision.leer_cedula(b"%PDF", "52371321"))
+
+
+class OcrDudosoVaALaIATests(TestCase):
+    """Una fecha mal leída gasta una consulta a una página del Estado para
+    nada: si el OCR no quedó limpio, decide la IA."""
+
+    def test_confianza_segun_la_etiqueta(self):
+        from datetime import date
+
+        from motor.evaluacion.identidad import lectura_ocr
+
+        limpio = lectura_ocr("LUGAR DE NACIMIENTO 1.69 ESTATURA 22-MAY-2002 PEREIRA FECHA Y LUGAR DE EXPEDICION")
+        self.assertEqual((limpio.fecha, limpio.confiable, limpio.fuente), (date(2002, 5, 22), True, "ocr"))
+        roto = lectura_ocr("ESTATURA 10-JUL-2015 FECHA Y LUEGAR DE EXPEDICION")
+        self.assertEqual(roto.fecha, date(2015, 7, 10))
+        self.assertFalse(roto.confiable)
+
+    def test_la_ia_resuelve_lo_que_el_ocr_dejo_dudoso(self):
+        from datetime import date
+
+        from motor.evaluacion import identidad
+
+        pagina = "REPUBLICA DE COLOMBIA CEDULA NUMERO 52.371.321 ROJAS PRIETO 10-JUL-2015 FECHA Y LUEGAR DE EXPEDICION"
+        with mock.patch.object(identidad, "cedula_de", return_value="doc.pdf"), \
+             mock.patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
+             mock.patch.object(identidad, "paginas_cedula_numeradas", return_value=[("doc.pdf", 1, pagina)]), \
+             mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             mock.patch("motor.llm.vision.leer_cedula_detallado",
+                        return_value=__import__("motor.llm.vision", fromlist=["LecturaVision"]).LecturaVision(date(2002, 5, 22), 2)) as ia:
+            lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
+        self.assertTrue(ia.called)
+        self.assertEqual((lectura.fecha, lectura.confiable, lectura.fuente), (date(2002, 5, 22), True, "ia"))
+
+    def test_sin_ia_la_fecha_dudosa_no_se_da_por_buena(self):
+        from datetime import date
+
+        from motor.evaluacion import identidad
+
+        pagina = "CEDULA NUMERO 52.371.321 ROJAS PRIETO 10-JUL-2015 FECHA Y LUEGAR DE EXPEDICION"
+        with mock.patch.object(identidad, "cedula_de", return_value="doc.pdf"), \
+             mock.patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
+             mock.patch.object(identidad, "paginas_cedula_numeradas", return_value=[("doc.pdf", 1, pagina)]), \
+             mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             mock.patch("motor.llm.vision.leer_cedula_detallado",
+                        return_value=__import__("motor.llm.vision", fromlist=["LecturaVision"]).LecturaVision(None)):
+            lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
+            guardable = identidad.fecha_expedicion_cedula({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
+        self.assertEqual(lectura.fecha, date(2015, 7, 10))
+        self.assertFalse(lectura.confiable)
+        self.assertIsNone(guardable)
+
+
+class FechaDeExpedicionEnLaFichaTests(BaseHistorico):
+    """El abogado la necesita a la vista: las páginas de consulta la piden."""
+
+    def persona(self):
+        return self.abogado.post(
+            f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/personas",
+            {"rol": "representante_legal", "tipo": "natural", "nombre": "Pedro Pérez", "documento": "1020304"},
+        ).json()
+
+    def test_se_guarda_desde_la_ficha_de_la_persona(self):
+        persona = self.persona()
+        self.assertIsNone(persona["fecha_expedicion_documento"])
+        r = self.abogado.http.patch(
+            f"/api/evaluaciones/{self.ev['id']}/personas/{persona['id']}",
+            {"fecha_expedicion_documento": "2002-05-22"},
+            content_type="application/json",
+            headers={"X-CSRFToken": self.abogado.csrf},
+        )
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["fecha_expedicion_documento"], "2002-05-22")
+
+    def test_no_acepta_una_fecha_futura(self):
+        r = self.abogado.http.patch(
+            f"/api/evaluaciones/{self.ev['id']}/personas/{self.persona()['id']}",
+            {"fecha_expedicion_documento": "2099-01-01"},
+            content_type="application/json",
+            headers={"X-CSRFToken": self.abogado.csrf},
+        )
+        self.assertEqual(r.status_code, 400)
+
+
+class LaIADebeVerDosVecesLoMismoTests(TestCase):
+    """En una prueba real el modelo leyó «24» donde decía «13»: una sola
+    lectura no puede dar por buena una fecha."""
+
+    def lectura(self, respuestas):
+        from motor.llm import vision
+
+        with mock.patch.object(vision, "disponible", return_value=True), \
+             mock.patch.object(vision, "_imagenes", return_value=[b"a", b"b"]), \
+             mock.patch.object(vision, "_preguntar", side_effect=respuestas):
+            return vision.leer_cedula_detallado(b"%PDF", "52371321")
+
+    def test_dos_lecturas_iguales_se_dan_por_buenas(self):
+        from datetime import date
+
+        misma = {"numero": "52371321", "fecha_expedicion": "2002-05-22"}
+        lectura = self.lectura([misma, dict(misma)])
+        self.assertEqual((lectura.fecha, lectura.veces, lectura.confirmada), (date(2002, 5, 22), 2, True))
+
+    def test_dos_lecturas_distintas_no_se_confirman(self):
+        lectura = self.lectura([
+            {"numero": "52371321", "fecha_expedicion": "1996-05-13"},
+            {"numero": "52371321", "fecha_expedicion": "1996-05-24"},
+        ])
+        self.assertFalse(lectura.confirmada)
+
+    def test_una_sola_lectura_se_sugiere_pero_no_se_usa_sola(self):
+        from datetime import date
+
+        from motor.llm import vision
+
+        lectura = self.lectura([{"numero": "52371321", "fecha_expedicion": "2002-05-22"}, {}])
+        self.assertEqual(lectura.fecha, date(2002, 5, 22))
+        self.assertFalse(lectura.confirmada)
+        with mock.patch.object(vision, "leer_cedula_detallado", return_value=lectura):
+            self.assertIsNone(vision.leer_cedula(b"%PDF", "52371321"))
+
+    def test_la_ia_confirma_lo_que_el_ocr_leyo_a_medias(self):
+        from datetime import date
+
+        from motor.evaluacion import identidad
+        from motor.llm.vision import LecturaVision
+
+        pagina = "CEDULA NUMERO 52.371.321 ROJAS PRIETO 22-MAY-2002 BOGOTA FECHA Y LUEGAR DE EXPEDICION"
+        with mock.patch.object(identidad, "cedula_de", return_value="doc.pdf"), \
+             mock.patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
+             mock.patch.object(identidad, "paginas_cedula_numeradas", return_value=[("doc.pdf", 1, pagina)]), \
+             mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             mock.patch("motor.llm.vision.leer_cedula_detallado", return_value=LecturaVision(date(2002, 5, 22), 1)):
+            lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
+        self.assertEqual(lectura.fecha, date(2002, 5, 22))
+        self.assertTrue(lectura.confiable)  # una lectura de la IA + el OCR dicen lo mismo
+
+    def test_si_la_ia_y_el_ocr_no_coinciden_decide_una_persona(self):
+        from datetime import date
+
+        from motor.evaluacion import identidad
+        from motor.llm.vision import LecturaVision
+
+        pagina = "CEDULA NUMERO 52.371.321 ROJAS PRIETO 13-MAY-1996 CUCUTA FECHA Y LUEGAR DE EXPEDICION"
+        with mock.patch.object(identidad, "cedula_de", return_value="doc.pdf"), \
+             mock.patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
+             mock.patch.object(identidad, "paginas_cedula_numeradas", return_value=[("doc.pdf", 1, pagina)]), \
+             mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             mock.patch("motor.llm.vision.leer_cedula_detallado", return_value=LecturaVision(date(1996, 5, 24), 1)):
+            lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
+        self.assertFalse(lectura.confiable)

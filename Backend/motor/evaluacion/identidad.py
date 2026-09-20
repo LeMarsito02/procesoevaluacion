@@ -30,6 +30,7 @@ from motor.evaluacion.formato1 import _nombres_coinciden, _norm
 from motor.evaluacion.proponente_plural import obtener_personas_a_verificar
 from motor.esquemas.proceso import PersonaAntecedente, ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
+from motor.llm.vision import LecturaVision
 from motor.procesamiento.pdf_utils import abrir_pdf, texto_ocr_reforzado, texto_pagina
 
 MARCAS_CEDULA_RE = re.compile(
@@ -62,6 +63,14 @@ def _digitos(texto: str) -> str:
 @memo_por_pdfs
 def paginas_cedula(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
     """(archivo, texto) de las páginas que parecen una cédula."""
+    return [(archivo, texto) for archivo, _, texto in paginas_cedula_numeradas(pdfs)]
+
+
+@memo_por_pdfs
+def paginas_cedula_numeradas(pdfs: dict[str, bytes]) -> list[tuple[str, int, str]]:
+    """(archivo, número de página, texto) de las páginas que parecen una
+    cédula. El número importa para mostrarle a la IA la página correcta: en un
+    paquete de 30 páginas la cédula puede estar en la 7."""
     paginas = []
     for nombre, contenido in pdfs.items():
         base = nombre.rsplit("/", 1)[-1].lower()
@@ -70,10 +79,11 @@ def paginas_cedula(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
             with abrir_pdf(contenido) as pdf:
                 for page in pdf.pages[:limite]:
                     texto = texto_pagina(page)
+                    numero = page.page_number
                     page.flush_cache()
                     texto_norm = _norm(texto)
                     if MARCAS_CEDULA_RE.search(texto_norm) and not NO_ES_CEDULA_RE.search(texto_norm):
-                        paginas.append((nombre, texto_norm))
+                        paginas.append((nombre, numero, texto_norm))
         except Exception:  # noqa: BLE001
             continue
     return paginas
@@ -184,6 +194,36 @@ def _fecha_de(match: re.Match[str]) -> date | None:
     return fecha if date(1960, 1, 1) <= fecha <= date.today() else None
 
 
+# La etiqueta completa y sin daños del OCR: si está así, lo leído es de fiar.
+ETIQUETA_LIMPIA_RE = re.compile(r"FECHA\s+Y\s+LUGAR\s+DE\s+EXPEDICION")
+
+
+class LecturaFecha:
+    """Qué fecha se leyó, de dónde y si se puede confiar en ella. Una fecha
+    dudosa no sirve: consultar la página de la Policía con ella la rechaza y
+    se gasta una consulta a una plataforma del Estado para nada."""
+
+    def __init__(self, fecha: date | None, confiable: bool, fuente: str) -> None:
+        self.fecha = fecha
+        self.confiable = confiable
+        self.fuente = fuente  # "ocr" | "ia" | "ninguna"
+
+    def __repr__(self) -> str:  # pragma: no cover - ayuda al depurar
+        return f"LecturaFecha({self.fecha}, confiable={self.confiable}, fuente={self.fuente!r})"
+
+
+def lectura_ocr(texto_norm: str) -> LecturaFecha:
+    """Lo que el OCR alcanzó a leer. Es de fiar solo si la etiqueta salió
+    completa ("FECHA Y LUGAR DE EXPEDICION") y hay una sola fecha pegada a
+    ella; con la etiqueta rota ("FECHA Y LUEGAR", "EXPEDICIONF.20") los
+    dígitos de al lado también suelen venir mal leídos."""
+    fecha = fecha_expedicion_en(texto_norm)
+    if fecha is None:
+        return LecturaFecha(None, False, "ninguna")
+    limpia = bool(ETIQUETA_LIMPIA_RE.search(re.sub(r"\s+", " ", texto_norm)))
+    return LecturaFecha(fecha, limpia, "ocr")
+
+
 def fecha_expedicion_en(texto_norm: str) -> date | None:
     """La fecha de expedición que dice el reverso de la cédula, o None si no
     está clara. Se toma la fecha que está pegada a la etiqueta "FECHA Y LUGAR
@@ -202,36 +242,64 @@ def fecha_expedicion_en(texto_norm: str) -> date | None:
     return candidatas[0] if len(distintas) == 1 else None
 
 
-def fecha_expedicion_cedula(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False) -> date | None:
+def leer_fecha_expedicion(
+    pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False
+) -> LecturaFecha:
     """La fecha de expedición de la cédula de esa persona, leída de la copia
     que viene en la oferta (los proponentes la escanean por ambos lados). La
     pide el RNMC para consultar sus antecedentes.
+
+    Primero el texto del PDF, luego el OCR reforzado y, si alguno de los dos
+    quedó dudoso (o no leyó nada), la IA local mira la imagen: está mejor
+    preparada para escaneos torcidos o con sombras, y una fecha mal leída
+    significa una consulta perdida a la página del Estado.
 
     Solo se lee de una página que sea demostrablemente suya (trae su número o
     su nombre): una carpeta puede traer las cédulas de varias personas y una
     fecha de otro no sirve para consultar nada."""
     archivo = cedula_de(pdfs, nombre, cedula, principal=principal)
     if archivo is None:
-        return None
+        return LecturaFecha(None, False, "ninguna")
     numero = _digitos(cedula or "")
+    dudosa = LecturaFecha(None, False, "ninguna")
     for nombre_archivo, texto in paginas_cedula(pdfs):
-        if nombre_archivo == archivo and _es_suyo(nombre, numero, texto) and (fecha := fecha_expedicion_en(texto)):
-            return fecha
+        if nombre_archivo != archivo or not _es_suyo(nombre, numero, texto):
+            continue
+        lectura = lectura_ocr(texto)
+        if lectura.confiable:
+            return lectura
+        dudosa = lectura if lectura.fecha else dudosa
     try:
         reforzado = _norm(texto_ocr_reforzado(pdfs[archivo], max_paginas=PAGINAS_REFORZADAS))
     except Exception:  # noqa: BLE001
         reforzado = ""
-    if reforzado and _es_suyo(nombre, numero, reforzado) and (fecha := fecha_expedicion_en(reforzado)):
-        return fecha
-    # Último recurso: mostrarle la cédula a la IA local. El OCR falla con
-    # escaneos torcidos o con sombras, y sin esta fecha no se puede consultar
-    # el RNMC de la persona.
-    from motor.llm.vision import leer_cedula
+    if reforzado and _es_suyo(nombre, numero, reforzado):
+        lectura = lectura_ocr(reforzado)
+        if lectura.confiable:
+            return lectura
+        dudosa = lectura if lectura.fecha else dudosa
 
+    from motor.llm.vision import leer_cedula_detallado
+
+    # Solo las páginas que parecen cédula, no las primeras del archivo: en un
+    # paquete de documentos la cédula puede estar en cualquier página.
+    paginas = [n for a, n, _ in paginas_cedula_numeradas(pdfs) if a == archivo]
     try:
-        return leer_cedula(pdfs[archivo], cedula)
+        de_la_ia = leer_cedula_detallado(pdfs[archivo], cedula, paginas=paginas)
     except Exception:  # noqa: BLE001
-        return None
+        de_la_ia = LecturaVision(None)
+    if de_la_ia.fecha is None:
+        return dudosa
+    # Se da por buena cuando dos miradas coinciden, o cuando la IA confirma lo
+    # que el OCR había leído a medias. Una sola lectura se sugiere, no se usa.
+    segura = de_la_ia.confirmada or de_la_ia.fecha == dudosa.fecha
+    return LecturaFecha(de_la_ia.fecha, segura, "ia")
+
+
+def fecha_expedicion_cedula(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False) -> date | None:
+    """Solo la fecha cuando es de fiar (para guardarla sin que nadie la revise)."""
+    lectura = leer_fecha_expedicion(pdfs, nombre, cedula, principal=principal)
+    return lectura.fecha if lectura.confiable else None
 
 
 class ResultadoIdentidad:

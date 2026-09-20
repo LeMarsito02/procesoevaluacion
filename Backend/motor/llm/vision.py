@@ -32,7 +32,10 @@ URL = os.environ.get("LLM_URL", "http://localhost:11434")
 MODELO = os.environ.get("VISION_MODELO", "qwen2.5vl:3b")
 HABILITADO = os.environ.get("VISION_HABILITADO", "1") == "1"
 TIEMPO_MAXIMO = float(os.environ.get("VISION_TIMEOUT", "180"))
-RESOLUCION = int(os.environ.get("VISION_RESOLUCION", "220"))
+RESOLUCION = int(os.environ.get("VISION_RESOLUCION", "200"))
+# Lado mayor de la imagen que se le manda al modelo: una página a 200 ppp es
+# enorme, el servicio la rechaza y además cada píxel cuesta tiempo de GPU.
+LADO_MAXIMO = int(os.environ.get("VISION_LADO_MAXIMO", "1100"))
 PAGINAS_MAXIMAS = 4
 
 INSTRUCCION = (
@@ -55,24 +58,79 @@ def disponible() -> bool:
         return False
 
 
-def _imagenes(contenido: bytes, max_paginas: int) -> list[bytes]:
-    """Las páginas del PDF como PNG (solo las que el OCR ya consideró imagen)."""
+def _imagenes(contenido: bytes, max_paginas: int, paginas: list[int] | None = None) -> list[bytes]:
+    """Las páginas del PDF como JPEG, del tamaño que el modelo acepta. Con
+    `paginas` (números de página, desde 1) solo esas."""
     from motor.procesamiento.pdf_utils import abrir_pdf
 
     imagenes = []
     with abrir_pdf(contenido) as pdf:
-        for page in pdf.pages[:max_paginas]:
+        elegidas = [p for p in pdf.pages if p.page_number in paginas] if paginas else list(pdf.pages)
+        for page in elegidas[:max_paginas]:
             try:
-                imagen = page.to_image(resolution=RESOLUCION).original
-                buffer = io.BytesIO()
-                imagen.save(buffer, format="PNG")
-                imagenes.append(buffer.getvalue())
+                imagen = page.to_image(resolution=RESOLUCION).original.convert("RGB")
+                mayor = max(imagen.size)
+                if mayor > LADO_MAXIMO:
+                    escala = LADO_MAXIMO / mayor
+                    imagen = imagen.resize((int(imagen.width * escala), int(imagen.height * escala)))
+                # Primero el recorte de la zona de la fecha (se lee mucho
+                # mejor); la página completa queda de respaldo.
+                for version in (_recorte_de_la_fecha(imagen), imagen):
+                    if version is None:
+                        continue
+                    buffer = io.BytesIO()
+                    version.save(buffer, format="JPEG", quality=90)
+                    imagenes.append(buffer.getvalue())
                 del imagen
             except Exception:  # noqa: BLE001
                 continue
             finally:
                 page.flush_cache()
     return imagenes
+
+
+def _recorte_de_la_fecha(imagen):
+    """El pedazo de la cédula donde está la fecha de expedición, ampliado.
+
+    En una página completa los dígitos de la fecha ocupan poquísimos píxeles y
+    el modelo no los distingue. Tesseract sí sabe *dónde* está la etiqueta
+    "EXPEDICION" (aunque lea mal los números de al lado), así que se recorta
+    esa zona —la fecha va a su izquierda y arriba— y se le muestra grande.
+    Devuelve None si no se encuentra la etiqueta."""
+    import subprocess
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    imagen.save(buffer, format="PNG")
+    try:
+        salida = subprocess.run(
+            ["tesseract", "stdin", "stdout", "-l", "spa", "tsv"],
+            input=buffer.getvalue(), capture_output=True, timeout=120,
+            env={**os.environ, "OMP_THREAD_LIMIT": "2"},
+        ).stdout.decode("utf-8", "ignore")
+    except Exception:  # noqa: BLE001
+        return None
+    for linea in salida.splitlines()[1:]:
+        partes = linea.split("\t")
+        if len(partes) < 12 or "EXPEDI" not in partes[11].upper():
+            continue
+        x, y, ancho, alto = (int(partes[i]) for i in (6, 7, 8, 9))
+        # La fecha está a la izquierda de la etiqueta y un poco más arriba.
+        caja = (
+            max(0, x - int(ancho * 1.2)),
+            max(0, y - int(alto * 4.5)),
+            min(imagen.width, x + int(ancho * 2.2)),
+            min(imagen.height, y + int(alto * 2.0)),
+        )
+        recorte = imagen.crop(caja)
+        if recorte.width < 40 or recorte.height < 20:
+            return None
+        escala = min(4.0, 900 / max(recorte.width, 1))
+        if escala > 1:
+            recorte = recorte.resize((int(recorte.width * escala), int(recorte.height * escala)), Image.LANCZOS)
+        return recorte
+    return None
 
 
 def _preguntar(imagen: bytes) -> dict:
@@ -101,19 +159,38 @@ def _fecha(valor) -> date | None:
     return fecha if date(1960, 1, 1) <= fecha <= date.today() else None
 
 
-def leer_cedula(contenido: bytes, cedula: str | None = None, max_paginas: int = PAGINAS_MAXIMAS) -> date | None:
-    """La fecha de expedición que la IA lee en la cédula escaneada, o None.
+class LecturaVision:
+    """Lo que la IA leyó y cuántas veces vio lo mismo. Una sola lectura no
+    basta: en una prueba real el modelo leyó "24" donde decía "13", y con una
+    fecha equivocada la página de la Policía rechaza la consulta."""
 
-    Con `cedula`, solo se acepta la fecha si el modelo leyó ese mismo número:
+    def __init__(self, fecha: date | None, veces: int = 0) -> None:
+        self.fecha = fecha
+        self.veces = veces
+
+    @property
+    def confirmada(self) -> bool:
+        """Dos miradas distintas a la cédula (el recorte de la fecha y la
+        página completa) dijeron lo mismo."""
+        return self.fecha is not None and self.veces >= 2
+
+
+def leer_cedula_detallado(
+    contenido: bytes, cedula: str | None = None, max_paginas: int = PAGINAS_MAXIMAS, paginas: list[int] | None = None
+) -> LecturaVision:
+    """Lo que la IA lee en la cédula escaneada: la fecha más repetida y cuántas
+    veces salió. Con `cedula`, solo cuenta si el modelo leyó ese mismo número:
     una carpeta puede traer las cédulas de varias personas."""
     if not disponible():
-        return None
+        return LecturaVision(None)
     numero = re.sub(r"\D", "", cedula or "")
-    for imagen in _imagenes(contenido, max_paginas):
+    leidas: list[date] = []
+    for imagen in _imagenes(contenido, max_paginas, paginas):
         try:
             datos = _preguntar(imagen)
         except (requests.RequestException, ValueError) as exc:
-            log.warning("La IA no pudo leer la cédula: %s", exc)
+            detalle = getattr(getattr(exc, "response", None), "text", "")
+            log.warning("La IA no pudo leer la cédula: %s %s", exc, detalle[:200])
             continue
         fecha = _fecha(datos.get("fecha_expedicion"))
         if fecha is None:
@@ -127,5 +204,17 @@ def leer_cedula(contenido: bytes, cedula: str | None = None, max_paginas: int = 
         nacimiento = _fecha(datos.get("fecha_nacimiento"))
         if nacimiento and fecha <= nacimiento:
             continue
-        return fecha
-    return None
+        leidas.append(fecha)
+    if not leidas:
+        return LecturaVision(None)
+    fecha = max(set(leidas), key=leidas.count)
+    return LecturaVision(fecha, leidas.count(fecha))
+
+
+def leer_cedula(
+    contenido: bytes, cedula: str | None = None, max_paginas: int = PAGINAS_MAXIMAS, paginas: list[int] | None = None
+) -> date | None:
+    """Solo la fecha que la IA vio dos veces igual (la que se puede usar sin
+    que nadie la confirme)."""
+    lectura = leer_cedula_detallado(contenido, cedula, max_paginas, paginas)
+    return lectura.fecha if lectura.confirmada else None

@@ -201,6 +201,58 @@ def agregar_persona(request: HttpRequest, evaluacion_id: UUID, proponente_id: UU
     return 201, _persona_out(persona)
 
 
+@router.get("/{evaluacion_id}/proponentes/{proponente_id}/personas/{persona_id}/cedula")
+def cedula_de_persona(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, persona_id: UUID) -> HttpResponse:
+    """La copia de la cédula de esa persona, tal como vino en la oferta, para
+    que el evaluador lea la fecha de expedición con sus propios ojos cuando ni
+    el lector de texto ni la IA pudieron. Si el programa alcanzó a leer algo,
+    lo sugiere en la cabecera X-Fecha-Sugerida."""
+    from motor.evaluacion.identidad import cedula_de, leer_fecha_expedicion
+    from motor.integrations.drive import download_file_bytes
+    from motor.procesamiento.zip_utils import extraer_pdfs
+
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    proponente = _proponente(evaluacion, proponente_id)
+    persona = get_object_or_404(PersonaVerificada, pk=persona_id, evaluacion=evaluacion, proponente=proponente)
+    try:
+        pdfs = extraer_pdfs(download_file_bytes(proponente.drive_file_id))
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(502, "No se pudieron abrir los documentos de la oferta.") from exc
+    archivo = cedula_de(pdfs, persona.nombre, persona.documento)
+    if archivo is None:
+        raise HttpError(404, f"No se encontró la copia de la cédula de {persona.nombre} en la oferta.")
+    respuesta = HttpResponse(pdfs[archivo], content_type="application/pdf")
+    lectura = leer_fecha_expedicion(pdfs, persona.nombre, persona.documento)
+    if lectura.fecha is not None:
+        respuesta["X-Fecha-Sugerida"] = lectura.fecha.isoformat()
+    respuesta["X-Archivo"] = archivo.rsplit("/", 1)[-1][:120]
+    auditar(request, "cedula.vista", objeto=evaluacion, hoja=proponente.hoja, persona=persona.nombre)
+    return respuesta
+
+
+class FechaDocumentoIn(Schema):
+    fecha_expedicion_documento: date | None = None
+
+
+@router.patch("/{evaluacion_id}/personas/{persona_id}", response=PersonaOut)
+def actualizar_persona(request: HttpRequest, evaluacion_id: UUID, persona_id: UUID, datos: FechaDocumentoIn):
+    """La fecha de expedición del documento: la piden las páginas de consulta
+    (el RNMC y los antecedentes judiciales), así que el evaluador la necesita
+    a la mano aunque consulte a mano."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    persona = get_object_or_404(PersonaVerificada, pk=persona_id, evaluacion=evaluacion)
+    if datos.fecha_expedicion_documento and datos.fecha_expedicion_documento > date.today():
+        raise HttpError(400, "La fecha de expedición del documento no puede ser futura.")
+    persona.fecha_expedicion_documento = datos.fecha_expedicion_documento
+    persona.save(update_fields=["fecha_expedicion_documento"])
+    auditar(request, "persona.actualizada", objeto=evaluacion, persona=persona.nombre,
+            fecha_expedicion=str(datos.fecha_expedicion_documento or ""))
+    return _persona_out(persona)
+
+
 @router.delete("/{evaluacion_id}/personas/{persona_id}", response={204: None})
 def quitar_persona(request: HttpRequest, evaluacion_id: UUID, persona_id: UUID):
     usuario: Usuario = request.auth
@@ -310,28 +362,34 @@ def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date 
         return indicada
     if persona.fecha_expedicion_documento:
         return persona.fecha_expedicion_documento
-    from motor.evaluacion.identidad import cedula_de, fecha_expedicion_cedula
+    from motor.evaluacion.identidad import cedula_de, leer_fecha_expedicion
     from motor.integrations.drive import download_file_bytes
     from motor.procesamiento.zip_utils import extraer_pdfs
 
     porque = "no se encontró la copia de su cédula en la oferta"
+    sugerencia = ""
     try:
         pdfs = extraer_pdfs(download_file_bytes(proponente.drive_file_id))
-        fecha = fecha_expedicion_cedula(pdfs, persona.nombre, persona.documento)
-        if fecha is None and cedula_de(pdfs, persona.nombre, persona.documento) is not None:
-            porque = "su cédula está en la oferta, pero no se pudo leer la fecha (el escaneo no se deja leer o solo trae una cara)"
+        lectura = leer_fecha_expedicion(pdfs, persona.nombre, persona.documento)
+        if lectura.fecha is not None and not lectura.confiable:
+            # Con una fecha dudosa no se consulta: la página la rechazaría y
+            # se gastaría una consulta a una plataforma del Estado para nada.
+            porque = "su cédula no se deja leer con claridad"
+            sugerencia = f" Parece decir {lectura.fecha.strftime('%d/%m/%Y')}, pero no es seguro."
+        elif lectura.fecha is None and cedula_de(pdfs, persona.nombre, persona.documento) is not None:
+            porque = "su cédula está en la oferta, pero ni el lector de texto ni la IA pudieron leer la fecha"
     except Exception:  # noqa: BLE001
         log.exception("No se pudo leer la cédula de %s para sacar su fecha de expedición", persona.nombre)
-        fecha, porque = None, "no se pudieron abrir los documentos de la oferta"
-    if fecha is None:
+        lectura, porque = None, "no se pudieron abrir los documentos de la oferta"
+    if lectura is None or not lectura.confiable:
         raise HttpError(
             400,
-            f"La página de la Policía pide la fecha de expedición de la cédula de {persona.nombre} y {porque}. "
-            "Escríbela aquí (está en el reverso del documento) y se consulta de una vez.",
+            f"La página de la Policía pide la fecha de expedición de la cédula de {persona.nombre} y {porque}."
+            f"{sugerencia} Escríbela aquí (está en el reverso del documento) y se consulta de una vez.",
         )
-    persona.fecha_expedicion_documento = fecha
+    persona.fecha_expedicion_documento = lectura.fecha
     persona.save(update_fields=["fecha_expedicion_documento"])
-    return fecha
+    return lectura.fecha
 
 
 @router.post("/{evaluacion_id}/proponentes/{proponente_id}/consultar", response={201: AportadoOut})
