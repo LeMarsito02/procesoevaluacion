@@ -188,6 +188,28 @@ def main():
         resumen(comparar(resultados, ground_truth, mapeo, nombres), tiempos)
 
 
+def requisitos_leidos_con_ia() -> list:
+    """Los requisitos que la IA leyó del pliego (MEDICION_REQUISITOS_IA con el
+    JSON de scratch_lector_ia.py), para medir el analizador completo."""
+    import json
+
+    ruta = os.environ.get("MEDICION_REQUISITOS_IA")
+    if not ruta or not os.path.exists(ruta):
+        return []
+    from motor.pliego.catalogo import verificacion_de
+    from motor.pliego.lector_ia import RequisitoPliego, _NO_ES_REQUISITO_RE, _norm
+
+    requisitos = []
+    for d in json.load(open(ruta)):
+        r = RequisitoPliego(**d)
+        if "CAUSALES" in _norm(r.seccion) or _NO_ES_REQUISITO_RE.search(_norm(f"{r.requisito} {r.cita}")):
+            continue
+        r.verificacion = verificacion_de(r)
+        requisitos.append(r)
+    print(f"Requisitos leídos del pliego con IA: {len(requisitos)}", flush=True)
+    return requisitos
+
+
 def definicion_con_pliego(ruta: str) -> dict:
     """La definición del sistema con TODOS los ajustes que propone el análisis
     del pliego aceptados, como si la persona los hubiera aplicado."""
@@ -204,7 +226,7 @@ def definicion_con_pliego(ruta: str) -> dict:
     definicion = criterios.definicion_sistema("juridica")
     ajustes = [
         {"decision": "aceptado", "hallazgo": h.model_dump(mode="json")}
-        for h in analisis.comparar(extraccion, definicion)
+        for h in analisis.comparar(extraccion, definicion, requisitos_leidos_con_ia())
         if h.requiere_decision
     ]
     for a in ajustes:
