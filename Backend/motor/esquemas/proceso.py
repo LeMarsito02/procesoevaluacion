@@ -88,6 +88,9 @@ class PersonaAntecedente(BaseModel):
     # libre de novedades · "vencido": está, pero por su fecha ya no sirve.
     estado: str
     archivo: str | None = None
+    # Fecha de expedición del documento, leída del reverso de la cédula que
+    # viene en la oferta: el RNMC la pide para consultar antecedentes.
+    fecha_expedicion_documento: date | None = None
 
 
 class ResultadoRequisito(BaseModel):

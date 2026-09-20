@@ -29,7 +29,8 @@ interface Props {
   puedeEvaluar: boolean
   onDetener: () => void
   onContinuar: () => void
-  onAbrir: (hoja: string, requisito?: number) => void
+  /** `persona` = documento o nombre de la persona cuya casilla se tocó (antecedentes). */
+  onAbrir: (hoja: string, requisito?: number, persona?: string) => void
   onSiguientePendiente: () => void
   onIrInforme: () => void
 }
@@ -429,7 +430,12 @@ export default function PasoEvaluacion(p: Props) {
                           key={info.numero}
                           style={i > 0 && REQS_ORDENADOS[i - 1].grupo !== info.grupo ? { borderLeft: '1px solid var(--line)' } : undefined}
                         >
-                          <CeldaPersona estado={per.porRequisito.get(info.numero)} exigido={exigidos.has(info.numero)} titulo={`${info.titulo} · ${per.nombre}`} />
+                          <CeldaPersona
+                            estado={per.porRequisito.get(info.numero)}
+                            exigido={exigidos.has(info.numero)}
+                            titulo={`${info.titulo} · ${per.nombre}`}
+                            onClick={() => p.onAbrir(pr.hoja, info.numero, per.clave)}
+                          />
                         </td>
                       ))}
                       <td className="col-estado" />
@@ -475,10 +481,12 @@ function CeldaPersona({
   estado,
   exigido,
   titulo,
+  onClick,
 }: {
   estado: PersonaAntecedente['estado'] | undefined
   exigido: boolean
   titulo: string
+  onClick: () => void
 }) {
   // El requisito no se verifica persona por persona (queda en blanco), o a
   // esta persona no se le exige (a una empresa no se le pide REDAM ni
@@ -486,16 +494,22 @@ function CeldaPersona({
   if (!exigido) return null
   if (!estado) {
     return (
-      <span className="celda celda-persona" data-estado="no_aplica" title={`${titulo}: no se le exige`}>
+      <button type="button" className="celda celda-persona" data-estado="no_aplica" title={`${titulo}: no se le exige`} onClick={onClick}>
         N.A.
-      </span>
+      </button>
     )
   }
   const mapa = { cumple: 'cumple', falta: 'revisar', con_novedad: 'error', vencido: 'error' } as const
   const texto = { cumple: 'Cumple', falta: 'Falta', con_novedad: 'Con novedad', vencido: 'Vencido' }[estado]
   return (
-    <span className="celda celda-persona" data-estado={mapa[estado]} title={`${titulo}: ${texto.toLowerCase()}`}>
+    <button
+      type="button"
+      className="celda celda-persona"
+      data-estado={mapa[estado]}
+      title={`${titulo}: ${texto.toLowerCase()} — clic para ver el detalle`}
+      onClick={onClick}
+    >
       {estado === 'cumple' ? <Icono nombre="check" tam={13} grosor={2.6} /> : estado === 'falta' ? '!' : <Icono nombre="x" tam={12} grosor={2.6} />}
-    </span>
+    </button>
   )
 }

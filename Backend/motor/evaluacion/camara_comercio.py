@@ -818,6 +818,9 @@ def _evaluar_proponente_camara(
             archivo_evaluado=resultado.archivo,
             archivos_disponibles=sorted(pdfs.keys()) if resultado.archivo is None else [],
             tipo_proponente=tipo_proponente,
+            # El requisito de identidad dice, persona por persona, si está su
+            # cédula y desde cuándo (los demás no traen detalle por persona).
+            personas_antecedente=getattr(resultado, "personas", []),
         ),
         cacheable=True,
     )

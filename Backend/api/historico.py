@@ -282,6 +282,27 @@ class ConsultaIn(Schema):
 FUENTES_EN_LINEA = {"juridica.rnmc": "rnmc", "juridica.copnia_antecedentes": "copnia", "juridica.aval_ingeniero": "copnia"}
 
 
+def _fecha_de_expedicion(persona: PersonaVerificada, proponente) -> date | None:
+    """La fecha de expedición de la cédula, que el RNMC pide: la registrada, o
+    la que dice el reverso de la cédula que el proponente aportó."""
+    if persona.fecha_expedicion_documento or persona.tipo == "juridica":
+        return persona.fecha_expedicion_documento
+    from motor.evaluacion.identidad import fecha_expedicion_cedula
+    from motor.integrations.drive import download_file_bytes
+    from motor.procesamiento.zip_utils import extraer_pdfs
+
+    try:
+        pdfs = extraer_pdfs(download_file_bytes(proponente.drive_file_id))
+        fecha = fecha_expedicion_cedula(pdfs, persona.nombre, persona.documento)
+    except Exception:  # noqa: BLE001
+        log.exception("No se pudo leer la cédula de %s para sacar su fecha de expedición", persona.nombre)
+        return None
+    if fecha is not None:
+        persona.fecha_expedicion_documento = fecha
+        persona.save(update_fields=["fecha_expedicion_documento"])
+    return fecha
+
+
 @router.post("/{evaluacion_id}/proponentes/{proponente_id}/consultar", response={201: AportadoOut})
 def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, datos: ConsultaIn):
     """Consulta el certificado en la página oficial y lo adjunta al expediente,
@@ -307,7 +328,7 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
             certificado = consultar_rnmc(
                 persona.documento,
                 tipo="nit" if persona.tipo == "juridica" else "cedula",
-                fecha_expedicion=persona.fecha_expedicion_documento,
+                fecha_expedicion=_fecha_de_expedicion(persona, proponente),
             )
         elif datos.matricula:
             certificado = consultar_copnia(datos.matricula.strip(), por="matricula")

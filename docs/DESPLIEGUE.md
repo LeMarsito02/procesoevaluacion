@@ -10,7 +10,8 @@
 | `trabajador` | Atiende la fila de evaluación (`manage.py trabajar_fila`). Se pueden correr varios, incluso en otras VM, contra la misma base. |
 | `tareas` | Cada 24 h: retención de documentos (`aplicar_retencion`) y copia de seguridad (`scripts/respaldo.sh`, 14 días). |
 | `web` | nginx: frontend compilado, proxy de `/api` y cabeceras de seguridad (CSP, HSTS, nosniff, frame DENY). |
-| IA local | Ollama con `llama3.1:8b` en el nodo de IA (`LLM_URL`). Opcional: sin ella el sistema funciona y marca para revisión lo que no pueda confirmar. |
+| IA local | Ollama en el nodo de IA (`LLM_URL`): `llama3.1:8b` para los documentos de la oferta y `qwen3:14b` (o `qwen3:4b` sin GPU) para leer el pliego completo. Opcional: sin ella el sistema funciona y marca para revisión lo que no pueda confirmar. |
+| Consultas en línea | Playwright + Chromium en la imagen de `api`: el sistema trae solo el RNMC y el COPNIA y los adjunta al expediente. Sin esto el botón avisa y el evaluador sube el certificado a mano. |
 
 ## Pasos
 
@@ -22,6 +23,8 @@
    (el primer ingreso obliga a configurar la verificación en dos pasos).
 5. Publicar `web` detrás del proxy TLS de LeMarCloud con el dominio de `DJANGO_ALLOWED_HOSTS`. El proxy debe enviar `X-Forwarded-Proto: https` (con `DJANGO_DEBUG=0` Django redirige a HTTPS).
 6. DNS de lemartek.com: SPF, DKIM y DMARC de Hostinger para que los correos no lleguen a spam.
+
+Requerimientos completos del servidor (hardware, paquetes, puertos, variables): **docs/REQUERIMIENTOS_SERVIDOR.txt**.
 
 ## Lista de verificación antes de abrir a una entidad
 

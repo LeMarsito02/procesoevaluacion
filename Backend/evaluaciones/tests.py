@@ -2480,3 +2480,40 @@ class ConsultaEnLineaTests(TestCase):
         self.assertEqual(set(FUENTES_EN_LINEA), {"juridica.rnmc", "juridica.copnia_antecedentes", "juridica.aval_ingeniero"})
         for con_captcha in ("juridica.procuraduria", "juridica.contraloria", "juridica.policia", "juridica.redam"):
             self.assertNotIn(con_captcha, FUENTES_EN_LINEA)
+
+
+class FechaExpedicionCedulaTests(TestCase):
+    """La fecha de expedición se lee del reverso de la cédula (la pide el RNMC)."""
+
+    def test_reversos_reales(self):
+        from datetime import date
+
+        from motor.evaluacion.identidad import fecha_expedicion_en
+
+        casos = {
+            "LUGAR DE NACIMIENTO: E I 1.69 O+ M ESTATURA GS.RH SEXO N 22-MAY-2002 PEREIRA FECHA Y LUGAR DE EXPEDICION": date(2002, 5, 22),
+            "ALVEAR APELLIDOS LUGAR DE NACIMIENTO 1.71 O+ ESTATURA G.S. AH 05-JUN-2001 CARTAGENA FECHA Y LUGAR DE EXPEDICION P-05": date(2001, 6, 5),
+            "LUGAR DE NACIMIENTO 1.60 B+ ESTATURA G.S.RH SEXO 30-ENE-1989 BOGOTA D.C. FECHA Y LUGAR DE EXPEDICIONF.20 447": date(1989, 1, 30),
+            "SANTA MARTA (MAGDALENA) LUGAR DE NACIMIENTO ESTATURA G.S. RH * 09-MAR-1992 SANTA MARTA FECHA Y LUGAR DE EXPEDICION A IW": date(1992, 3, 9),
+        }
+        for texto, esperada in casos.items():
+            with self.subTest(texto=texto[:40]):
+                self.assertEqual(fecha_expedicion_en(texto), esperada)
+
+    def test_no_confunde_la_fecha_de_nacimiento(self):
+        from motor.evaluacion.identidad import fecha_expedicion_en
+
+        solo_nacimiento = "FECHA DE NACIMIENTO 19-MAY-1984 PEREIRA (RISARALDA) LUGAR DE NACIMIENTO 1.69 ESTATURA"
+        self.assertIsNone(fecha_expedicion_en(solo_nacimiento))
+
+    def test_no_inventa_cuando_hay_dos_fechas_distintas(self):
+        from motor.evaluacion.identidad import fecha_expedicion_en
+
+        confuso = "05-JUN-2001 CARTAGENA FECHA Y LUGAR DE EXPEDICION ... 30-ENE-1989 BOGOTA EXPEDICION"
+        self.assertIsNone(fecha_expedicion_en(confuso))
+
+    def test_descarta_fechas_imposibles(self):
+        from motor.evaluacion.identidad import fecha_expedicion_en
+
+        self.assertIsNone(fecha_expedicion_en("30-FEB-1999 BOGOTA FECHA Y LUGAR DE EXPEDICION"))
+        self.assertIsNone(fecha_expedicion_en("05-JUN-2045 BOGOTA FECHA Y LUGAR DE EXPEDICION"))

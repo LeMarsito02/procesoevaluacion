@@ -16,6 +16,7 @@ por su número (tolerando un dígito mal leído por el OCR) o por su nombre.
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from motor import criterios
 from motor.evaluacion.camara_comercio import (
@@ -27,7 +28,7 @@ from motor.evaluacion.camara_comercio import (
 )
 from motor.evaluacion.formato1 import _nombres_coinciden, _norm
 from motor.evaluacion.proponente_plural import obtener_personas_a_verificar
-from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from motor.esquemas.proceso import PersonaAntecedente, ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.procesamiento.pdf_utils import abrir_pdf, texto_ocr_reforzado, texto_pagina
 
@@ -160,11 +161,73 @@ def suplentes_del_certificado(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
     return suplentes
 
 
+# En el reverso de la cédula: "05-JUN-2001 CARTAGENA FECHA Y LUGAR DE
+# EXPEDICION". La fecha viene antes de la etiqueta, con la ciudad en medio, y
+# el OCR daña la etiqueta con frecuencia ("FECHA Y LUEGAR", "EXPEDICIONF.20").
+MESES_CEDULA = {"ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
+                "JUL": 7, "AGO": 8, "SEP": 9, "SET": 9, "OCT": 10, "NOV": 11, "DIC": 12}
+FECHA_CEDULA_RE = re.compile(r"(\d{1,2})\s?[-/.]\s?([A-Z]{3})\s?[-/.]\s?(\d{4})")
+ETIQUETA_EXPEDICION_RE = re.compile(r"EXPEDICION|EXPEDIDA")
+# Distancia máxima entre la fecha y la etiqueta (en medio va la ciudad).
+CERCA_DE_LA_ETIQUETA = 70
+
+
+def _fecha_de(match: re.Match[str]) -> date | None:
+    mes = MESES_CEDULA.get(match.group(2))
+    if not mes:
+        return None
+    try:
+        fecha = date(int(match.group(3)), mes, int(match.group(1)))
+    except ValueError:
+        return None
+    # Una cédula no se expide antes de 1960 ni después de hoy.
+    return fecha if date(1960, 1, 1) <= fecha <= date.today() else None
+
+
+def fecha_expedicion_en(texto_norm: str) -> date | None:
+    """La fecha de expedición que dice el reverso de la cédula, o None si no
+    está clara. Se toma la fecha que está pegada a la etiqueta "FECHA Y LUGAR
+    DE EXPEDICION"; la de nacimiento queda descartada porque está junto a su
+    propia etiqueta, lejos de esta."""
+    texto = re.sub(r"\s+", " ", texto_norm)
+    candidatas: list[date] = []
+    for etiqueta in ETIQUETA_EXPEDICION_RE.finditer(texto):
+        trozo = texto[max(0, etiqueta.start() - CERCA_DE_LA_ETIQUETA) : etiqueta.start()]
+        encontradas = [f for m in FECHA_CEDULA_RE.finditer(trozo) if (f := _fecha_de(m))]
+        # Se queda con la más pegada a la etiqueta; si hay dos distintas igual
+        # de cerca no se afirma nada.
+        if encontradas:
+            candidatas.append(encontradas[-1])
+    distintas = set(candidatas)
+    return candidatas[0] if len(distintas) == 1 else None
+
+
+def fecha_expedicion_cedula(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False) -> date | None:
+    """La fecha de expedición de la cédula de esa persona, leída de la copia
+    que viene en la oferta (los proponentes la escanean por ambos lados). La
+    pide el RNMC para consultar sus antecedentes."""
+    archivo = cedula_de(pdfs, nombre, cedula, principal=principal)
+    if archivo is None:
+        return None
+    for nombre_archivo, texto in paginas_cedula(pdfs):
+        if nombre_archivo == archivo and (fecha := fecha_expedicion_en(texto)) is not None:
+            return fecha
+    try:
+        reforzado = _norm(texto_ocr_reforzado(pdfs[archivo], max_paginas=PAGINAS_REFORZADAS))
+    except Exception:  # noqa: BLE001
+        return None
+    return fecha_expedicion_en(reforzado)
+
+
 class ResultadoIdentidad:
-    def __init__(self, cumple: bool, motivo: str | None, archivo: str | None) -> None:
+    def __init__(self, cumple: bool, motivo: str | None, archivo: str | None,
+                 personas: list[PersonaAntecedente] | None = None) -> None:
         self.cumple = cumple
         self.motivo = motivo
         self.archivo = archivo
+        # Cada persona a la que se le exige la copia de su documento, con la
+        # fecha de expedición que dice el reverso (la pide el RNMC).
+        self.personas = personas or []
 
 
 def evaluar_identidad(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase, tipo_proponente: str | None) -> ResultadoIdentidad:
@@ -180,12 +243,28 @@ def evaluar_identidad(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase, tip
             if not any(_nombres_coinciden(suplente[0], p[0]) for p in personas):
                 personas.append(suplente)
     faltan, archivo = [], None
+    detalle: list[PersonaAntecedente] = []
+    rol = "proponente" if tipo_proponente == "persona_natural" else "representante_legal"
     for indice, (nombre, cedula) in enumerate(personas):
         encontrado = cedula_de(pdfs, nombre, cedula, principal=indice == 0)
+        fecha = None
         if encontrado is None:
             faltan.append(nombre)
         else:
             archivo = archivo or encontrado
+            fecha = next(
+                (f for a, texto in paginas_cedula(pdfs) if a == encontrado and (f := fecha_expedicion_en(texto))),
+                None,
+            )
+        detalle.append(PersonaAntecedente(
+            nombre=nombre,
+            documento=cedula or None,
+            tipo="natural",
+            rol=rol if indice == 0 else ("suplente" if indice == 1 else "integrante"),
+            estado="cumple" if encontrado else "falta",
+            archivo=encontrado,
+            fecha_expedicion_documento=fecha,
+        ))
     if faltan:
         return ResultadoIdentidad(
             cumple=False,
@@ -194,8 +273,9 @@ def evaluar_identidad(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase, tip
                 "(la cédula escaneada puede no leerse)"
             ),
             archivo=archivo,
+            personas=detalle,
         )
-    return ResultadoIdentidad(cumple=True, motivo=None, archivo=archivo)
+    return ResultadoIdentidad(cumple=True, motivo=None, archivo=archivo, personas=detalle)
 
 
 def evaluar_proponente_identidad(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:

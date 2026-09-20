@@ -109,7 +109,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const codigo = inicial.documento_base.codigo_proceso
   const fechaCierre = inicial.documento_base.fecha_cierre
   const [paso, setPaso] = useState<Paso>(inicial.resultados.length ? 'evaluacion' : 'datos')
-  const [panel, setPanel] = useState<{ hoja: string; requisito: number | null } | null>(null)
+  const [panel, setPanel] = useState<{ hoja: string; requisito: number | null; persona?: string } | null>(null)
   // Requisito cuyo certificado consultado se va a subir desde su tarjeta.
   const [subirCertificado, setSubirCertificado] = useState<number | null>(null)
   // Requisito cuyo COPNIA se está consultando en línea.
@@ -393,7 +393,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           puedeEvaluar={!soloLectura}
           onDetener={pausar}
           onContinuar={evaluarPendientes}
-          onAbrir={(hoja, requisito) => resultados[hoja] && setPanel({ hoja, requisito: requisito ?? null })}
+          onAbrir={(hoja, requisito, persona) => resultados[hoja] && setPanel({ hoja, requisito: requisito ?? null, persona })}
           onSiguientePendiente={() => irSiguientePendiente(null)}
           onIrInforme={() => setPaso('informe')}
         />
@@ -460,6 +460,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
               onVerPdf={(blob) => window.open(URL.createObjectURL(blob), '_blank', 'noopener')}
               subirRequisito={subirCertificado}
               onSubidaAtendida={() => setSubirCertificado(null)}
+              foco={panel.persona && panel.requisito ? { persona: panel.persona, requisito: panel.requisito } : null}
             />
           }
         />

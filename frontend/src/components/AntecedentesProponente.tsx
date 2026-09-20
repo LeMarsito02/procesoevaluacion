@@ -43,10 +43,12 @@ interface Props {
   /** Requisito cuyo certificado se va a subir, pedido desde la tarjeta del requisito. */
   subirRequisito?: number | null
   onSubidaAtendida?: () => void
+  /** Casilla a la que se llegó desde la matriz: se marca y se pone a la vista. */
+  foco?: { persona: string; requisito: number } | null
 }
 
 /** Personas cuyos antecedentes se verifican y certificados que el evaluador aportó. */
-export default function AntecedentesProponente({ evaluacionId, proponenteId, soloLectura, onVerPdf, subirRequisito, onSubidaAtendida }: Props) {
+export default function AntecedentesProponente({ evaluacionId, proponenteId, soloLectura, onVerPdf, subirRequisito, onSubidaAtendida, foco }: Props) {
   const [datos, setDatos] = useState<Antecedentes | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [agregando, setAgregando] = useState<{ de: PersonaVerificada | null } | null>(null)
@@ -100,6 +102,9 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   const hijos = (id: string) => datos.personas.filter((p) => p.de_id === id)
   const ordenadas = raiz.flatMap((p) => [p, ...hijos(p.id)])
   const aportado = (persona: string | null, req: number) => datos.aportados.filter((d) => d.persona_id === persona && d.requisito === req)
+  // La casilla que se tocó en la matriz (se reconoce por documento o nombre).
+  const esElFoco = (per: PersonaVerificada, req: number) =>
+    !!foco && foco.requisito === req && (foco.persona === per.documento || foco.persona === per.nombre.toUpperCase())
   const estado = (persona: string, req: number) => datos.estados[persona]?.[String(req)]
   const pendiente = (per: PersonaVerificada, req: number) => {
     if (aportado(per.id, req).length) return false
@@ -176,7 +181,15 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                   {datos.requisitos.map((r) => {
                     const docs = aportado(per.id, r.numero)
                     return (
-                      <td key={r.numero} className="celda-antecedente">
+                      <td
+                        key={r.numero}
+                        className={`celda-antecedente${esElFoco(per, r.numero) ? ' celda-foco' : ''}`}
+                        ref={
+                          esElFoco(per, r.numero)
+                            ? (nodo) => nodo?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+                            : undefined
+                        }
+                      >
                         {docs.map((d) => (
                           <div key={d.id} className="aportado">
                             <button

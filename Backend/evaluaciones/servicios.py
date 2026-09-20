@@ -158,13 +158,23 @@ def sincronizar_personas(evaluacion: Evaluacion, proponente: Proponente) -> None
     detectadas: dict[str, dict] = {}
     for datos in Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente).values_list("datos", flat=True):
         for per in datos.get("personas_antecedente") or []:
-            detectadas.setdefault(clave_persona(per["nombre"], per.get("documento")), per)
+            clave = clave_persona(per["nombre"], per.get("documento"))
+            # Entre varios resultados de la misma persona gana el que trae la
+            # fecha de expedición de su documento.
+            if clave not in detectadas or (per.get("fecha_expedicion_documento") and not detectadas[clave].get("fecha_expedicion_documento")):
+                detectadas[clave] = per
     existentes = {
         clave_persona(x.nombre, x.documento): x for x in PersonaVerificada.objects.filter(evaluacion=evaluacion, proponente=proponente)
     }
     roles = set(RolPersona.values)
     for clave, per in detectadas.items():
         if clave in existentes:
+            # La fecha de expedición se completa si el motor la leyó después
+            # (la trae el reverso de la cédula y la pide el RNMC).
+            persona = existentes[clave]
+            if per.get("fecha_expedicion_documento") and not persona.fecha_expedicion_documento:
+                persona.fecha_expedicion_documento = per["fecha_expedicion_documento"]
+                persona.save(update_fields=["fecha_expedicion_documento"])
             continue
         PersonaVerificada.objects.create(
             entidad_id=evaluacion.entidad_id,
@@ -174,6 +184,7 @@ def sincronizar_personas(evaluacion: Evaluacion, proponente: Proponente) -> None
             tipo=TipoPersona.JURIDICA if per["tipo"] == "juridica" else TipoPersona.NATURAL,
             nombre=per["nombre"].upper()[:300],
             documento=(per["documento"] or "")[:30],
+            fecha_expedicion_documento=per.get("fecha_expedicion_documento"),
             detectada=True,
         )
     for clave, persona in existentes.items():

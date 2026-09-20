@@ -1,0 +1,275 @@
+===============================================================================
+MiEvaluador by LeMarTek — REQUERIMIENTOS DEL SERVIDOR
+LeMarTek Labs S.A.S. · NIT 902069061-9
+Actualizado: 2026-09-20
+===============================================================================
+
+Este archivo lista TODO lo que debe tener el servidor para correr la
+plataforma. Los pasos de instalación y la lista de verificación previa a
+abrirle el sistema a una entidad están en docs/DESPLIEGUE.md.
+
+
+-------------------------------------------------------------------------------
+1. HARDWARE
+-------------------------------------------------------------------------------
+
+Mínimo para una entidad (procesos de hasta ~100 ofertas):
+
+  CPU           8 núcleos
+  RAM           32 GB
+  Disco         500 GB SSD (ver punto 7: el almacenamiento crece con las ofertas)
+  Red           salida a internet (Drive/OneDrive y páginas oficiales)
+
+Recomendado (varios procesos a la vez):
+
+  CPU           16 núcleos
+  RAM           64 GB
+  Disco         1 TB SSD NVMe
+
+Regla de capacidad: cada proponente usa hasta ~4 GB de RAM en el peor caso
+(RUP y pólizas escaneadas que hay que reconocer con OCR) y el carril pesado
+hasta 7 GB. Ajustar MAX_WORKERS ≈ (RAM de la VM − 6 GB) / 4.
+Referencia medida: 81 ofertas reales, 2 procesos en paralelo ≈ 60 min en frío;
+8 procesos (≈ 38 GB de RAM) ≈ 15 min.
+
+GPU (solo para el nodo de IA, punto 5):
+
+  NVIDIA L4 24 GB (o equivalente). Puede ser el mismo servidor u otro.
+  Sin GPU el sistema funciona: la IA queda más lenta o deshabilitada, y lo que
+  no se pueda confirmar se marca para revisión de una persona.
+
+
+-------------------------------------------------------------------------------
+2. SISTEMA OPERATIVO Y PAQUETES
+-------------------------------------------------------------------------------
+
+Sistema operativo:  Ubuntu Server 24.04 LTS (o Debian 12).
+
+Paquetes del sistema (apt):
+
+  python3.14 python3.14-venv python3-pip     Backend (probado en 3.14.7; mínimo 3.12)
+  postgresql-18 postgresql-client-18         Base de datos (ver punto 4)
+  tesseract-ocr tesseract-ocr-spa            OCR en español de documentos escaneados
+  p7zip-full p7zip-rar                       Abrir ofertas .zip, .rar y .7z
+  nodejs npm                                 Compilar el frontend (Node 22+; probado en 26)
+  nginx                                      Servir el frontend y hacer de proxy de /api
+  git curl ca-certificates                   Utilidades
+  fonts-liberation                           Tipografías para los PDF que genera el sistema
+
+Si se despliega con Docker, todo lo anterior va en las imágenes:
+despliegue/docker-compose.yml.
+
+IMPORTANTE — sin tesseract el sistema arranca igual, pero no lee documentos
+escaneados (cédulas, pólizas, certificados en imagen) y manda mucho más a
+revisión manual. Verificar: `tesseract --list-langs` debe incluir `spa`.
+
+
+-------------------------------------------------------------------------------
+3. NAVEGADOR PARA CONSULTAS EN LÍNEA (Playwright + Chromium)
+-------------------------------------------------------------------------------
+
+El sistema consulta por sí solo dos certificados cuyas páginas oficiales no
+piden captcha, y los adjunta al expediente:
+
+  - RNMC   (Registro Nacional de Medidas Correctivas, Policía Nacional)
+  - COPNIA (certificado de vigencia y antecedentes disciplinarios)
+
+Las demás fuentes (Procuraduría, Contraloría, antecedentes judiciales) piden
+captcha y las sigue consultando una persona.
+
+Instalación, dentro del entorno virtual del backend:
+
+  ./venv/bin/pip install -r requirements.txt      # incluye playwright
+  ./venv/bin/playwright install chromium
+  ./venv/bin/playwright install-deps chromium     # librerías del sistema (root)
+
+Ocupa ~450 MB entre el navegador y sus librerías.
+Sin esto, el botón "Consultar" devuelve un error claro y el evaluador sube el
+certificado a mano; lo demás sigue funcionando.
+
+
+-------------------------------------------------------------------------------
+4. BASE DE DATOS (PostgreSQL 18)
+-------------------------------------------------------------------------------
+
+  - PostgreSQL 18 (mínimo 16).
+  - El rol con el que entra la aplicación NO puede ser superusuario ni tener
+    BYPASSRLS: el aislamiento entre entidades se hace con Row-Level Security y
+    un superusuario se la salta. Lo crea despliegue/postgres-inicial.sh.
+    Verificación:
+      select rolsuper, rolbypassrls from pg_roles where rolname = current_user;
+      -> debe dar  f | f
+  - Codificación UTF-8, locale es_CO.UTF-8 o en_US.UTF-8.
+  - Respaldo diario (scripts/respaldo.sh, retención 14 días) y al menos una
+    restauración probada en una base de prueba.
+
+
+-------------------------------------------------------------------------------
+5. IA LOCAL (Ollama)
+-------------------------------------------------------------------------------
+
+Los documentos NO salen del servidor: toda la IA es local. No se usa ningún
+servicio de IA externo.
+
+  Servicio:   Ollama (https://ollama.com), escuchando en el puerto 11434,
+              SIN exposición pública (solo red interna).
+
+  Modelos:
+    llama3.1:8b   lectura puntual de documentos de la oferta   (LLM_MODELO)
+    qwen3:4b      lectura completa del pliego, desarrollo      (PLIEGO_IA_MODELO)
+    qwen3:14b     lectura completa del pliego, producción con GPU de 24 GB
+
+  Descarga:  ollama pull llama3.1:8b && ollama pull qwen3:14b
+
+  Con GPU de 24 GB, en producción conviene:
+    PLIEGO_IA_MODELO=qwen3:14b
+    PLIEGO_IA_CONTEXTO=8192
+    PLIEGO_IA_TROZO=6000
+
+Si Ollama no está disponible, el sistema avisa en pantalla y evalúa con las
+reglas que no dependen de IA; nada se aprueba sin confirmar.
+
+
+-------------------------------------------------------------------------------
+6. SERVICIOS QUE DEBEN QUEDAR CORRIENDO
+-------------------------------------------------------------------------------
+
+  api           uvicorn config.asgi:application (2 procesos)
+  trabajador    python manage.py trabajar_fila
+                Atiende la fila de evaluación y la lectura del pliego con IA.
+                Se pueden correr varios, incluso en otras máquinas, contra la
+                misma base de datos.
+  tareas        cada 24 h: manage.py aplicar_retencion y scripts/respaldo.sh
+  web           nginx con el frontend compilado y proxy de /api
+  db            PostgreSQL
+  ollama        IA local
+
+Al desplegar una versión nueva del backend hay que REINICIAR el trabajador,
+no solo la api: el trabajador mantiene el código en memoria.
+
+
+-------------------------------------------------------------------------------
+7. ALMACENAMIENTO
+-------------------------------------------------------------------------------
+
+  ALMACENAMIENTO_DIR   Documentos del expediente: pliegos, certificados
+                       aportados, informes y expedientes generados.
+                       Debe estar en disco persistente y entrar en el respaldo.
+  Backend/cache/       Caché de ofertas descargadas y de OCR. No es crítico
+                       (se puede borrar), pero acelera mucho la re-evaluación.
+                       Calcular ~1,5 GB por proceso de 100 ofertas.
+  CACHE_LIMITES_DIR    Control de intentos de ingreso y límites de uso.
+
+La retención automática borra los documentos de las ofertas a los
+RETENCION_DIAS días (por defecto según la política de la entidad); el
+expediente y los informes se conservan.
+
+
+-------------------------------------------------------------------------------
+8. RED, PUERTOS Y SALIDA A INTERNET
+-------------------------------------------------------------------------------
+
+Entrada (desde internet), solo a través del proxy TLS:
+
+  443   HTTPS del dominio de la entidad
+
+Nunca expuestos a internet: PostgreSQL (5432) y Ollama (11434).
+
+Salida (el servidor debe poder alcanzar):
+
+  www.googleapis.com                Carpetas de ofertas en Google Drive
+  *.sharepoint.com, 1drv.ms         Carpetas de ofertas en OneDrive
+  srvcnpc.policia.gov.co            Consulta del RNMC
+  tramites.copnia.gov.co            Certificado del COPNIA
+  smtp del correo (punto 9)         Avisos de cuentas y de evaluación
+
+El proxy debe enviar X-Forwarded-Proto: https y hay que fijar
+PROXIES_CONFIABLES al número de proxies que hay delante de la aplicación; si
+no, los límites de uso y el bloqueo por intentos fallidos se aplican a la IP
+del proxy y afectan a todos los usuarios.
+
+
+-------------------------------------------------------------------------------
+9. CORREO
+-------------------------------------------------------------------------------
+
+Cuenta SMTP para los avisos (cuenta creada, clave temporal, evaluación
+asignada). En el DNS del dominio: SPF, DKIM y DMARC, o los correos llegan a
+spam.
+
+  CORREO_BACKEND, CORREO_USUARIO, CORREO_CLAVE, CORREO_PUERTO, CORREO_TLS,
+  CORREO_REMITENTE
+
+
+-------------------------------------------------------------------------------
+10. CREDENCIALES Y ARCHIVOS QUE HAY QUE PONER EN EL SERVIDOR
+-------------------------------------------------------------------------------
+
+  Backend/.env                              Variables del punto 11
+                                            (partir de despliegue/.env.ejemplo)
+  Backend/credentials/service_account.json  Cuenta de servicio de Google Drive.
+                                            Hay que compartirle las carpetas de
+                                            ofertas de cada proceso.
+
+Ambos con permisos 600 y fuera de cualquier repositorio.
+
+
+-------------------------------------------------------------------------------
+11. VARIABLES DE ENTORNO
+-------------------------------------------------------------------------------
+
+Obligatorias:
+
+  DJANGO_SECRET_KEY            Clave única (openssl rand -base64 48)
+  DJANGO_DEBUG=0               En producción SIEMPRE 0
+  DJANGO_ALLOWED_HOSTS         Dominio(s) de la entidad
+  CORS_ORIGENES                Origen del frontend (https://…)
+  DB_NOMBRE, DB_USUARIO, DB_CLAVE, DB_HOST, DB_PUERTO
+  ALMACENAMIENTO_DIR           Ruta del disco persistente
+  GOOGLE_SERVICE_ACCOUNT_FILE  Ruta del service_account.json
+  FRONTEND_URL                 Para los enlaces de los correos
+  PROXIES_CONFIABLES           Número de proxies delante de la aplicación
+
+Capacidad y memoria:
+
+  MAX_WORKERS                  Evaluaciones en paralelo (ver punto 1)
+  MAX_TAREAS_POR_WORKER        Tareas antes de reciclar el proceso
+  MEMORIA_MAX_WORKER_MB        Tope de memoria por proceso
+  MEMORIA_MAX_WORKER_PESADO_MB Tope del carril pesado
+
+IA local:
+
+  LLM_URL=http://localhost:11434
+  LLM_MODELO=llama3.1:8b
+  LLM_HABILITADO, LLM_TIMEOUT_SEGUNDOS, LLM_REINTENTOS, LLM_KEEP_ALIVE,
+  LLM_CONTEXTO_TOKENS, LLM_CANDADO
+  PLIEGO_IA_MODELO, PLIEGO_IA_CONTEXTO, PLIEGO_IA_TROZO, PLIEGO_IA_TIMEOUT,
+  PLIEGO_IA_HABILITADO
+
+Otras:
+
+  OCR_HABILITADO=1             Poner 0 solo para diagnóstico
+  CONSULTA_ESPERA=90           Segundos que se le dan a las páginas oficiales
+  RETENCION_DIAS               Días que se conservan los documentos de ofertas
+  LIMITE_ANONIMO, LIMITE_USUARIO, LIMITE_PESADO
+  CORREO_*                     Punto 9
+  ADMIN_DJANGO=0               Panel de Django (dejar apagado en producción)
+  DRIVE_SOLO_CACHE=0           En 1 no descarga nada nuevo (solo para pruebas)
+
+
+-------------------------------------------------------------------------------
+12. COMPROBACIÓN RÁPIDA DESPUÉS DE INSTALAR
+-------------------------------------------------------------------------------
+
+  python -V                       -> 3.12 o superior
+  psql -V                         -> 18.x
+  tesseract --list-langs          -> incluye spa
+  7z                              -> responde
+  curl localhost:11434/api/tags   -> lista los modelos de Ollama
+  ./venv/bin/python -c "from playwright.sync_api import sync_playwright; \
+      p=sync_playwright().start(); b=p.chromium.launch(); b.close(); print('chromium ok')"
+  curl https://<dominio>/api/health   -> 200
+  manage.py test                  -> todas las pruebas en verde
+  En la pantalla "Fila": el trabajador aparece activo.
+
+===============================================================================
