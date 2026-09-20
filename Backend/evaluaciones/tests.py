@@ -2399,3 +2399,37 @@ class DocumentoInventadoPorLaIATests(TestCase):
                                         documento="Carta de presentación de la oferta",
                                         titulo_documento=["CARTA DE PRESENTACION DE LA OFERTA"])
         self.assertIsNone(config_desde_pliego(incoherente))
+
+
+class IntegrantesJuridicosSinCertificadoTests(TestCase):
+    """A todo integrante jurídico del consorcio se le exigen antecedentes,
+    haya aportado o no su certificado de existencia."""
+
+    def test_se_agrega_el_integrante_que_no_aporto_certificado(self):
+        from motor.evaluacion.antecedentes import _con_integrantes_juridicos
+        from motor.evaluacion.camara_comercio import Empresa
+        from motor.evaluacion.proponente_plural import Integrante
+
+        con_certificado = [Empresa("CONSTRUCTORA ALFA S.A.S.", "900123456")]
+        integrantes = [
+            Integrante(nombre="CONSTRUCTORA ALFA SAS", identificacion="900.123.456-1", persona_natural=False),
+            Integrante(nombre="INGENIERIA BETA LTDA", identificacion="830.987.654-3", persona_natural=False),
+            Integrante(nombre="PEDRO PEREZ", identificacion="79446297", persona_natural=True),
+        ]
+        empresas = _con_integrantes_juridicos(con_certificado, integrantes)
+        self.assertEqual([e.nombre for e in empresas], ["CONSTRUCTORA ALFA S.A.S.", "INGENIERIA BETA LTDA"])
+        self.assertEqual(empresas[1].nit, "830987654")
+
+    def test_sin_nit_queda_como_falta_y_no_aprueba(self):
+        from datetime import date
+
+        from motor.evaluacion.antecedentes import _configs, evaluar_antecedente
+        from motor.evaluacion.camara_comercio import Empresa
+
+        config = next(c for c in _configs() if c.requisito == 14)
+        resultado = evaluar_antecedente(
+            {}, config, personas=[], empresas=[Empresa("INGENIERIA BETA LTDA", "")], plural=True, fecha_cierre=date(2026, 5, 25)
+        )
+        self.assertFalse(resultado.cumple)
+        self.assertEqual([p.estado for p in resultado.personas], ["falta"])
+        self.assertNotIn("NIT )", resultado.motivo or "")

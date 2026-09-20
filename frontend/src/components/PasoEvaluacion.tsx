@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import type { Proponente, ResultadoRequisito } from '../api'
+import { Fragment, useMemo, useState } from 'react'
+import type { PersonaAntecedente, Proponente, ResultadoRequisito } from '../api'
 import { esPendiente, estadoDe, resumenProponente, type Revisiones } from '../estado'
 import { formatDuracion } from '../format'
 import { GRUPOS, ORDEN_GRUPOS, REQUISITOS, requisitosOrdenados } from '../requisitos'
@@ -32,6 +32,41 @@ interface Props {
   onAbrir: (hoja: string, requisito?: number) => void
   onSiguientePendiente: () => void
   onIrInforme: () => void
+}
+
+const ROL: Record<PersonaAntecedente['rol'], string> = {
+  representante_legal: 'Representante legal',
+  suplente: 'Suplente',
+  integrante: 'Integrante',
+  proponente: 'Proponente',
+}
+
+/** Cada persona o empresa del proponente y cómo le fue en cada requisito de
+ * antecedentes: a un integrante jurídico no se le exigen los de persona
+ * natural (queda "no aplica"). */
+interface FilaPersona {
+  clave: string
+  nombre: string
+  documento: string | null
+  tipo: 'natural' | 'juridica'
+  rol: PersonaAntecedente['rol']
+  porRequisito: Map<number, PersonaAntecedente['estado']>
+}
+
+function personasDe(lista: ResultadoRequisito[] | undefined): FilaPersona[] {
+  const filas = new Map<string, FilaPersona>()
+  for (const r of lista ?? []) {
+    for (const per of r.personas_antecedente ?? []) {
+      const clave = per.documento || per.nombre.toUpperCase()
+      const fila =
+        filas.get(clave) ??
+        { clave, nombre: per.nombre, documento: per.documento, tipo: per.tipo, rol: per.rol, porRequisito: new Map() }
+      fila.porRequisito.set(r.requisito, per.estado)
+      filas.set(clave, fila)
+    }
+  }
+  const orden: PersonaAntecedente['rol'][] = ['proponente', 'representante_legal', 'suplente', 'integrante']
+  return [...filas.values()].sort((a, b) => orden.indexOf(a.rol) - orden.indexOf(b.rol) || a.nombre.localeCompare(b.nombre))
 }
 
 const TIPO: Record<string, string> = {
@@ -73,6 +108,19 @@ export default function PasoEvaluacion(p: Props) {
   const gruposPresentes = ORDEN_GRUPOS.filter((g) => REQUISITOS.some((r) => r.grupo === g))
   const [filtro, setFiltro] = useState<Filtro>('todos')
   const [busqueda, setBusqueda] = useState('')
+  // Proponentes cuyas personas verificadas están a la vista.
+  const [desplegadas, setDesplegadas] = useState<Set<string>>(new Set())
+  const alternarPersonas = (hoja: string) =>
+    setDesplegadas((prev) => {
+      const siguiente = new Set(prev)
+      if (!siguiente.delete(hoja)) siguiente.add(hoja)
+      return siguiente
+    })
+  // Requisitos que se exigen persona por persona (los de antecedentes).
+  const exigidos = useMemo(
+    () => new Set(Object.values(p.resultados).flat().flatMap((r) => (r.personas_antecedente?.length ? [r.requisito] : []))),
+    [p.resultados],
+  )
 
   const evaluados = p.proponentes.filter((pr) => p.resultados[pr.hoja]).length
   const faltan = p.proponentes.length - evaluados
@@ -300,12 +348,26 @@ export default function PasoEvaluacion(p: Props) {
           <tbody>
             {filas.map((pr) => {
               const lista = p.resultados[pr.hoja]
+              const personas = personasDe(lista)
+              const abierta = desplegadas.has(pr.hoja)
               const porReq = new Map((lista ?? []).map((r) => [r.requisito, r]))
               const res = resumenProponente(lista, p.revisiones)
               const tipo = lista?.find((r) => r.tipo_proponente)?.tipo_proponente
               return (
-                <tr key={pr.hoja} data-activo={p.hojaActiva === pr.hoja}>
+                <Fragment key={pr.hoja}>
+                <tr data-activo={p.hojaActiva === pr.hoja}>
                   <td className="col-prop">
+                    {personas.length > 0 && (
+                      <button
+                        type="button"
+                        className="prop-desplegar"
+                        onClick={() => alternarPersonas(pr.hoja)}
+                        aria-expanded={abierta}
+                        title={abierta ? 'Ocultar las personas verificadas' : `Ver las ${personas.length} personas verificadas`}
+                      >
+                        <Icono nombre={abierta ? 'menos' : 'mas'} tam={12} />
+                      </button>
+                    )}
                     <button type="button" className="prop-cell" onClick={() => lista && p.onAbrir(pr.hoja)} disabled={!lista}>
                       <span className="prop-num">{pr.hoja}</span>
                       <span style={{ minWidth: 0 }}>
@@ -349,6 +411,27 @@ export default function PasoEvaluacion(p: Props) {
                     )}
                   </td>
                 </tr>
+                {abierta &&
+                  personas.map((per) => (
+                    <tr key={`${pr.hoja}-${per.clave}`} className="fila-persona">
+                      <td className="col-prop">
+                        <span className="persona-nombre" title={per.documento ? `${per.tipo === 'juridica' ? 'NIT' : 'C.C.'} ${per.documento}` : undefined}>
+                          {per.nombre}
+                        </span>
+                        <span className="prop-meta">{ROL[per.rol]}{per.tipo === 'juridica' ? ' · persona jurídica' : ''}</span>
+                      </td>
+                      {REQS_ORDENADOS.map((info, i) => (
+                        <td
+                          key={info.numero}
+                          style={i > 0 && REQS_ORDENADOS[i - 1].grupo !== info.grupo ? { borderLeft: '1px solid var(--line)' } : undefined}
+                        >
+                          <CeldaPersona estado={per.porRequisito.get(info.numero)} exigido={exigidos.has(info.numero)} titulo={`${info.titulo} · ${per.nombre}`} />
+                        </td>
+                      ))}
+                      <td className="col-estado" />
+                    </tr>
+                  ))}
+                </Fragment>
               )
             })}
           </tbody>
@@ -379,5 +462,36 @@ export default function PasoEvaluacion(p: Props) {
         </span>
       </div>
     </main>
+  )
+}
+
+
+/** Cómo le fue a una persona en un requisito de antecedentes. */
+function CeldaPersona({
+  estado,
+  exigido,
+  titulo,
+}: {
+  estado: PersonaAntecedente['estado'] | undefined
+  exigido: boolean
+  titulo: string
+}) {
+  // El requisito no se verifica persona por persona (queda en blanco), o a
+  // esta persona no se le exige (a una empresa no se le pide REDAM ni
+  // antecedentes judiciales): "N.A.".
+  if (!exigido) return null
+  if (!estado) {
+    return (
+      <span className="celda celda-persona" data-estado="no_aplica" title={`${titulo}: no se le exige`}>
+        N.A.
+      </span>
+    )
+  }
+  const mapa = { cumple: 'cumple', falta: 'revisar', con_novedad: 'error', vencido: 'error' } as const
+  const texto = { cumple: 'Cumple', falta: 'Falta', con_novedad: 'Con novedad', vencido: 'Vencido' }[estado]
+  return (
+    <span className="celda celda-persona" data-estado={mapa[estado]} title={`${titulo}: ${texto.toLowerCase()}`}>
+      {estado === 'cumple' ? <Icono nombre="check" tam={13} grosor={2.6} /> : estado === 'falta' ? '!' : <Icono nombre="x" tam={12} grosor={2.6} />}
+    </span>
   )
 }

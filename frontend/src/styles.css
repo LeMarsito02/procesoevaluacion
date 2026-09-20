@@ -552,3 +552,13 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 @media (max-width: 480px) {
   .brand-text { display: none; }
 }
+
+/* Personas verificadas dentro de la fila del proponente (antecedentes). */
+.prop-desplegar { float: left; margin: 10px 4px 0 0; width: 18px; height: 18px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink-2); display: grid; place-items: center; cursor: pointer; }
+.prop-desplegar:hover { background: var(--na-soft); }
+.matriz tr.fila-persona td { background: #f7f9fd; border-top: 0; }
+.matriz tr.fila-persona .celda-persona { width: 26px; height: 26px; }
+.matriz tr.fila-persona .col-prop { padding-left: 34px; }
+.persona-nombre { display: block; font-size: 12.5px; color: var(--ink-2); }
+.celda-persona { cursor: default; font-size: 11px; font-weight: 600; }
+.celda-persona:hover { transform: none; box-shadow: none; }

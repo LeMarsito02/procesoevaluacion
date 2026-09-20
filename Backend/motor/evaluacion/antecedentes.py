@@ -195,6 +195,26 @@ def _con_integrantes_naturales(personas: list[tuple], integrantes: list[Integran
     return todas
 
 
+def _nit_texto(empresa: Empresa) -> str:
+    return f" (NIT {empresa.nit})" if empresa.nit else ""
+
+
+def _con_integrantes_juridicos(empresas: list[Empresa], integrantes: list[Integrante]) -> list[Empresa]:
+    """Los integrantes jurídicos del Formato 2 que no aportaron certificado de
+    existencia también deben tener sus antecedentes: si solo se miraran los
+    certificados aportados, a esa empresa no se le exigiría nada y el
+    requisito podría darse por cumplido sin su certificado."""
+    todas = list(empresas)
+    for integrante in integrantes:
+        if integrante.persona_natural:
+            continue
+        nit = _solo_digitos(integrante.identificacion or "")[:9]
+        if any((nit and e.nit == nit) or _nombres_coinciden(integrante.nombre, e.razon_social or "") for e in todas):
+            continue
+        todas.append(Empresa(integrante.nombre, nit))
+    return todas
+
+
 def _con_roles(personas: list[tuple[str, str | None]], tipo_proponente: str | None) -> list[tuple[str, str | None, str]]:
     """Del consorcio: el primero es su representante y el segundo, el suplente.
     De una persona natural que se presenta sola, ella misma."""
@@ -329,25 +349,27 @@ def evaluar_antecedente(
             resultados.append(PersonaAntecedente(**base, estado="cumple", archivo=archivo))
 
     for empresa in empresas:
-        base = {"nombre": empresa.nombre, "documento": empresa.nit, "tipo": "juridica",
+        base = {"nombre": empresa.nombre, "documento": empresa.nit or None, "tipo": "juridica",
                 "rol": "integrante" if plural else "proponente"}
+        # Sin NIT (integrante del Formato 2 que no aportó certificado de
+        # existencia) no se puede emparejar el certificado: queda para revisar.
         suyo = next(
-            (c for c in candidatos if _nit_del_certificado(config.requisito, _norm(c.texto)) == empresa.nit), None
+            (c for c in candidatos if empresa.nit and _nit_del_certificado(config.requisito, _norm(c.texto)) == empresa.nit), None
         )
         if suyo is None:
-            faltantes.append(f"no se aportó el certificado de {config.entidad} de {empresa.nombre} (NIT {empresa.nit})")
+            faltantes.append(f"no se aportó el certificado de {config.entidad} de {empresa.nombre}{_nit_texto(empresa)}")
             resultados.append(PersonaAntecedente(**base, estado="falta"))
             continue
         if archivo_evaluado is None:
             archivo_evaluado = suyo.archivo
         if not config.frase_cumple_re.search(_norm(suyo.texto)):
             faltantes.append(
-                f"el certificado de {config.entidad} de {empresa.nombre} (NIT {empresa.nit}) no confirma que esté "
+                f"el certificado de {config.entidad} de {empresa.nombre}{_nit_texto(empresa)} no confirma que esté "
                 "libre de novedades"
             )
             resultados.append(PersonaAntecedente(**base, estado="con_novedad", archivo=suyo.archivo))
         elif vencido := problema_de_vigencia(config, _norm(suyo.texto), fecha_cierre):
-            faltantes.append(f"el certificado de {config.entidad} de {empresa.nombre} (NIT {empresa.nit}) {vencido}")
+            faltantes.append(f"el certificado de {config.entidad} de {empresa.nombre}{_nit_texto(empresa)} {vencido}")
             resultados.append(PersonaAntecedente(**base, estado="vencido", archivo=suyo.archivo))
         else:
             resultados.append(PersonaAntecedente(**base, estado="cumple", archivo=suyo.archivo))
@@ -420,6 +442,8 @@ def _evaluar_proponente_antecedente(
         if config.requisito in REQUISITOS_PERSONA_JURIDICA and tipo_proponente != "persona_natural"
         else []
     )
+    if empresas is not None and config.requisito in REQUISITOS_PERSONA_JURIDICA and tipo_proponente in ("consorcio", "union_temporal"):
+        empresas = _con_integrantes_juridicos(empresas, integrantes_formato2(pdfs, proceso.codigo_proceso))
     resultado = evaluar_antecedente(
         pdfs, config, personas, empresas, plural=tipo_proponente in ("consorcio", "union_temporal"),
         fecha_cierre=proceso.fecha_cierre,

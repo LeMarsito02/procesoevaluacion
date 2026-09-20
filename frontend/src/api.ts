@@ -127,6 +127,16 @@ export interface DecisionPliego {
   nota: string
 }
 
+/** Una persona o empresa a la que un requisito de antecedentes le exige certificado. */
+export interface PersonaAntecedente {
+  nombre: string
+  documento: string | null
+  tipo: 'natural' | 'juridica'
+  rol: 'representante_legal' | 'suplente' | 'integrante' | 'proponente'
+  estado: 'cumple' | 'falta' | 'con_novedad' | 'vencido'
+  archivo: string | null
+}
+
 export interface ResultadoRequisito {
   hoja: string
   numero_orden: number
@@ -150,6 +160,8 @@ export interface ResultadoRequisito {
   copnia_fecha_expedicion: string | null
   error: string | null
   archivos_disponibles: string[]
+  /** A quién se le exigió el certificado en este requisito y cómo le fue. */
+  personas_antecedente: PersonaAntecedente[]
 }
 
 
