@@ -2808,3 +2808,35 @@ class LaIADebeVerDosVecesLoMismoTests(TestCase):
              mock.patch("motor.llm.vision.leer_cedula_detallado", return_value=LecturaVision(date(1996, 5, 24), 1)):
             lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
         self.assertFalse(lectura.confiable)
+
+
+class FechaSoloSeGuardaSiSirveTests(BaseHistorico):
+    """Una fecha que la página rechazó no puede quedarse pegada a la persona:
+    todas las consultas siguientes fallarían por el mismo dato malo."""
+
+    def persona(self):
+        return self.abogado.post(
+            f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/personas",
+            {"rol": "representante_legal", "tipo": "natural", "nombre": "Pedro Pérez", "documento": "1020304",
+             "fecha_expedicion_documento": "2005-03-01"},
+        ).json()
+
+    def consultar(self, persona_id, fecha=None):
+        from evaluaciones.models import PlantillaEvaluacion  # noqa: F401  (asegura la plantilla cargada)
+
+        datos = {"requisito": 17, "persona_id": persona_id}
+        if fecha:
+            datos["fecha_expedicion_documento"] = fecha
+        return self.abogado.post(f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/consultar", datos)
+
+    def test_la_fecha_rechazada_por_la_pagina_se_borra(self):
+        from motor.consultas.linea import ConsultaError
+        from evaluaciones.models import PersonaVerificada
+
+        persona = self.persona()
+        with mock.patch("motor.consultas.linea.consultar_rnmc",
+                        side_effect=ConsultaError("La página de la Policía responde: «La fecha de expedición de la cedula "
+                                                  "de ciudadania no es correcta, por favor verifique.»")):
+            r = self.consultar(persona["id"], "1999-09-09")
+        self.assertEqual(r.status_code, 400)
+        self.assertIsNone(PersonaVerificada.objects.get(pk=persona["id"]).fecha_expedicion_documento)

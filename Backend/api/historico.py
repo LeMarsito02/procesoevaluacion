@@ -354,11 +354,12 @@ def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date 
     """La fecha de expedición de la cédula, que el RNMC pide: la que escribió
     el evaluador, la registrada, o la que dice el reverso de la cédula que el
     proponente aportó. Si no hay ninguna, explica por qué y la pide."""
+    # Ojo: aquí no se guarda nada. La fecha solo se guarda cuando la página
+    # oficial la acepta; si se guardara antes, una fecha equivocada quedaría
+    # pegada a la persona y todas las consultas siguientes fallarían.
     if indicada is not None:
         if indicada > date.today():
             raise HttpError(400, "La fecha de expedición de la cédula no puede ser futura.")
-        persona.fecha_expedicion_documento = indicada
-        persona.save(update_fields=["fecha_expedicion_documento"])
         return indicada
     if persona.fecha_expedicion_documento:
         return persona.fecha_expedicion_documento
@@ -387,8 +388,6 @@ def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date 
             f"La página de la Policía pide la fecha de expedición de la cédula de {persona.nombre} y {porque}."
             f"{sugerencia} Escríbela aquí (está en el reverso del documento) y se consulta de una vez.",
         )
-    persona.fecha_expedicion_documento = lectura.fecha
-    persona.save(update_fields=["fecha_expedicion_documento"])
     return lectura.fecha
 
 
@@ -412,13 +411,15 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
     if persona is None and not (fuente == "copnia" and datos.matricula):
         raise HttpError(400, "Indique de quién es el certificado.")
 
+    fecha_usada = None
     try:
         if fuente == "rnmc":
             es_empresa = persona.tipo == "juridica"
+            fecha_usada = None if es_empresa else _fecha_de_expedicion(persona, proponente, datos.fecha_expedicion_documento)
             certificado = consultar_rnmc(
                 persona.documento,
                 tipo="nit" if es_empresa else "cedula",
-                fecha_expedicion=None if es_empresa else _fecha_de_expedicion(persona, proponente, datos.fecha_expedicion_documento),
+                fecha_expedicion=fecha_usada,
             )
         elif datos.matricula:
             certificado = consultar_copnia(datos.matricula.strip(), por="matricula")
@@ -427,6 +428,11 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
         else:
             certificado = consultar_copnia(persona.documento, por="cedula")
     except ConsultaError as exc:
+        # La página rechazó la fecha: la que estuviera guardada no sirve y se
+        # borra, para que la próxima vez se vuelva a pedir en vez de repetir
+        # la consulta con un dato malo.
+        if "fecha de expedicion" in str(exc).lower() or "fecha de expedición" in str(exc).lower():
+            PersonaVerificada.objects.filter(pk=persona.pk).update(fecha_expedicion_documento=None)
         # Algo que la persona puede resolver (falta un dato, no existe el registro).
         raise HttpError(400, str(exc)) from exc
     except HttpError:
@@ -460,6 +466,10 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
         )
     else:
         nota += " La página no confirmó que esté libre de novedades: revíselo."
+    # La página aceptó estos datos: ahora sí vale la pena guardar la fecha.
+    if fecha_usada is not None and persona.fecha_expedicion_documento != fecha_usada:
+        persona.fecha_expedicion_documento = fecha_usada
+        persona.save(update_fields=["fecha_expedicion_documento"])
     with transaction.atomic():
         doc = DocumentoAportado(
             entidad_id=evaluacion.entidad_id,
