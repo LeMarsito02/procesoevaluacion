@@ -203,16 +203,28 @@ def _con_integrantes_juridicos(empresas: list[Empresa], integrantes: list[Integr
     """Los integrantes jurídicos del Formato 2 que no aportaron certificado de
     existencia también deben tener sus antecedentes: si solo se miraran los
     certificados aportados, a esa empresa no se le exigiría nada y el
-    requisito podría darse por cumplido sin su certificado."""
+    requisito podría darse por cumplido sin su certificado.
+
+    Cada integrante se empareja primero con el certificado de su NIT o de su
+    razón social; los que quedan sueltos se emparejan con los certificados que
+    no dicen a nombre de quién están (así el integrante toma ese nombre en vez
+    de aparecer dos veces), y solo lo que sobra se agrega como empresa nueva."""
+    juridicos = [i for i in integrantes if not i.persona_natural]
+    if not juridicos:
+        return list(empresas)
     todas = list(empresas)
-    for integrante in integrantes:
-        if integrante.persona_natural:
-            continue
+    sueltos = []
+    for integrante in juridicos:
         nit = _solo_digitos(integrante.identificacion or "")[:9]
         if any((nit and e.nit == nit) or _nombres_coinciden(integrante.nombre, e.razon_social or "") for e in todas):
             continue
-        todas.append(Empresa(integrante.nombre, nit))
-    return todas
+        sueltos.append((integrante, nit))
+    for indice, empresa in enumerate(todas):
+        if empresa.razon_social or not sueltos:
+            continue
+        integrante, _ = sueltos.pop(0)
+        todas[indice] = Empresa(integrante.nombre, empresa.nit)
+    return todas + [Empresa(integrante.nombre, nit) for integrante, nit in sueltos]
 
 
 def _con_roles(personas: list[tuple[str, str | None]], tipo_proponente: str | None) -> list[tuple[str, str | None, str]]:

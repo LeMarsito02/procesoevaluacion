@@ -108,19 +108,20 @@ export default function PasoEvaluacion(p: Props) {
   const gruposPresentes = ORDEN_GRUPOS.filter((g) => REQUISITOS.some((r) => r.grupo === g))
   const [filtro, setFiltro] = useState<Filtro>('todos')
   const [busqueda, setBusqueda] = useState('')
-  // Proponentes cuyas personas verificadas están a la vista.
-  const [desplegadas, setDesplegadas] = useState<Set<string>>(new Set())
-  const alternarPersonas = (hoja: string) =>
-    setDesplegadas((prev) => {
-      const siguiente = new Set(prev)
-      if (!siguiente.delete(hoja)) siguiente.add(hoja)
-      return siguiente
+  // Los antecedentes se exigen persona por persona: el abogado puede ver el
+  // detalle de todos los proponentes a la vez.
+  const [verPersonas, setVerPersonas] = useState(() => localStorage.getItem('matriz-por-persona') === 'si')
+  const alternarPersonas = () =>
+    setVerPersonas((antes) => {
+      localStorage.setItem('matriz-por-persona', antes ? 'no' : 'si')
+      return !antes
     })
   // Requisitos que se exigen persona por persona (los de antecedentes).
   const exigidos = useMemo(
     () => new Set(Object.values(p.resultados).flat().flatMap((r) => (r.personas_antecedente?.length ? [r.requisito] : []))),
     [p.resultados],
   )
+  const hayPersonas = exigidos.size > 0
 
   const evaluados = p.proponentes.filter((pr) => p.resultados[pr.hoja]).length
   const faltan = p.proponentes.length - evaluados
@@ -302,6 +303,20 @@ export default function PasoEvaluacion(p: Props) {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          className={`btn btn-sm ${verPersonas ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={alternarPersonas}
+          disabled={!hayPersonas}
+          aria-pressed={verPersonas}
+          title={
+            hayPersonas
+              ? 'Muestra, debajo de cada proponente, a quién se le exigió cada antecedente'
+              : 'Aparece cuando el proceso se evalúa con esta versión del programa'
+          }
+        >
+          <Icono nombre="usuarios" tam={15} /> {verPersonas ? 'Ocultar personas' : 'Ver antecedentes por persona'}
+        </button>
         <div className="input-group search">
           <Icono nombre="buscar" tam={16} />
           <input
@@ -349,7 +364,7 @@ export default function PasoEvaluacion(p: Props) {
             {filas.map((pr) => {
               const lista = p.resultados[pr.hoja]
               const personas = personasDe(lista)
-              const abierta = desplegadas.has(pr.hoja)
+              const abierta = verPersonas && personas.length > 0
               const porReq = new Map((lista ?? []).map((r) => [r.requisito, r]))
               const res = resumenProponente(lista, p.revisiones)
               const tipo = lista?.find((r) => r.tipo_proponente)?.tipo_proponente
@@ -357,17 +372,6 @@ export default function PasoEvaluacion(p: Props) {
                 <Fragment key={pr.hoja}>
                 <tr data-activo={p.hojaActiva === pr.hoja}>
                   <td className="col-prop">
-                    {personas.length > 0 && (
-                      <button
-                        type="button"
-                        className="prop-desplegar"
-                        onClick={() => alternarPersonas(pr.hoja)}
-                        aria-expanded={abierta}
-                        title={abierta ? 'Ocultar las personas verificadas' : `Ver las ${personas.length} personas verificadas`}
-                      >
-                        <Icono nombre={abierta ? 'menos' : 'mas'} tam={12} />
-                      </button>
-                    )}
                     <button type="button" className="prop-cell" onClick={() => lista && p.onAbrir(pr.hoja)} disabled={!lista}>
                       <span className="prop-num">{pr.hoja}</span>
                       <span style={{ minWidth: 0 }}>

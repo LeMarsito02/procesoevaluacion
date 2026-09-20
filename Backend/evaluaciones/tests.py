@@ -2420,6 +2420,23 @@ class IntegrantesJuridicosSinCertificadoTests(TestCase):
         self.assertEqual([e.nombre for e in empresas], ["CONSTRUCTORA ALFA S.A.S.", "INGENIERIA BETA LTDA"])
         self.assertEqual(empresas[1].nit, "830987654")
 
+    def test_el_certificado_sin_razon_social_toma_el_nombre_del_integrante(self):
+        """Un certificado de existencia que no dice la razón social no puede
+        hacer que la misma empresa aparezca dos veces (una con su nombre y
+        otra como "la empresa con NIT…"), con una falsa alarma."""
+        from motor.evaluacion.antecedentes import _con_integrantes_juridicos
+        from motor.evaluacion.camara_comercio import Empresa
+        from motor.evaluacion.proponente_plural import Integrante
+
+        empresas = [Empresa(None, "900574741"), Empresa("9D SOLUCIONES INTEGRALES S.A.S", "901799409")]
+        integrantes = [
+            Integrante(nombre="MSING S.A.S", identificacion=None, persona_natural=False),
+            Integrante(nombre="9D SOLUCIONES INTEGRALES SAS", identificacion=None, persona_natural=False),
+        ]
+        resultado = _con_integrantes_juridicos(empresas, integrantes)
+        self.assertEqual([(e.nombre, e.nit) for e in resultado],
+                         [("MSING S.A.S", "900574741"), ("9D SOLUCIONES INTEGRALES S.A.S", "901799409")])
+
     def test_sin_nit_queda_como_falta_y_no_aprueba(self):
         from datetime import date
 
