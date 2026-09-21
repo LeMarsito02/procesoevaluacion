@@ -339,6 +339,32 @@ class ConsultaIn(Schema):
 FUENTES_EN_LINEA = {"juridica.rnmc": "rnmc", "juridica.copnia_antecedentes": "copnia", "juridica.aval_ingeniero": "copnia"}
 
 
+def _consultado_hoy(evaluacion, proponente, requisito: int, persona, matricula: str | None):
+    """El certificado que ya se consultó hoy para lo mismo, si existe."""
+    hoy = DocumentoAportado.objects.filter(
+        evaluacion=evaluacion, proponente=proponente, requisito=requisito,
+        fecha_expedicion=date.today(), observacion__startswith="Consultado en línea",
+    )
+    if persona is not None:
+        return hoy.filter(persona=persona).order_by("-subido_en").first()
+    if matricula:
+        return hoy.filter(persona=None, nombre_original__contains=matricula.strip()).order_by("-subido_en").first()
+    return None
+
+
+def _ya_cumple(evaluacion, proponente, requisito: int, persona) -> bool:
+    """El motor ya dio por cumplido el certificado de esta persona en este
+    requisito (lo trajo la oferta o ya se aportó uno que sirve)."""
+    resultado = Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente, requisito=requisito).first()
+    if resultado is None:
+        return False
+    clave = servicios.clave_persona(persona.nombre, persona.documento)
+    return any(
+        servicios.clave_persona(x["nombre"], x.get("documento")) == clave and x.get("estado") == "cumple"
+        for x in (resultado.datos.get("personas_antecedente") or [])
+    )
+
+
 # Cuánto se deja descansar una página oficial que falló antes de volver a
 # consultarla.
 PAUSA_TRAS_FALLA = 5 * 60
@@ -445,8 +471,18 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
     if persona is None and not (fuente == "copnia" and datos.matricula):
         raise HttpError(400, "Indique de quién es el certificado.")
 
-    # Si la página falló hace un momento, no se le insiste: sería mandarle
-    # solicitudes a una plataforma del Estado que no está respondiendo.
+    # Nada de consultas que no hacen falta:
+    # 1) ya se consultó hoy a esta persona para este requisito → se devuelve eso;
+    ya_consultado = _consultado_hoy(evaluacion, proponente, datos.requisito, persona, datos.matricula)
+    if ya_consultado is not None:
+        return 201, _aportado_out(ya_consultado)
+    # 2) ya tiene un certificado que sirve (en la oferta o aportado) → no se consulta.
+    if persona is not None and _ya_cumple(evaluacion, proponente, datos.requisito, persona):
+        raise HttpError(
+            409,
+            f"{persona.nombre} ya tiene un certificado válido para este requisito; no hace falta consultar la página oficial.",
+        )
+    # 3) la página falló hace un momento → no se le insiste.
     enfriando = _pagina_en_pausa(fuente)
     if enfriando:
         raise HttpError(503, enfriando)

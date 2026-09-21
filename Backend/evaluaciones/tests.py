@@ -2887,3 +2887,48 @@ class FallasDeLaPaginaNoSonDeLosDatosTests(FechaSoloSeGuardaSiSirveTests):
         otro = linea._AVISO_RNMC_RE.search(linea._norm("× Error El servicio no está disponible en este momento. Aceptar"))
         self.assertIn("FECHA DE EXPEDICI", fecha_mala.group(1))
         self.assertNotIn("FECHA DE EXPEDICI", otro.group(1))
+
+
+class NadaDeConsultasInnecesariasTests(FechaSoloSeGuardaSiSirveTests):
+    """A la página de la Policía solo se le pregunta cuando de verdad hace falta."""
+
+    def test_lo_ya_consultado_hoy_no_se_vuelve_a_consultar(self):
+        from datetime import date
+
+        from motor.consultas.linea import CertificadoEnLinea
+
+        persona = self.persona()
+        certificado = CertificadoEnLinea(
+            fuente="rnmc", texto="NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR", pdf=b"%PDF-1.4 rnmc",
+            nombre_archivo="RNMC 1020304.pdf", fecha_expedicion=date.today(), sin_novedades=True,
+        )
+        with mock.patch("motor.consultas.linea.consultar_rnmc", return_value=certificado) as rnmc:
+            primera = self.consultar(persona["id"])
+            segunda = self.consultar(persona["id"])
+        self.assertEqual(primera.status_code, 201, primera.content)
+        self.assertEqual(segunda.status_code, 201)
+        self.assertEqual(primera.json()["id"], segunda.json()["id"])
+        self.assertEqual(rnmc.call_count, 1)  # la segunda vez no se llamó a la Policía
+
+    def test_quien_ya_cumple_no_se_consulta(self):
+        from evaluaciones import servicios
+        from evaluaciones.models import Resultado
+
+        persona = self.persona()
+        from evaluaciones.models import Evaluacion
+
+        evaluacion = Evaluacion.objects.get(pk=self.ev["id"])
+        ya_cumple = [{"nombre": persona["nombre"], "documento": persona["documento"], "tipo": "natural",
+                      "rol": "representante_legal", "estado": "cumple"}]
+        Resultado.objects.update_or_create(
+            evaluacion=evaluacion, proponente_id=self.p1, requisito=17,
+            defaults={"entidad_id": evaluacion.entidad_id, "requiere_revision": False, "datos": {
+                "hoja": "P-01", "numero_orden": 1, "nombre_proponente": "x", "requisito": 17, "cumple": True,
+                "personas_antecedente": ya_cumple}},
+        )
+        self.assertTrue(servicios.clave_persona(persona["nombre"], persona["documento"]))
+        with mock.patch("motor.consultas.linea.consultar_rnmc") as rnmc:
+            r = self.consultar(persona["id"])
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("no hace falta", r.json()["detail"])
+        rnmc.assert_not_called()
