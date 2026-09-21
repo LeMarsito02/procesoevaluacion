@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 import requests
 from django.http import HttpRequest
@@ -34,14 +35,30 @@ MENSAJE_SIN_TOKEN = "No se pudo comprobar que eres una persona. Recarga la pági
 MENSAJE_RECHAZADO = "No se pudo comprobar que eres una persona. Espera un momento e inténtalo de nuevo."
 
 
+def problema_de_configuracion() -> str | None:
+    """Errores típicos al llenar el .env (se confunde la clave del sitio con los
+    otros dos datos)."""
+    if not (PROJECT_ID and API_KEY and SITE_KEY):
+        return None
+    if PROJECT_ID == SITE_KEY or not re.fullmatch(r"[a-z][a-z0-9-]{4,29}", PROJECT_ID):
+        return "RECAPTCHA_PROJECT_ID no parece un ID de proyecto de Google Cloud (minúsculas, números y guiones)"
+    if API_KEY == SITE_KEY or not API_KEY.startswith("AIza"):
+        return "RECAPTCHA_API_KEY no parece una clave de API de Google Cloud (empieza por «AIza»)"
+    return None
+
+
 def configurado() -> bool:
-    return bool(PROJECT_ID and API_KEY and SITE_KEY)
+    return bool(PROJECT_ID and API_KEY and SITE_KEY) and problema_de_configuracion() is None
 
 
 def verificar(token: str | None, accion: str, request: HttpRequest) -> None:
     """Lanza HttpError si el token no es de una persona haciendo `accion`."""
     if not configurado():
-        log.warning("reCAPTCHA sin configurar (RECAPTCHA_PROJECT_ID / RECAPTCHA_API_KEY): no se verifica %s", accion)
+        problema = problema_de_configuracion()
+        if problema:
+            log.error("reCAPTCHA mal configurado, no se verifica %s: %s", accion, problema)
+        else:
+            log.warning("reCAPTCHA sin configurar (RECAPTCHA_PROJECT_ID / RECAPTCHA_API_KEY): no se verifica %s", accion)
         return
     if not token:
         raise HttpError(400, MENSAJE_SIN_TOKEN)
@@ -79,6 +96,7 @@ def verificar(token: str | None, accion: str, request: HttpRequest) -> None:
     if puntaje is None or puntaje < PUNTAJE_MINIMO:
         log.info("reCAPTCHA rechazó %s: puntaje %s < %s", accion, puntaje, PUNTAJE_MINIMO)
         raise HttpError(403, MENSAJE_RECHAZADO)
+    log.info("reCAPTCHA aceptó %s con puntaje %s", accion, puntaje)
 
 
 def _ip(request: HttpRequest) -> str:

@@ -417,7 +417,7 @@ class RecaptchaTests(BaseCuentas):
             simulado.return_value.json.return_value = respuesta
             simulado.return_value.raise_for_status.return_value = None
         return (
-            mock.patch.multiple(recaptcha, PROJECT_ID="proyecto", API_KEY="clave"),
+            mock.patch.multiple(recaptcha, PROJECT_ID="proyecto-mievaluador", API_KEY="AIzaClaveDePrueba"),
             mock.patch.object(recaptcha.requests, "post", simulado),
             simulado,
         )
@@ -474,3 +474,18 @@ class RecaptchaTests(BaseCuentas):
             r = Cliente().post("/api/auth/recuperar", {"email": "admin@entidad.gov.co", "recaptcha": "tok"})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(simulado.call_args.kwargs["json"]["event"]["expectedAction"], "RECUPERAR_CLAVE")
+
+
+class RecaptchaConfiguracionTests(BaseCuentas):
+    def test_clave_del_sitio_en_lugar_del_proyecto_se_detecta(self):
+        from unittest import mock
+
+        from cuentas import recaptcha
+
+        with mock.patch.multiple(recaptcha, PROJECT_ID=recaptcha.SITE_KEY, API_KEY=recaptcha.SITE_KEY):
+            self.assertIn("RECAPTCHA_PROJECT_ID", recaptcha.problema_de_configuracion())
+            self.assertFalse(recaptcha.configurado())
+        with mock.patch.multiple(recaptcha, PROJECT_ID="mievaluador-472315", API_KEY=recaptcha.SITE_KEY):
+            self.assertIn("RECAPTCHA_API_KEY", recaptcha.problema_de_configuracion())
+        with mock.patch.multiple(recaptcha, PROJECT_ID="mievaluador-472315", API_KEY="AIzaSyEjemplo"):
+            self.assertIsNone(recaptcha.problema_de_configuracion())
