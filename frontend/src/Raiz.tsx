@@ -44,6 +44,11 @@ export default function Raiz() {
     consultarSesion()
   }, [consultarSesion])
 
+  // La insignia de reCAPTCHA solo en la pantalla de acceso (donde se usa).
+  useEffect(() => {
+    document.body.dataset.conSesion = String(!!usuario)
+  }, [usuario])
+
   const comprobar = () => {
     setCargando(true)
     consultarSesion()

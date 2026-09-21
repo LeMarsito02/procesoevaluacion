@@ -21,6 +21,7 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.utils import check_csrf
 
+from cuentas import recaptcha
 from cuentas.correo import enviar_recuperacion
 from cuentas.models import AccesoSoporte, Usuario
 from cuentas.seguridad import auditar, inicio_bloqueado, ip_de, registrar_intento, sesion_activa
@@ -63,6 +64,8 @@ class CsrfOut(Schema):
 class LoginIn(Schema):
     email: str
     password: str
+    # Token de reCAPTCHA Enterprise de la acción LOGIN (vence a los 2 minutos).
+    recaptcha: str | None = None
 
 
 class LoginOut(Schema):
@@ -85,6 +88,7 @@ class CodigoIn(Schema):
 
 class RecuperarIn(Schema):
     email: str
+    recaptcha: str | None = None
 
 
 class RestablecerIn(Schema):
@@ -179,6 +183,7 @@ def iniciar_sesion(request: HttpRequest, datos: LoginIn) -> LoginOut:
     ip = ip_de(request)
     if inicio_bloqueado(email, ip):
         raise HttpError(429, "Demasiados intentos fallidos. Espera 15 minutos e inténtalo de nuevo.")
+    recaptcha.verificar(datos.recaptcha, "LOGIN", request)
 
     usuario = authenticate(request, username=email, password=datos.password)
     if usuario is None or (usuario.entidad_id and not usuario.entidad.activa):
@@ -267,6 +272,7 @@ def recuperar_clave(request: HttpRequest, datos: RecuperarIn) -> dict[str, bool]
     ip = ip_de(request)
     if inicio_bloqueado(email, ip):
         raise HttpError(429, "Demasiados intentos. Espera 15 minutos e inténtalo de nuevo.")
+    recaptcha.verificar(datos.recaptcha, "RECUPERAR_CLAVE", request)
     # Cuenta como intento para limitar el envío masivo de correos.
     registrar_intento(email, ip, exitoso=False)
     usuario = Usuario.objects.filter(email=email, is_active=True).first()

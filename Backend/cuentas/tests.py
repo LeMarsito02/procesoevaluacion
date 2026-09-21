@@ -400,3 +400,77 @@ class SoporteTests(BaseCuentas):
         # Un usuario normal no se puede usar como soporte.
         r = self.admin.post("/api/equipo/soporte", {"soporte_id": str(self.evaluador.id), "horas": 2, "motivo": "Revisar algo"})
         self.assertEqual(r.status_code, 400)
+
+
+class RecaptchaTests(BaseCuentas):
+    """reCAPTCHA Enterprise en el inicio de sesión y la recuperación de clave."""
+
+    def configurado(self, respuesta=None, error=None):
+        from unittest import mock
+
+        from cuentas import recaptcha
+
+        simulado = mock.Mock()
+        if error:
+            simulado.side_effect = error
+        else:
+            simulado.return_value.json.return_value = respuesta
+            simulado.return_value.raise_for_status.return_value = None
+        return (
+            mock.patch.multiple(recaptcha, PROJECT_ID="proyecto", API_KEY="clave"),
+            mock.patch.object(recaptcha.requests, "post", simulado),
+            simulado,
+        )
+
+    def login(self, token="tok"):
+        return Cliente().post("/api/auth/login", {"email": "admin@entidad.gov.co", "password": CLAVE, "recaptcha": token})
+
+    def test_sin_configurar_no_se_verifica(self):
+        self.assertEqual(self.login(token=None).status_code, 200)
+
+    def test_token_valido_de_la_accion(self):
+        conf, post, simulado = self.configurado({"tokenProperties": {"valid": True, "action": "LOGIN"}, "riskAnalysis": {"score": 0.9}})
+        with conf, post:
+            self.assertEqual(self.login().status_code, 200)
+        cuerpo = simulado.call_args.kwargs["json"]["event"]
+        self.assertEqual((cuerpo["token"], cuerpo["expectedAction"]), ("tok", "LOGIN"))
+
+    def test_sin_token_se_rechaza(self):
+        conf, post, _ = self.configurado({})
+        with conf, post:
+            self.assertEqual(self.login(token=None).status_code, 400)
+
+    def test_token_de_otra_accion_se_rechaza(self):
+        conf, post, _ = self.configurado({"tokenProperties": {"valid": True, "action": "RECUPERAR_CLAVE"}, "riskAnalysis": {"score": 0.9}})
+        with conf, post:
+            self.assertEqual(self.login().status_code, 400)
+
+    def test_puntaje_bajo_se_rechaza(self):
+        conf, post, _ = self.configurado({"tokenProperties": {"valid": True, "action": "LOGIN"}, "riskAnalysis": {"score": 0.1}})
+        with conf, post:
+            self.assertEqual(self.login().status_code, 403)
+
+    def test_token_invalido_se_rechaza(self):
+        conf, post, _ = self.configurado({"tokenProperties": {"valid": False, "invalidReason": "EXPIRED"}})
+        with conf, post:
+            self.assertEqual(self.login().status_code, 400)
+
+    def test_google_caido_deja_pasar_salvo_estricto(self):
+        from unittest import mock
+
+        import requests
+
+        from cuentas import recaptcha
+
+        conf, post, _ = self.configurado(error=requests.ConnectionError("sin red"))
+        with conf, post:
+            self.assertEqual(self.login().status_code, 200)
+            with mock.patch.object(recaptcha, "ESTRICTO", True):
+                self.assertEqual(self.login().status_code, 503)
+
+    def test_recuperar_clave_usa_su_propia_accion(self):
+        conf, post, simulado = self.configurado({"tokenProperties": {"valid": True, "action": "RECUPERAR_CLAVE"}, "riskAnalysis": {"score": 0.8}})
+        with conf, post:
+            r = Cliente().post("/api/auth/recuperar", {"email": "admin@entidad.gov.co", "recaptcha": "tok"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(simulado.call_args.kwargs["json"]["event"]["expectedAction"], "RECUPERAR_CLAVE")

@@ -4,6 +4,7 @@ import { cambiarClave, solicitarRecuperacion } from '../cuentas'
 import { useSesion } from '../sesion'
 import CampoClave, { ReglasClave } from './CampoClave'
 import { mensajeDe } from '../http'
+import { tokenRecaptcha } from '../recaptcha'
 
 export default function PaginaCuenta() {
   const { usuario } = useSesion()!
@@ -17,7 +18,7 @@ export default function PaginaCuenta() {
   async function enviarEnlace() {
     setOlvido('enviando')
     try {
-      await solicitarRecuperacion(usuario.email)
+      await solicitarRecuperacion(usuario.email, await tokenRecaptcha('RECUPERAR_CLAVE'))
       setOlvido('enviado')
     } catch {
       setOlvido('error')

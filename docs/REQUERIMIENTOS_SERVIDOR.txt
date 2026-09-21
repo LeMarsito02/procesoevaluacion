@@ -256,6 +256,23 @@ IA local:
                                En un equipo con GPU de 4 GB dejar 0: el modelo
                                corre casi todo en CPU (~2,5 min por persona).
 
+reCAPTCHA Enterprise (pantalla de acceso: entrar y recuperar la contraseña):
+
+  RECAPTCHA_SITE_KEY=6Lecm8ctAAAAAGBlk3npIJqs-cnWZwIdGg3cO3Pm   Clave del sitio (pública)
+  RECAPTCHA_PROJECT_ID=<id del proyecto de Google Cloud>
+  RECAPTCHA_API_KEY=<clave de API de ese proyecto, restringida a la API
+                     "reCAPTCHA Enterprise">                       (secreta)
+  RECAPTCHA_PUNTAJE_MINIMO=0.5  Puntaje de 0 (robot) a 1 (persona) para aceptar
+  RECAPTCHA_ESTRICTO=0          1 = si Google no responde, se rechaza el acceso
+                               (con 0 se deja pasar: el acceso ya se bloquea
+                               tras varios intentos fallidos)
+
+  Sin PROJECT_ID y API_KEY no se verifica (desarrollo) y queda un aviso en el
+  registro. En la consola de reCAPTCHA, agregar el dominio de producción a la
+  clave del sitio. El frontend toma la clave de VITE_RECAPTCHA_SITE_KEY al
+  construirse (por defecto la de arriba). La política de seguridad de
+  despliegue/nginx.conf ya permite www.google.com y www.gstatic.com.
+
 Otras:
 
   OCR_HABILITADO=1             Poner 0 solo para diagnóstico

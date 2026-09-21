@@ -596,3 +596,6 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 
 /* La casilla a la que se llegó desde la matriz, para no perderla de vista. */
 .celda-foco { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 8px; }
+
+/* reCAPTCHA protege solo la pantalla de acceso: dentro de la app no se muestra. */
+body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }

@@ -80,14 +80,15 @@ async function conCsrf(promesa: Promise<LoginOut>): Promise<LoginOut> {
 }
 
 export const obtenerYo = () => pedirJson<Usuario>('/api/auth/yo')
-export const iniciarSesion = (email: string, password: string) =>
-  conCsrf(enviarJson<LoginOut>('/api/auth/login', 'POST', { email, password }))
+export const iniciarSesion = (email: string, password: string, recaptcha: string | null) =>
+  conCsrf(enviarJson<LoginOut>('/api/auth/login', 'POST', { email, password, recaptcha }))
 export const configurar2fa = () => enviarJson<{ otpauth_uri: string; secreto: string }>('/api/auth/2fa/configurar', 'POST')
 export const verificar2fa = (codigo: string) => conCsrf(enviarJson<LoginOut>('/api/auth/2fa/verificar', 'POST', { codigo }))
 export const cerrarSesion = () => enviarJson<{ ok: boolean }>('/api/auth/logout', 'POST')
 export const cambiarClave = (actual: string, nueva: string) =>
   enviarJson<{ ok: boolean }>('/api/auth/cambiar-clave', 'POST', { actual, nueva })
-export const solicitarRecuperacion = (email: string) => enviarJson<{ ok: boolean }>('/api/auth/recuperar', 'POST', { email })
+export const solicitarRecuperacion = (email: string, recaptcha: string | null) =>
+  enviarJson<{ ok: boolean }>('/api/auth/recuperar', 'POST', { email, recaptcha })
 export const restablecerClave = (uid: string, token: string, password: string) =>
   enviarJson<{ ok: boolean }>('/api/auth/restablecer', 'POST', { uid, token, password })
 export const fijarClaveInicial = (nueva: string) => conCsrf(enviarJson<LoginOut>('/api/auth/clave-inicial', 'POST', { nueva }))

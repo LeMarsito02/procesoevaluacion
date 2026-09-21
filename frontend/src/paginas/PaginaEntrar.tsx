@@ -5,6 +5,7 @@ import { configurar2fa, fijarClaveInicial, iniciarSesion, solicitarRecuperacion,
 import CampoClave, { ReglasClave } from './CampoClave'
 import MarcoAcceso from './MarcoAcceso'
 import { mensajeDe } from '../http'
+import { cargarRecaptcha, tokenRecaptcha } from '../recaptcha'
 
 type Etapa = 'credenciales' | 'cambiar_clave' | 'verificar_2fa' | 'configurar_2fa' | 'recuperar' | 'recuperar_enviado'
 
@@ -32,6 +33,11 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
       .catch((e: unknown) => setError(mensajeDe(e)))
   }, [etapa, secreto])
 
+  // Se carga al abrir la pantalla para que el token salga al instante al enviar.
+  useEffect(() => {
+    void cargarRecaptcha()
+  }, [])
+
   async function ejecutar(accion: () => Promise<void>) {
     setEnviando(true)
     setError(null)
@@ -46,7 +52,7 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
 
   const entrar = () =>
     ejecutar(async () => {
-      const r = await iniciarSesion(email, clave)
+      const r = await iniciarSesion(email, clave, await tokenRecaptcha('LOGIN'))
       setClave('')
       if (r.estado === 'ok' && r.usuario) onEntrar(r.usuario)
       else setEtapa(r.estado as Etapa)
@@ -80,7 +86,7 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
 
   const recuperar = () =>
     ejecutar(async () => {
-      await solicitarRecuperacion(email)
+      await solicitarRecuperacion(email, await tokenRecaptcha('RECUPERAR_CLAVE'))
       setEtapa('recuperar_enviado')
     })
 
