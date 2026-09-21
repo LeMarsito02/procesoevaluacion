@@ -59,10 +59,7 @@ def encontrar_formato5(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
             continue
         if _es_certificado(_norm(texto)):
             return nombre, texto
-    # Dentro de un paquete jurídico (Formato 2, parafiscales, antecedentes y
-    # cámara de comercio en un solo PDF) el formato no está al principio.
-    certificados = certificados_formato5(pdfs)
-    return certificados[0] if certificados else None
+    return None
 
 
 def _es_certificado(texto_norm: str) -> bool:
@@ -143,7 +140,7 @@ _PALABRAS_SOCIETARIAS = {"SAS", "S", "A", "LTDA", "SA", "E", "Y", "DE", "LA", "E
 
 
 @memo_por_pdfs
-def certificados_formato5(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
+def certificados_formato5(pdfs: dict[str, bytes], profundo: bool = False) -> list[tuple[str, str]]:
     """Todos los Formato 5 del proponente como (archivo, texto), separados
     por página aunque vengan varios en un mismo PDF (un proponente plural
     aporta uno por integrante, a veces juntos). Una página sin título se
@@ -153,13 +150,13 @@ def certificados_formato5(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
         try:
             with abrir_pdf(pdfs[nombre]) as pdf:
                 actual: list[str] | None = None
-                es_paquete = bool(PISTA_PAQUETE_JURIDICO_RE.search(_norm(nombre.rsplit("/", 1)[-1])))
+                es_paquete = profundo and bool(PISTA_PAQUETE_JURIDICO_RE.search(_norm(nombre.rsplit("/", 1)[-1])))
                 for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_PAQUETE]):
                     if indice >= (PAGINAS_MAXIMAS_PAQUETE if es_paquete else PAGINAS_MAXIMAS_FORMATO5):
                         break
                     texto = texto_pagina(page)
                     page.flush_cache()
-                    if indice < PAGINAS_MINIMAS_PAQUETE and PISTA_PAQUETE_JURIDICO_RE.search(_norm(texto)):
+                    if profundo and indice < PAGINAS_MINIMAS_PAQUETE and PISTA_PAQUETE_JURIDICO_RE.search(_norm(texto)):
                         es_paquete = True
                     # El formulario de preguntas del SECOP cita el nombre del
                     # formato en el enunciado; no es el formato.
@@ -323,6 +320,22 @@ def evaluar_requisito12(
                     "del pliego — confirma si se acepta y quién la firma"
                 ),
                 archivo=propia,
+            )
+        # Dentro de un paquete de documentos (Formato 2, parafiscales,
+        # antecedentes y cámara en un solo PDF) el formato puede estar en la
+        # página 17. Encontrarlo ahí no basta para aprobar: hubo uno así,
+        # firmado por la revisora fiscal, que el abogado rechazó.
+        en_paquete = certificados_formato5(pdfs, True)
+        if en_paquete:
+            archivos = ", ".join(dict.fromkeys(f"'{a}'" for a, _ in en_paquete))
+            return ResultadoEvaluacionSegSocial(
+                cumple=False,
+                motivo=(
+                    f"el formato de seguridad social está dentro de un paquete de documentos ({archivos}, "
+                    f"{len(en_paquete)} formato(s)) — revisa que esté completo, firmado por quien corresponde y, "
+                    "si es plural, que haya uno por integrante"
+                ),
+                archivo=en_paquete[0][0],
             )
         return ResultadoEvaluacionSegSocial(
             cumple=False,

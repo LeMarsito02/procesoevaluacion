@@ -65,7 +65,9 @@ class ProcesoDocumentoBase(BaseModel):
 
     @property
     def exige_tarjeta_profesional(self) -> bool:
-        return (not self.tarjeta_suplible) if self.tarjeta_exigida is None else self.tarjeta_exigida
+        # Por prudencia la copia se exige salvo que el pliego diga que se puede
+        # suplir: sin ella hubo un aval aprobado que el abogado rechazó.
+        return bool(self.tarjeta_exigida) or not self.tarjeta_suplible
 
     # Definición de evaluación de la entidad (motor.criterios.DefinicionEvaluacion
     # serializada). None = evaluación jurídica base del sistema.

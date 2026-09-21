@@ -16,6 +16,7 @@ por su número (tolerando un dígito mal leído por el OCR) o por su nombre.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from datetime import date
 
 from motor import criterios
@@ -408,6 +409,113 @@ def fecha_expedicion_en(texto_norm: str) -> date | None:
     return candidatas[0] if len(distintas) == 1 else None
 
 
+VOTOS_MINIMOS = 3
+# Fecha de la cédula con el OCR dañando letras y dígitos: "OB-FEB-2013",
+# "19-AG0-1976", "03-0CT-1997", "2013VALLEDUPAR" (año pegado a la ciudad).
+_FECHA_CON_MES_DANADO_RE = re.compile(
+    r"(?<![A-Z0-9])([0-9OBISZ]{1,2})(\s?[-/. ]\s?)([A-Z0-9]{3})(\s?[-/. ]\s?)((?:19|20|I9|2O)[0-9OBISZ]{2})(?!\d)"
+)
+_LETRA_POR_DIGITO = str.maketrans("OBISZ", "08152")
+_ABREVIATURA = {m: k for k, m in MESES_CEDULA.items() if k != "SET"}
+
+
+def _arreglar_fechas(texto: str) -> str:
+    """Pasa las fechas dañadas por el OCR a "DD-MMM-AAAA" limpio."""
+    def arreglar(m: re.Match[str]) -> str:
+        mes = _mes_laxo(m.group(3))
+        if mes is None:
+            return m.group(0)
+        dia = m.group(1).translate(_LETRA_POR_DIGITO)
+        anio = m.group(5).translate(_LETRA_POR_DIGITO)
+        return f"{dia}-{_ABREVIATURA[mes]}-{anio} "
+
+    return _FECHA_CON_MES_DANADO_RE.sub(arreglar, texto)
+
+
+def _fecha_votada(texto_norm: str, numero: str) -> date | None:
+    """La fecha de expedición que da una lectura: junto a la etiqueta (con el
+    mes arreglado si el OCR lo dañó, "0CT" -> "OCT") o, en la cédula digital,
+    por la MRZ."""
+    texto = _arreglar_fechas(texto_norm)
+    return fecha_expedicion_en(texto) or fecha_expedicion_por_mrz(texto, numero)
+
+
+_NACIMIENTO_RE = re.compile(r"NAC\w{0,8}\W{0,12}(\d{1,2})\s?[-/. ]\s?([A-Z0-9]{3})\s?[-/. ]\s?((?:19|20)\d{2})")
+
+
+def _nacimientos(textos: list[str]) -> set[date]:
+    """Fechas de nacimiento que se leen junto a su etiqueta."""
+    fechas = set()
+    for texto in textos:
+        for m in _NACIMIENTO_RE.finditer(re.sub(r"\s+", " ", texto)):
+            mes = _mes_laxo(m.group(2))
+            try:
+                fecha = date(int(m.group(3)), mes, int(m.group(1))) if mes else None
+            except ValueError:
+                fecha = None
+            if fecha and date(1900, 1, 1) < fecha < date.today():
+                fechas.add(fecha)
+    return fechas
+
+
+# Línea de abajo del reverso de la cédula antigua:
+# "A-1500150-01172910-F-0052371321-20201023" (sexo, número con ceros a la
+# izquierda y fecha de impresión).
+_NUMERO_DEL_REVERSO_RE = re.compile(r"[MF]\W{0,2}(\d{10})\W{0,2}(?:19|20)\d{6}")
+
+
+def _reverso_es_suyo(numero: str, texto_norm: str) -> bool | None:
+    """Según el número de la línea de abajo del reverso: True si es el suyo
+    (con hasta dos dígitos mal leídos), False si es claramente otro y None
+    si no se leyó."""
+    leidos = [_digitos(m.group(1)) for m in _NUMERO_DEL_REVERSO_RE.finditer(re.sub(r"[\s.]", "", texto_norm))]
+    if not leidos or len(numero) < 6:
+        return None
+    return any(len(d) == len(numero) and sum(a != b for a, b in zip(d, numero)) <= 2 for d in leidos)
+
+
+def _ediciones(a: str, b: str) -> int:
+    """Distancia de edición entre dos cadenas cortas de dígitos."""
+    fila = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        anterior, fila[0] = fila[0], i
+        for j, cb in enumerate(b, 1):
+            anterior, fila[j] = fila[j], min(fila[j] + 1, fila[j - 1] + 1, anterior + (ca != cb))
+    return fila[-1]
+
+
+def _numero_parecido(numero: str, texto_norm: str) -> bool:
+    """El número está en el texto con a lo sumo dos dígitos cambiados,
+    sobrantes o faltantes ("00192715138" por 19275138). Solo se usa cuando el
+    archivo ya se llama como la cédula de la persona."""
+    if len(numero) < 6:
+        return False
+    compacto = re.sub(r"(?<=\d)[\s.,](?=\d)", "", texto_norm)
+    return any(
+        abs(len(d) - len(numero)) <= 2 and _ediciones(d, numero) <= 2
+        for d in (c.lstrip("0") for c in re.findall(r"(?<!\d)\d{6,13}(?!\d)", compacto))
+    )
+
+
+def _archivo_con_su_nombre(archivo: str, nombre: str) -> bool:
+    """El nombre del archivo trae su nombre y al menos un apellido ("CC
+    ADRIANA ROJAS RL"), no solo iniciales."""
+    base = set(re.findall(r"[A-ZÑ]{3,}", _norm(archivo.rsplit("/", 1)[-1].rsplit(".", 1)[0])))
+    partes = [p for p in re.findall(r"[A-ZÑ]{3,}", _norm(nombre)) if p not in {"DEL", "LOS", "LAS"}]
+    return len(partes) >= 3 and partes[0] in base and any(p in base for p in partes[-2:])
+
+
+def _fecha_de_la_franja(texto_norm: str) -> date | None:
+    """En la franja recortada ("…SEXO 17-OCT-1995 BOGOTA D.C. FECHA Y LUGAR DE
+    EXPEDICION"), la fecha más cercana antes de la etiqueta; si la etiqueta no
+    salió, la última fecha de la franja."""
+    texto = _arreglar_fechas(re.sub(r"\s+", " ", texto_norm))
+    etiqueta = ETIQUETA_EXPEDICION_RE.search(texto)
+    antes = texto[: etiqueta.start()] if etiqueta else texto
+    fechas = [f for m in FECHA_CEDULA_RE.finditer(antes) if (f := _fecha_de(m))]
+    return fechas[-1] if fechas else None
+
+
 def lecturas_de_paginas(contenido: bytes, ademas: frozenset[int] = frozenset()) -> tuple[dict[int, str], dict[int, str]]:
     """Texto normal y OCR reforzado (normalizados) de las primeras páginas
     del archivo de la cédula y de las páginas `ademas` (las que ya se vieron
@@ -445,9 +553,9 @@ def leer_fecha_expedicion(
     Solo se lee de una página que sea demostrablemente suya (trae su número o
     su nombre): una carpeta puede traer las cédulas de varias personas y una
     fecha de otro no sirve para consultar nada."""
-    archivo = cedula_de(pdfs, nombre, cedula, principal=principal) or archivo_cedula_por_nombre(
-        pdfs, nombre, cedula, principal=principal
-    )
+    archivo = cedula_de(pdfs, nombre, cedula, principal=principal)
+    por_nombre = archivo is None
+    archivo = archivo or archivo_cedula_por_nombre(pdfs, nombre, cedula, principal=principal)
     if archivo is None:
         return LecturaFecha(None, False, "ninguna")
     numero = _digitos(cedula or "")
@@ -493,6 +601,49 @@ def leer_fecha_expedicion(
         fecha = max(vistas, key=lambda f: (vistas[f][0], vistas[f][1]))
         dudosa = LecturaFecha(fecha, False, "ocr")
 
+    # Lectura a fondo: cada imagen incrustada derecha, sin el fondo de color y
+    # con varios tratamientos (fotos de la cédula, imágenes giradas). Cada
+    # lectura es un voto; se usa la fecha solo si al menos tres coinciden y
+    # ninguna otra tiene más de un voto.
+    from motor.procesamiento.ocr_cedula import lecturas_a_fondo
+
+    votos: Counter[date] = Counter({f: v[0] for f, v in vistas.items()})
+    nacimientos: set[date] = set()
+    for n in suyas or sorted(normales)[:PAGINAS_MAXIMAS_ARCHIVO_CEDULA]:
+        lecturas = lecturas_a_fondo(pdfs[archivo], n)
+        paginas = [_norm(t) for t in lecturas.get("paginas", [])]
+        franjas = [_norm(t) for t in lecturas.get("franjas", [])]
+        todo = " ".join(paginas + franjas)
+        # Suya si alguna lectura trae su número o su nombre; o si el archivo
+        # se llama como su cédula y el número sale con a lo sumo un dígito
+        # dañado (el reverso solo lo trae en el código de abajo).
+        if n not in suyas and not _es_suyo(nombre, numero, todo) and not (
+            por_nombre and _reverso_es_suyo(numero, todo) is not False
+            and (_numero_parecido(numero, todo) or _reverso_es_suyo(numero, todo) or _archivo_con_su_nombre(archivo, nombre))
+        ):
+            continue
+        nacimientos |= _nacimientos(paginas + franjas + list(normales.values()) + list(reforzadas.values()))
+        for texto in paginas:
+            fecha = _fecha_votada(texto, numero)
+            if fecha:
+                votos[fecha] += 1
+        for texto in franjas:
+            fecha = _fecha_de_la_franja(texto)
+            if fecha:
+                votos[fecha] += 1
+    # La franja a veces toma la línea del nacimiento: esa fecha (y sus
+    # variantes con el año mal leído) no es la de expedición, y nadie recibe
+    # la cédula antes de los 17 años.
+    for fecha in list(votos):
+        if any((fecha.month, fecha.day) == (d.month, d.day) or fecha < d.replace(year=d.year + 17) for d in nacimientos):
+            del votos[fecha]
+    if votos:
+        (fecha, veces), *resto = votos.most_common()
+        segundo = resto[0][1] if resto else 0
+        if veces >= VOTOS_MINIMOS and veces >= 3 * segundo:
+            return LecturaFecha(fecha, True, "ocr")
+        dudosa = LecturaFecha(fecha, False, "ocr")
+
     if not con_ia:
         return dudosa
 
@@ -509,7 +660,7 @@ def leer_fecha_expedicion(
         return dudosa
     # Se da por buena cuando dos miradas coinciden, o cuando la IA confirma lo
     # que el OCR había leído a medias. Una sola lectura se sugiere, no se usa.
-    segura = de_la_ia.confirmada or de_la_ia.fecha in vistas
+    segura = de_la_ia.confirmada or de_la_ia.fecha in votos
     return LecturaFecha(de_la_ia.fecha, segura, "ia")
 
 

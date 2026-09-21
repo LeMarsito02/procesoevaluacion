@@ -3292,7 +3292,12 @@ class TarjetaProfesionalAvalTests(TestCase):
         self.assertIsNone(campos["tarjeta_exigida"].default)
         doc = ProcesoDocumentoBase.model_construct(tarjeta_suplible=False, tarjeta_exigida=None)
         self.assertTrue(doc.exige_tarjeta_profesional)
+        # Aunque el aval del pliego no la mencione, se exige salvo que el
+        # pliego deje suplirla (por prudencia: sin ella hubo un aval aprobado
+        # que el abogado rechazó).
         doc = ProcesoDocumentoBase.model_construct(tarjeta_suplible=False, tarjeta_exigida=False)
+        self.assertTrue(doc.exige_tarjeta_profesional)
+        doc = ProcesoDocumentoBase.model_construct(tarjeta_suplible=True, tarjeta_exigida=False)
         self.assertFalse(doc.exige_tarjeta_profesional)
 
 
@@ -3401,3 +3406,42 @@ class LecturasQueNoCoincidenTests(TestCase):
              mock.patch.object(identidad, "lecturas_de_paginas", side_effect=lambda *a, **k: ({1: normal}, {1: reforzada})):
             lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "JUAN JOSE ARAQUE BLANCO", "77031208", con_ia=False)
         self.assertEqual((lectura.fecha, lectura.confiable), (date(1987, 12, 14), True))
+
+
+class NumeroDelReversoTests(TestCase):
+    """La línea de abajo del reverso trae el número de la cédula: con dos
+    dígitos mal leídos sigue siendo suya; muy distinto, es de otra persona."""
+
+    def test_numero_del_reverso(self):
+        from motor.evaluacion.identidad import _reverso_es_suyo
+
+        self.assertTrue(_reverso_es_suyo("52371321", "A-1500150-01172910-F-0052871821-20201023 00721698982"))
+        self.assertFalse(_reverso_es_suyo("52371321", "A-0100100-00157053-F-0043001767-20090520 0011606230A"))
+        self.assertIsNone(_reverso_es_suyo("52371321", "FECHA Y LUGAR DE EXPEDICION"))
+
+    def test_archivo_con_su_nombre(self):
+        from motor.evaluacion.identidad import _archivo_con_su_nombre
+
+        self.assertTrue(_archivo_con_su_nombre("DOBLE R/CC ADRIANA ROJAS RL.pdf", "ADRIANA MARCELA ROJAS PRIETO"))
+        self.assertFalse(_archivo_con_su_nombre("CEDULAS/CC LFRM.pdf", "LUIS FELIPE RUIZ MEJIA"))
+        self.assertFalse(_archivo_con_su_nombre("DOC LEGAL/MEGB/Doc Legal MEGB.pdf", "ADRIANA MARCELA ROJAS PRIETO"))
+
+
+class NumeroParecidoTests(TestCase):
+    def test_numero_con_un_digito_de_mas(self):
+        from motor.evaluacion.identidad import _numero_parecido
+
+        self.assertTrue(_numero_parecido("19275138", "A-1500150-00184486-M-00192715138-20091009"))
+        self.assertTrue(_numero_parecido("52371321", "F-0052871821-20201023"))
+        self.assertFalse(_numero_parecido("52371321", "F-0043001767-20090520"))
+
+
+class FechasDanadasPorElOcrTests(TestCase):
+    def test_letras_por_digitos_y_ano_pegado(self):
+        from datetime import date
+
+        from motor.evaluacion.identidad import _fecha_de_la_franja
+
+        self.assertEqual(_fecha_de_la_franja("ESTATURA G.S. RH SEXO OB-FEB-2013VALLEDUPAR — FECHA Y LUGAR DE EXPEDICION"), date(2013, 2, 8))
+        self.assertEqual(_fecha_de_la_franja("GS. AH SEXO 19-AG0-1976 BOGOTA D.C. FECHA Y LUGAR DE"), date(1976, 8, 19))
+        self.assertEqual(_fecha_de_la_franja("SEXO 03-0CT-1997 BOGOTA D.C FECHA Y LUGAR DE EXPEDICION"), date(1997, 10, 3))
