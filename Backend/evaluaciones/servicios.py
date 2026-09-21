@@ -382,7 +382,11 @@ def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
     else:
         definicion = criterios.definicion_sistema(evaluacion.tipo)
     if evaluacion.tipo == "juridica" and evaluacion.proceso.ajustes_pliego:
-        definicion = aplicar_ajustes(definicion, evaluacion.proceso.ajustes_pliego)
+        # Una evaluación aprobada es el registro oficial: sus requisitos no
+        # cambian aunque después mejoren las reglas del pliego.
+        definicion = aplicar_ajustes(
+            definicion, evaluacion.proceso.ajustes_pliego, revalidar=evaluacion.estado != EstadoEvaluacion.APROBADA
+        )
     # El salario mínimo del año del cierre, salvo que la entidad fije otro.
     if not definicion.parametros.get("smmlv"):
         salario = salario_minimo(evaluacion.proceso.fecha_cierre.year)
@@ -542,3 +546,15 @@ def eliminar_proceso(proceso) -> dict[str, int]:
 
         transaction.on_commit(borrar_archivos)
     return conteo
+
+
+def depurar_requisitos_retirados(evaluacion: Evaluacion) -> int:
+    """Borra los resultados y revisiones de requisitos que ya no están en la
+    evaluación (p. ej. un formato del pliego que se dejó de exigir): si no,
+    seguirían contando como pendientes. Una evaluación aprobada no se toca."""
+    if evaluacion.estado == EstadoEvaluacion.APROBADA:
+        return 0
+    numeros = {r.numero for r in definicion_de(evaluacion).requisitos}
+    borrados, _ = Resultado.objects.filter(evaluacion=evaluacion).exclude(requisito__in=numeros).delete()
+    Revision.objects.filter(evaluacion=evaluacion).exclude(requisito__in=numeros).delete()
+    return borrados

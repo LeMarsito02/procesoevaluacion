@@ -199,7 +199,32 @@ def decidir(analisis: AnalisisPliego, decisiones: dict[str, dict], usuario) -> l
     return ajustes
 
 
-def aplicar_ajustes(definicion: criterios.DefinicionEvaluacion, ajustes: list[dict]) -> criterios.DefinicionEvaluacion:
+def _ya_no_se_evalua(hallazgo: dict, verificacion: str, presentes: set[str]) -> bool:
+    """Un requisito agregado desde la lectura del pliego que con las reglas de
+    hoy sobra: un formato de puntaje o implícito (discapacidad, tratamiento
+    de datos…) o algo que el motor ya verifica (el revisor fiscal de las
+    sociedades anónimas es el requisito 18, que da N.A. a las S.A.S.)."""
+    if verificacion not in (criterios.MANUAL, criterios.PERSONALIZADO):
+        return False
+    from motor.pliego.catalogo import verificacion_de
+    from motor.pliego.lector_ia import _NO_ES_REQUISITO_RE, RequisitoPliego, _norm
+
+    propuesto = hallazgo.get("requisito_propuesto") or {}
+    titulo = propuesto.get("titulo") or hallazgo.get("titulo") or ""
+    if _NO_ES_REQUISITO_RE.search(_norm(f"{titulo} {hallazgo.get('cita') or ''}")):
+        return True
+    frases = ((propuesto.get("config") or {}).get("frases_documento")) or []
+    requisito = RequisitoPliego(
+        id="revision", requisito=titulo, titulo_documento=frases, cita=hallazgo.get("cita") or "",
+        seccion=hallazgo.get("seccion") or "", pagina=int(hallazgo.get("pagina") or 1),
+    )
+    del_motor = verificacion_de(requisito)
+    return del_motor is not None and del_motor in presentes
+
+
+def aplicar_ajustes(
+    definicion: criterios.DefinicionEvaluacion, ajustes: list[dict], revalidar: bool = True
+) -> criterios.DefinicionEvaluacion:
     """La definición de la entidad con los ajustes del pliego que se aceptaron:
     parámetros que cambian y requisitos que se agregan (con una verificación
     del motor si existe, o como verificación manual)."""
@@ -219,6 +244,13 @@ def aplicar_ajustes(definicion: criterios.DefinicionEvaluacion, ajustes: list[di
             propuesto = h["requisito_propuesto"]
             verificacion = propuesto.get("verificacion") or criterios.MANUAL
             if verificacion not in (criterios.MANUAL, criterios.PERSONALIZADO) and verificacion in presentes:
+                continue
+            # Lo que se aceptó con reglas anteriores y hoy se sabe que sobra
+            # (no es habilitante, o ya lo verifica el motor) se deja de
+            # evaluar. Su número queda reservado: los resultados se guardan
+            # por número y correr los demás les cambiaría el resultado.
+            if revalidar and _ya_no_se_evalua(h, verificacion, presentes):
+                siguiente += 1
                 continue
             requisitos.append({
                 "numero": siguiente,

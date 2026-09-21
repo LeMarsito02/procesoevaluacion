@@ -26,6 +26,12 @@
 
 Requerimientos completos del servidor (hardware, paquetes, puertos, variables): **docs/REQUERIMIENTOS_SERVIDOR.txt**.
 
+## Al desplegar una versión nueva
+
+1. `manage.py migrate`
+2. `manage.py depurar_requisitos` — si las reglas del pliego dejaron de exigir algo (un formato de puntaje, un duplicado de lo que el motor ya verifica), quita esos resultados de las evaluaciones en curso para que no sigan contando como pendientes. Las evaluaciones aprobadas no se tocan.
+3. Reiniciar `api` **y** `trabajador` (el trabajador mantiene el código en memoria).
+
 ## Lista de verificación antes de abrir a una entidad
 
 - [ ] `DJANGO_DEBUG=0` (desactiva el panel de Django y los endpoints de medición).

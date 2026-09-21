@@ -3148,3 +3148,49 @@ class AuditoriaDeHoyTests(TestCase):
         resultado = _con_integrantes_juridicos(empresas, integrantes)
         self.assertEqual([e.nit for e in resultado], ["900000001", "900000002"])
         self.assertTrue(all(e.razon_social is None for e in resultado))  # sin nombres cruzados ni duplicados
+
+
+class RequisitosDelPliegoRevalidadosTests(TestCase):
+    """Lo aceptado del pliego con reglas anteriores se revalida con las de hoy,
+    sin mover los números de los demás requisitos."""
+
+    def ajuste(self, titulo, verificacion="personalizado", cita="cita del pliego"):
+        propuesto = {"titulo": titulo, "corto": titulo[:20], "verificacion": verificacion}
+        if verificacion == "personalizado":
+            propuesto["config"] = {"frases_documento": [titulo.upper()[:40]], "bloques": [{"tipo": "confirmar", "frases": ["x"]}]}
+        return {"decision": "aceptado", "hallazgo": {
+            "tipo": "requisito_nuevo", "titulo": titulo, "cita": cita, "seccion": "11.2 FORMATOS", "pagina": 96,
+            "requisito_propuesto": propuesto}}
+
+    def test_se_retiran_los_que_sobran_y_los_numeros_no_se_mueven(self):
+        from evaluaciones.pliego import aplicar_ajustes
+        from motor import criterios
+
+        definicion = criterios.definicion_sistema("juridica")
+        ajustes = [
+            self.ajuste("Duración de la sociedad", "juridica.duracion"),
+            self.ajuste("Certificación del revisor fiscal para sociedades anónimas colombianas"),
+            self.ajuste("Formato para vinculación de personas en condición de discapacidad"),
+            self.ajuste("Autorización para el tratamiento de datos personales"),
+            self.ajuste("Compromiso anticorrupción firmado"),
+        ]
+        antes = {r.titulo: r.numero for r in aplicar_ajustes(definicion, ajustes, revalidar=False).requisitos}
+        despues = {r.titulo: r.numero for r in aplicar_ajustes(definicion, ajustes).requisitos}
+        self.assertNotIn("Formato para vinculación de personas en condición de discapacidad", despues)
+        self.assertNotIn("Autorización para el tratamiento de datos personales", despues)
+        self.assertNotIn("Certificación del revisor fiscal para sociedades anónimas colombianas", despues)
+        # Lo que sigue conserva su número: su resultado guardado sigue siendo suyo.
+        self.assertEqual(despues["Compromiso anticorrupción firmado"], antes["Compromiso anticorrupción firmado"])
+        self.assertEqual(despues["Duración de la sociedad"], antes["Duración de la sociedad"])
+
+
+class RequisitosRetiradosNoCuentanTests(BaseEvaluaciones):
+    def test_una_evaluacion_aprobada_no_cambia(self):
+        from evaluaciones import servicios
+        from evaluaciones.models import EstadoEvaluacion, Evaluacion
+
+        jefe, ev = self.crear()
+        evaluacion = Evaluacion.objects.get(pk=ev["id"])
+        evaluacion.estado = EstadoEvaluacion.APROBADA
+        evaluacion.save(update_fields=["estado"])
+        self.assertEqual(servicios.depurar_requisitos_retirados(evaluacion), 0)
