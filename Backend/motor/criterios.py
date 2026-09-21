@@ -349,7 +349,11 @@ class Bloque(BaseModel):
 
     # "confirmar": condición del pliego que la máquina no comprueba; siempre
     # queda para que una persona la confirme (nunca se aprueba sola).
-    tipo: Literal["vigencia_maxima", "contiene", "no_contiene", "menciona_representante", "menciona_proponente", "confirmar"]
+    # "firmado": el documento trae una firma (imagen escaneada o firma
+    # digital), como se revisa en la carta de presentación.
+    tipo: Literal[
+        "vigencia_maxima", "contiene", "no_contiene", "menciona_representante", "menciona_proponente", "confirmar", "firmado"
+    ]
     meses: int | None = Field(None, ge=1, le=120)
     frases: list[str] = Field(default_factory=list)
 

@@ -33,7 +33,7 @@ REGLAS: tuple[tuple[str, str], ...] = (
     ("juridica.procuraduria", r"PROCURADURIA|ANTECEDENTES DISCIPLINARIOS"),
     ("juridica.rnmc", r"MEDIDAS CORRECTIVAS|RNMC|CODIGO NACIONAL DE (?:POLICIA|SEGURIDAD)"),
     ("juridica.policia", r"ANTECEDENTES (?:JUDICIALES|PENALES)|POLICIA NACIONAL"),
-    ("juridica.revisor_fiscal", r"ABIERTA O CERRADA|SOCIEDAD ANONIMA"),
+    ("juridica.revisor_fiscal", r"ABIERTAS? O CERRADAS?|SOCIEDAD(?:ES)? ANONIMAS?"),
     ("juridica.duracion", r"DURACION|TERMINO DE DURACION|VIGENCIA DE LA (?:SOCIEDAD|PERSONA JURIDICA)"),
     ("juridica.identidad", r"DOCUMENTO DE IDENTIFICACION|DOCUMENTO DE IDENTIDAD|CEDULA DE CIUDADANIA|FOTOCOPIA DE LA CEDULA|COPIA DE LA CEDULA"),
     ("juridica.plural", r"PROPONENTE PLURAL|CONSORCIO|UNION TEMPORAL|FORMATO 2\b|CONFORMACION|PORCENTAJE DE PARTICIPACION"),
@@ -111,6 +111,29 @@ def parametros_de(req) -> dict[str, int]:
     return {}
 
 
+_AUTOMATICOS = {"vigencia_maxima", "firmado", "menciona_representante", "menciona_proponente"}
+_FIRMA_RE = re.compile(r"FIRMAD|SUSCRIT|DEBE(?:RA)? (?:ESTAR |SER )?FIRMA")
+_DEL_REPRESENTANTE_RE = re.compile(r"REPRESENTANTE LEGAL")
+_DE_VIGENCIA_RE = re.compile(r"VIGENCIA|EXPEDID[OA]|EXPEDICION|NO MAYOR A|ANTERIORES? AL? CIERRE")
+
+
+def _bloques_de_condicion(condicion: str) -> list[dict]:
+    """Lo que el motor revisa solo de una condición del pliego: «debe ser
+    firmada» → firma; «firmado por el representante legal» → firma y que lo
+    mencione. La vigencia ya se toma de la lectura. El resto, a confirmar."""
+    texto = _norm(condicion)
+    bloques: list[dict] = []
+    if _FIRMA_RE.search(texto):
+        bloques.append({"tipo": "firmado"})
+        if _DEL_REPRESENTANTE_RE.search(texto):
+            bloques.append({"tipo": "menciona_representante"})
+    elif _DE_VIGENCIA_RE.search(texto):
+        pass  # la vigencia ya viene como número en la lectura (vigencia_dias/meses)
+    else:
+        bloques.append({"tipo": "confirmar", "frases": [condicion[:200]]})
+    return bloques
+
+
 def config_desde_pliego(req) -> dict | None:
     """Configuración de verificación automática (requisito personalizado por
     bloques) para un requisito que el motor no tiene: se reconoce el
@@ -132,12 +155,13 @@ def config_desde_pliego(req) -> dict | None:
     if req.vigencia_meses or req.vigencia_dias:
         meses = req.vigencia_meses or max(1, -(-req.vigencia_dias // 30))
         bloques.append({"tipo": "vigencia_maxima", "meses": meses})
+    # Las condiciones que el motor ya sabe revisar se vuelven automáticas; las
+    # demás las confirma una persona.
     for c in req.condiciones:
-        bloques.append({"tipo": "confirmar", "frases": [c[:200]]})
-    # Lo que leyó la IA nunca aprueba solo: encontrar un documento con ese
-    # título no prueba que diga lo que el pliego exige, así que siempre queda
-    # una confirmación de la persona (el contenido lo lee ella).
-    if not any(b["tipo"] == "confirmar" for b in bloques):
+        bloques.extend(_bloques_de_condicion(c))
+    # Sin ninguna revisión automática, encontrar un documento con ese título
+    # no prueba que diga lo que el pliego exige: lo confirma una persona.
+    if not any(b["tipo"] in _AUTOMATICOS for b in bloques) and not any(b["tipo"] == "confirmar" for b in bloques):
         bloques.append({"tipo": "confirmar", "frases": [req.requisito[:200]]})
     return {"frases_documento": frases[:4], "paginas": 3, "bloques": bloques, "aplica_a": aplica_a_de(req)}
 

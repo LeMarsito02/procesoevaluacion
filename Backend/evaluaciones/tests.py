@@ -3070,3 +3070,53 @@ class CedulaDeOtraPersonaTests(TestCase):
         self.assertTrue(_de_otra_persona("52371321", self.REVERSO_DE_MARTA))
         self.assertFalse(_de_otra_persona("43001767", self.REVERSO_DE_MARTA))
         self.assertFalse(_de_otra_persona("52371321", "REPUBLICA DE COLOMBIA FECHA Y LUGAR DE EXPEDICION"))  # sin números
+
+
+class PliegoSeAutoadaptaTests(TestCase):
+    """Lo que el pliego pide y el motor ya sabe revisar se revisa solo."""
+
+    def test_revisor_fiscal_de_sociedad_anonima_va_al_motor(self):
+        from motor.pliego.catalogo import verificacion_de
+
+        req = _requisito_pliego(requisito="Certificación del revisor fiscal para sociedades anónimas colombianas")
+        self.assertEqual(verificacion_de(req), "juridica.revisor_fiscal")  # el 18: N.A. para las S.A.S.
+
+    def test_formatos_de_puntaje_e_implicitos_no_son_requisitos(self):
+        from motor.pliego.lector_ia import _NO_ES_REQUISITO_RE, _norm
+
+        for texto in ("Formato 6 – Vinculación de personas en condición de discapacidad",
+                      "Autorización para el tratamiento de datos personales",
+                      "Formato 7 – Puntaje de industria nacional"):
+            with self.subTest(texto=texto):
+                self.assertTrue(_NO_ES_REQUISITO_RE.search(_norm(texto)))
+
+    def test_debe_ser_firmado_se_revisa_solo(self):
+        from motor.pliego.catalogo import config_desde_pliego
+
+        req = _requisito_pliego(requisito="Compromiso anticorrupción", titulo_documento=["COMPROMISO ANTICORRUPCION"],
+                                condiciones=["Debe ser firmado por el representante legal"])
+        tipos = [b["tipo"] for b in config_desde_pliego(req)["bloques"]]
+        self.assertEqual(tipos, ["firmado", "menciona_representante"])
+
+    def test_lo_que_no_sabe_revisar_sigue_para_una_persona(self):
+        from motor.pliego.catalogo import config_desde_pliego
+
+        req = _requisito_pliego(requisito="Certificado de la ARL", titulo_documento=["CERTIFICADO DE AFILIACION ARL"],
+                                condiciones=["que cubra a todo el personal del contrato"])
+        self.assertIn("confirmar", [b["tipo"] for b in config_desde_pliego(req)["bloques"]])
+
+    def test_el_bloque_de_firma(self):
+        from datetime import date
+
+        from motor import criterios
+        from motor.evaluacion import personalizado
+
+        config = criterios.ConfigPersonalizado(frases_documento=["COMPROMISO ANTICORRUPCION"], bloques=[{"tipo": "firmado"}])
+        with mock.patch.object(personalizado, "extraer_texto", return_value="COMPROMISO ANTICORRUPCION"):
+            with mock.patch.object(personalizado, "esta_firmado", return_value=True):
+                cumple, motivo, _ = personalizado.evaluar_config({"c.pdf": b"%PDF"}, config, date(2026, 5, 25), None, [], "ACME")
+            self.assertTrue(cumple, motivo)
+            with mock.patch.object(personalizado, "esta_firmado", return_value=False):
+                cumple, motivo, _ = personalizado.evaluar_config({"c.pdf": b"%PDF"}, config, date(2026, 5, 25), None, [], "ACME")
+        self.assertFalse(cumple)
+        self.assertIn("firma", motivo)

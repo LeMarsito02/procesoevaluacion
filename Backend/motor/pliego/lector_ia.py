@@ -78,6 +78,9 @@ _NO_ES_REQUISITO_RE = re.compile(
     r"|EMPRENDIMIENTO|EMPRESAS? DE MUJERES|DESEMPATE|ADJUDICATARIO|EL CONTRATISTA|CADA PAGO|FECHA (?:Y HORA )?DE CIERRE"
     # La limitación a MiPyme la detecta el análisis por reglas, con su cita.
     r"|MIPYME"
+    # Formatos de puntaje o desempate (no habilitan ni inhabilitan) y los que
+    # se dan por implícitos en cualquier oferta.
+    r"|DISCAPACIDAD|INDUSTRIA NACIONAL|SOSTENIBILIDAD|TRATAMIENTO DE (?:LOS )?DATOS|DATOS PERSONALES|HABEAS DATA"
     r"|ENTREGUEN SU OFERTA|MISMOS INTEGRANTES|IDIOMA|TRADUCCION|CONVERTID"
     # Remisiones genéricas ("acreditar el cumplimiento de los requisitos
     # definidos en el anexo"): no dicen qué se exige.

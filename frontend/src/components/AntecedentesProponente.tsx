@@ -49,10 +49,14 @@ interface Props {
   onSubidaAtendida?: () => void
   /** Casilla a la que se llegó desde la matriz: se marca y se pone a la vista. */
   foco?: { persona: string; requisito: number } | null
+  /** Se adjuntó un certificado (subido o consultado): el requisito se vuelve a evaluar. */
+  onCertificadoAdjunto?: () => void
+  /** Cambia cuando llegan resultados nuevos del proponente: la tabla se recarga. */
+  marca?: unknown
 }
 
 /** Personas cuyos antecedentes se verifican y certificados que el evaluador aportó. */
-export default function AntecedentesProponente({ evaluacionId, proponenteId, soloLectura, onVerPdf, onVerDocumento, subirRequisito, onSubidaAtendida, foco }: Props) {
+export default function AntecedentesProponente({ evaluacionId, proponenteId, soloLectura, onVerPdf, onVerDocumento, subirRequisito, onSubidaAtendida, foco, onCertificadoAdjunto, marca }: Props) {
   const [datos, setDatos] = useState<Antecedentes | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [agregando, setAgregando] = useState<{ de: PersonaVerificada | null } | null>(null)
@@ -102,7 +106,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
 
   useEffect(() => {
     recargar()
-  }, [recargar])
+  }, [recargar, marca])
 
   async function consultar(persona: PersonaVerificada, requisito: number, fecha?: string) {
     setConsultando(`${persona.id}|${requisito}`)
@@ -114,6 +118,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
       })
       cerrarFecha()
       recargar()
+      onCertificadoAdjunto?.()
       setError(null)
     } catch (e) {
       const mensaje = mensajeDe(e)
@@ -469,6 +474,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
               })
               setSubiendo(null)
               onSubidaAtendida?.()
+              onCertificadoAdjunto?.()
             })
           }
         />

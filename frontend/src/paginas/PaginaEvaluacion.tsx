@@ -167,6 +167,19 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     }
   }, [enFila, id])
 
+  // Al adjuntar un certificado el servidor vuelve a evaluar al proponente: se
+  // pide el estado para que el seguimiento de la fila se active y el
+  // requisito se actualice solo en la pantalla.
+  async function seguirReevaluacion() {
+    try {
+      const n = await novedadesEvaluacion(id, desde.current)
+      desde.current = n.hasta
+      setResumen(n.evaluacion)
+    } catch {
+      // Si falla, el usuario igual puede recargar la página.
+    }
+  }
+
   useEffect(() => {
     if (!aviso) return
     const t = window.setTimeout(() => setAviso(null), 2800)
@@ -436,7 +449,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
                   setConsultandoCopnia(requisito)
                   try {
                     await consultarEnLinea(id, panelProponente.id, { requisito, matricula })
-                    setAviso('El certificado del COPNIA quedó adjunto al expediente.')
+                    setAviso('El certificado del COPNIA quedó adjunto. Se está volviendo a evaluar el requisito…')
+                    await seguirReevaluacion()
                   } catch (e) {
                     setAviso(mensajeDe(e))
                   } finally {
@@ -464,6 +478,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
               }}
               subirRequisito={subirCertificado}
               onSubidaAtendida={() => setSubirCertificado(null)}
+              onCertificadoAdjunto={() => void seguirReevaluacion()}
+              marca={resultados[panelProponente.hoja]}
               foco={panel.persona && panel.requisito ? { persona: panel.persona, requisito: panel.requisito } : null}
             />
           }

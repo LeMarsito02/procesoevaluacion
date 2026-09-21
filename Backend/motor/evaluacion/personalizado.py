@@ -89,7 +89,7 @@ def evaluar_config(
     # Si hay varios, se elige el que pasa más bloques (ej. el certificado del representante correcto).
     mejor: tuple[int, str, list[str]] | None = None
     for nombre, texto in candidatos:
-        faltas = _faltas(config, texto, fecha_cierre, personas, nombre_proponente)
+        faltas = _faltas(config, texto, fecha_cierre, personas, nombre_proponente, pdfs.get(nombre))
         if mejor is None or len(faltas) < len(mejor[2]):
             mejor = (len(faltas), nombre, faltas)
         if not faltas:
@@ -98,7 +98,36 @@ def evaluar_config(
     return (not faltas), ("; ".join(faltas) if faltas else None), archivo
 
 
-def _faltas(config: ConfigPersonalizado, texto: str, fecha_cierre: date, personas: list[str], nombre_proponente: str) -> list[str]:
+def esta_firmado(contenido: bytes | None) -> bool:
+    """El PDF trae una firma: una imagen en sus páginas (firma escaneada) o
+    una firma digital. Es la misma prueba que se hace con la carta."""
+    if not contenido:
+        return False
+    from motor.evaluacion.formato1 import _contenidos_firma_digital
+    from motor.procesamiento.pdf_utils import abrir_pdf
+
+    try:
+        if _contenidos_firma_digital(contenido):
+            return True
+        with abrir_pdf(contenido) as pdf:
+            for page in pdf.pages[:6]:
+                hay = bool(page.images)
+                page.flush_cache()
+                if hay:
+                    return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def _faltas(
+    config: ConfigPersonalizado,
+    texto: str,
+    fecha_cierre: date,
+    personas: list[str],
+    nombre_proponente: str,
+    contenido: bytes | None = None,
+) -> list[str]:
     faltas: list[str] = []
     for b in config.bloques:
         if b.tipo == "vigencia_maxima":
@@ -124,6 +153,9 @@ def _faltas(config: ConfigPersonalizado, texto: str, fecha_cierre: date, persona
         elif b.tipo == "menciona_proponente":
             if not _menciona(nombre_proponente, texto):
                 faltas.append(f"no menciona al proponente ({nombre_proponente})")
+        elif b.tipo == "firmado":
+            if not esta_firmado(contenido):
+                faltas.append("no se encontró la firma en el documento")
         elif b.tipo == "confirmar":
             faltas.append(f"confirma lo que exige el pliego: {' / '.join(b.frases)}")
     return faltas
