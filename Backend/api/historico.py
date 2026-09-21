@@ -493,7 +493,10 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
     if evaluacion.proceso.codigo.upper().startswith("DEMO-"):
         from motor.consultas.linea import simular
 
-        certificado = simular(fuente, persona.nombre if persona else None, persona.documento if persona else None, datos.matricula)
+        nombre, documento, profesion = (
+            (persona.nombre, persona.documento, None) if persona else _profesional_de(evaluacion, proponente, datos.requisito)
+        )
+        certificado = simular(fuente, nombre, documento, datos.matricula, profesion)
         return _guardar_consultado(request, evaluacion, proponente, datos, persona, fuente, certificado, None, usuario)
     try:
         if fuente == "rnmc":
@@ -536,6 +539,29 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
         ) from exc
 
     return _guardar_consultado(request, evaluacion, proponente, datos, persona, fuente, certificado, fecha_usada, usuario)
+
+
+def _profesional_de(evaluacion, proponente, requisito: int) -> tuple[str | None, str | None, str | None]:
+    """Quién firma o avala la oferta (lo leyó el motor en la carta), para la
+    consulta simulada del COPNIA de una demostración."""
+    nombre = next(
+        (r.datos.get("representante_legal") for r in Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente)
+         .order_by("requisito") if r.datos.get("representante_legal")),
+        None,
+    )
+    if not nombre:
+        return None, None, None
+    profesion = next(
+        (r.datos.get("profesion_certificada") for r in Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente)
+         if r.datos.get("profesion_certificada")),
+        None,
+    )
+    persona = next(
+        (x for x in PersonaVerificada.objects.filter(evaluacion=evaluacion, proponente=proponente, tipo="natural")
+         if servicios.clave_persona(x.nombre, None) == servicios.clave_persona(nombre, None)),
+        None,
+    )
+    return nombre, persona.documento if persona else None, profesion
 
 
 def _guardar_consultado(request, evaluacion, proponente, datos, persona, fuente, certificado, fecha_usada, usuario):

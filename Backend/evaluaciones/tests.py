@@ -3237,3 +3237,17 @@ class CedulasConsecutivasNoSeConfundenTests(TestCase):
 
         anverso_ocr = "CEDULA DE CIUDADANIA NUMERO 1.999.000.007 MENDEZ RIOS LAURA CAMILA"  # el OCR leyó 7 por 1
         self.assertTrue(_es_suyo("LAURA CAMILA MENDEZ RIOS", "1999000001", anverso_ocr))
+
+
+class CopniaMasRecienteTests(TestCase):
+    """Si se adjunta un COPNIA nuevo porque el de la oferta estaba vencido,
+    el nuevo es el que cuenta."""
+
+    def test_gana_el_mas_reciente_del_mismo_profesional(self):
+        from motor.evaluacion import copnia
+
+        viejo = ("oferta/copnia.pdf", "COPNIA 1. Que MARIA JOSE RESTREPO DIAZ, identificado(a) con CEDULA DE CIUDADANIA 1999000009 se expide a los veinte (20) días del mes de Abril del año dos mil veintiseis (2026).")
+        nuevo = ("aportados/Req 3 - COPNIA.pdf", "COPNIA 1. Que MARIA JOSE RESTREPO DIAZ, identificado(a) con CEDULA DE CIUDADANIA 1999000009 se expide a los veinte (20) días del mes de Septiembre del año dos mil veintiseis (2026).")
+        with mock.patch.object(copnia, "encontrar_copnias", return_value=[viejo, nuevo]):
+            elegido = copnia._elegir_copnia_del_profesional({}, ["MARIA JOSE RESTREPO DIAZ"])
+        self.assertEqual(elegido[0], "aportados/Req 3 - COPNIA.pdf")

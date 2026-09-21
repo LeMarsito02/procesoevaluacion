@@ -224,7 +224,17 @@ def consultar_copnia(identificacion: str, por: str = "matricula") -> Certificado
     )
 
 
-def simular(fuente: str, nombre: str | None, documento: str | None, matricula: str | None = None) -> CertificadoEnLinea:
+_DIAS_EN_LETRAS = [
+    "", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "once", "doce", "trece",
+    "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte", "veintiuno", "veintidós",
+    "veintitrés", "veinticuatro", "veinticinco", "veintiséis", "veintisiete", "veintiocho", "veintinueve", "treinta",
+    "treinta y uno",
+]
+
+
+def simular(
+    fuente: str, nombre: str | None, documento: str | None, matricula: str | None = None, profesion: str | None = None
+) -> CertificadoEnLinea:
     """Certificado simulado para los procesos de demostración: sus personas
     son inventadas y consultarlas en las páginas oficiales sería justo una
     consulta innecesaria al Estado. Lleva la marca de que no tiene validez."""
@@ -242,10 +252,10 @@ def simular(fuente: str, nombre: str | None, documento: str | None, matricula: s
         titulo = "Certificado de vigencia y antecedentes disciplinarios"
         cuerpo = (
             f"<p>COPNIA · EL DIRECTOR GENERAL CERTIFICA:</p><p>1. Que {nombre or 'EL PROFESIONAL'}, identificado(a) con "
-            f"CEDULA DE CIUDADANIA {documento or '—'}, se encuentra inscrito(a) en el Registro Profesional Nacional con "
-            f"MATRICULA PROFESIONAL {matricula or '—'}.</p><p>3. Que el(la) referido(a) MATRICULA PROFESIONAL se encuentra VIGENTE</p>"
+            f"CEDULA DE CIUDADANIA {documento or '—'}, se encuentra inscrito(a) en el Registro Profesional Nacional que lleva "
+            f"esta entidad, en la profesión de {profesion or '—'} con MATRICULA PROFESIONAL {matricula or '—'}.</p><p>3. Que el(la) referido(a) MATRICULA PROFESIONAL se encuentra VIGENTE</p>"
             "<p>4. Que el profesional no tiene antecedentes disciplinarios ético-profesionales.</p>"
-            f"<p>5. Que la presente certificación se expide en Bogotá, D.C., a los ({hoy.day}) días del mes de "
+            f"<p>5. Que la presente certificación se expide en Bogotá, D.C., a los {_DIAS_EN_LETRAS[hoy.day]} ({hoy.day}) días del mes de "
             f"{['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][hoy.month - 1]} "
             f"del año dos mil veintiseis ({hoy.year}).</p>"
         )

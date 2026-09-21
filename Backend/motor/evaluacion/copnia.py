@@ -172,10 +172,16 @@ def _elegir_copnia_del_profesional(
     if not encontrados:
         return None
     for persona in personas:
-        for nombre_archivo, texto in encontrados:
-            datos = extraer_datos_copnia(texto)
-            if datos.nombre and _nombres_coinciden(datos.nombre, persona):
-                return nombre_archivo, texto
+        suyos = [
+            (datos.fecha_expedicion, nombre_archivo, texto)
+            for nombre_archivo, texto in encontrados
+            if (datos := extraer_datos_copnia(texto)).nombre and _nombres_coinciden(datos.nombre, persona)
+        ]
+        if suyos:
+            # Si hay varios del mismo profesional (el vencido de la oferta y
+            # uno nuevo que se adjuntó), manda el más reciente.
+            _, nombre_archivo, texto = max(suyos, key=lambda c: c[0] or date.min)
+            return nombre_archivo, texto
     return encontrados[0]
 
 
