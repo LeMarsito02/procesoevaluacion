@@ -15,6 +15,12 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+# Las pruebas no llaman a Google aunque el .env tenga reCAPTCHA: su verificación
+# se prueba con respuestas simuladas (cuentas.tests.RecaptchaTests).
+if sys.argv[1:2] == ["test"]:
+    os.environ["RECAPTCHA_PROJECT_ID"] = ""
+    os.environ["RECAPTCHA_API_KEY"] = ""
+
 
 def _lista(variable: str, defecto: str = "") -> list[str]:
     return [v.strip() for v in os.environ.get(variable, defecto).split(",") if v.strip()]
