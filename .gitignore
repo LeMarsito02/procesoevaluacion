@@ -29,3 +29,5 @@ Registro_DNDA/
 Backend/almacenamiento/
 
 PRUEBASMIEVALUADOR/
+# Archivos locales de pruebas de la API (pueden llevar tokens)
+Backend/env/
