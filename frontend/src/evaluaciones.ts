@@ -64,6 +64,8 @@ export interface ProcesoResumen {
   creado_por: Persona
   proponentes: number
   evaluaciones: EvaluacionResumen[]
+  /** Quien lo ve puede eliminarlo (administrador o quien lo creó, y sin evaluaciones aprobadas). */
+  puede_eliminar: boolean
 }
 
 export interface ProponenteGuardado extends Proponente {
@@ -122,6 +124,9 @@ export interface MiembroCarga extends Persona {
 }
 
 export const listarProcesos = () => pedirJson<ProcesoResumen[]>('/api/evaluaciones/procesos')
+/** Elimina el proceso con todo lo suyo. `confirmacion` = su código, escrito a mano. */
+export const eliminarProceso = (id: string, confirmacion: string) =>
+  enviarJson<void>(`/api/evaluaciones/procesos/${id}`, 'DELETE', { confirmacion })
 export const misEvaluaciones = () => pedirJson<EvaluacionResumen[]>('/api/evaluaciones/mias')
 export const cargaEquipo = (entidadId?: string | null) =>
   pedirJson<MiembroCarga[]>(`/api/evaluaciones/equipo${entidadId ? `?entidad_id=${entidadId}` : ''}`)

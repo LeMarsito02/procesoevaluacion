@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Icono from '../components/Icono'
-import { listarProcesos, type ProcesoResumen } from '../evaluaciones'
+import { eliminarProceso, listarProcesos, type ProcesoResumen } from '../evaluaciones'
 import { formatFechaCorta } from '../format'
 import { mensajeDe } from '../http'
 import { navegar } from '../rutas'
@@ -13,6 +13,9 @@ export default function PaginaProcesos() {
   const [procesos, setProcesos] = useState<ProcesoResumen[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busqueda, setBusqueda] = useState('')
+  // Proceso que se va a eliminar (se confirma escribiendo su código).
+  const [aEliminar, setAEliminar] = useState<ProcesoResumen | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
 
   useEffect(() => {
     listarProcesos()
@@ -45,6 +48,12 @@ export default function PaginaProcesos() {
           </button>
         )}
       </div>
+      {aviso && (
+        <div className="callout callout-ok" style={{ marginBottom: 16 }} role="status">
+          <Icono nombre="check" />
+          <div>{aviso}</div>
+        </div>
+      )}
       {error && (
         <div className="callout callout-bad" style={{ marginBottom: 16 }} role="alert">
           <Icono nombre="alerta" />
@@ -104,6 +113,21 @@ export default function PaginaProcesos() {
                   <td className="small muted nowrap">
                     {formatFechaCorta(p.creado_en.slice(0, 10))}
                     <div>{p.creado_por.nombre_completo}</div>
+                    {p.puede_eliminar && (
+                      <button
+                        type="button"
+                        className="enlace"
+                        style={{ color: 'var(--bad)', marginTop: 4 }}
+                        title="Eliminar el proceso con todo lo suyo"
+                        aria-label={`Eliminar el proceso ${p.codigo}`}
+                        onClick={() => {
+                          setAviso(null)
+                          setAEliminar(p)
+                        }}
+                      >
+                        Eliminar proceso
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -118,6 +142,83 @@ export default function PaginaProcesos() {
           </table>
         </div>
       )}
+      {aEliminar && (
+        <ConfirmarEliminacion
+          proceso={aEliminar}
+          onCancelar={() => setAEliminar(null)}
+          onEliminado={() => {
+            setProcesos((lista) => (lista ?? []).filter((x) => x.id !== aEliminar.id))
+            setAviso(`Se eliminó el proceso ${aEliminar.codigo}.`)
+            setAEliminar(null)
+          }}
+        />
+      )}
     </main>
+  )
+}
+
+/** Eliminar es irreversible: se explica qué se borra y se confirma
+ * escribiendo el código del proceso. */
+function ConfirmarEliminacion({
+  proceso,
+  onCancelar,
+  onEliminado,
+}: {
+  proceso: ProcesoResumen
+  onCancelar: () => void
+  onEliminado: () => void
+}) {
+  const [escrito, setEscrito] = useState('')
+  const [eliminando, setEliminando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const coincide = escrito.trim().toUpperCase() === proceso.codigo.trim().toUpperCase()
+
+  async function eliminar() {
+    setEliminando(true)
+    setError(null)
+    try {
+      await eliminarProceso(proceso.id, escrito)
+      onEliminado()
+    } catch (e) {
+      setError(mensajeDe(e))
+      setEliminando(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="overlay" onClick={onCancelar} />
+      <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="titulo-eliminar">
+        <h2 id="titulo-eliminar">Eliminar el proceso {proceso.codigo}</h2>
+        <p className="small">
+          Se borran para siempre {proceso.evaluaciones.length === 1 ? 'su evaluación' : `sus ${proceso.evaluaciones.length} evaluaciones`},{' '}
+          {proceso.proponentes === 1 ? 'el proponente' : `los ${proceso.proponentes} proponentes`} con sus resultados y
+          revisiones, los certificados aportados y los expedientes generados. <strong>No se puede deshacer.</strong>
+        </p>
+        <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 12 }}>
+          Para confirmar, escriba el código del proceso: <strong style={{ color: 'var(--ink)' }}>{proceso.codigo}</strong>
+          <input
+            className="input"
+            autoFocus
+            value={escrito}
+            onChange={(e) => setEscrito(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && coincide && !eliminando && void eliminar()}
+          />
+        </label>
+        {error && (
+          <p className="small" role="alert" style={{ color: 'var(--bad)', marginTop: 8 }}>
+            {error}
+          </p>
+        )}
+        <div className="dialogo-pie">
+          <button type="button" className="btn btn-ghost" onClick={onCancelar}>
+            Cancelar
+          </button>
+          <button type="button" className="btn btn-bad" disabled={!coincide || eliminando} onClick={() => void eliminar()}>
+            {eliminando && <span className="spinner" />} Eliminar para siempre
+          </button>
+        </div>
+      </div>
+    </>
   )
 }

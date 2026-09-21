@@ -36,6 +36,7 @@ from evaluaciones.permisos import (
     exigir_gestion,
     exigir_trabajo,
     puede_crear_procesos,
+    puede_eliminar_proceso,
     puede_gestionar,
     puede_trabajar,
     puede_ver,
@@ -113,6 +114,9 @@ class ProcesoResumenOut(Schema):
     creado_por: PersonaOut
     proponentes: int
     evaluaciones: list[EvaluacionResumenOut]
+    # Quien lo ve puede eliminarlo (administrador o quien lo creó) y no tiene
+    # evaluaciones aprobadas.
+    puede_eliminar: bool = False
 
 
 class ProponenteIn(Schema):
@@ -297,6 +301,7 @@ def listar_procesos(request: HttpRequest) -> list[ProcesoResumenOut]:
     procesos = list(procesos)
     evaluaciones = list(_evaluaciones_qs(usuario).filter(proceso__in=procesos).order_by("tipo"))
     por_proceso: dict[UUID, list[EvaluacionResumenOut]] = {}
+    aprobados = {e.proceso_id: True for e in evaluaciones if e.estado == EstadoEvaluacion.APROBADA}
     for resumen in _resumenes(usuario, evaluaciones):
         por_proceso.setdefault(resumen.proceso_id, []).append(resumen)
     return [
@@ -309,9 +314,36 @@ def listar_procesos(request: HttpRequest) -> list[ProcesoResumenOut]:
             creado_por=_persona(p.creado_por),
             proponentes=p.n,
             evaluaciones=por_proceso.get(p.id, []),
+            puede_eliminar=puede_eliminar_proceso(usuario, p) and not aprobados.get(p.id, False),
         )
         for p in procesos
     ]
+
+
+class EliminarProcesoIn(Schema):
+    # El código del proceso, escrito a mano: evita borrar uno por error.
+    confirmacion: str
+
+
+@router.delete("/procesos/{proceso_id}", response={204: None})
+def eliminar_proceso(request: HttpRequest, proceso_id: UUID, datos: EliminarProcesoIn):
+    """Elimina el proceso y todo lo suyo. Es irreversible: se confirma con el
+    código del proceso y queda en la auditoría."""
+    from evaluaciones.permisos import puede_eliminar_proceso
+
+    usuario: Usuario = request.auth
+    proceso = get_object_or_404(Proceso, pk=proceso_id)
+    if not puede_eliminar_proceso(usuario, proceso):
+        raise HttpError(403, "Solo el administrador de la entidad o quien creó el proceso puede eliminarlo.")
+    if " ".join(datos.confirmacion.split()).upper() != proceso.codigo.strip().upper():
+        raise HttpError(400, f"Para confirmar, escriba exactamente el código del proceso: {proceso.codigo}")
+    codigo, entidad_id = proceso.codigo, proceso.entidad_id
+    try:
+        conteo = servicios.eliminar_proceso(proceso)
+    except ValueError as exc:
+        raise HttpError(409, str(exc)) from exc
+    auditar(request, "proceso.eliminado", entidad_id=entidad_id, codigo=codigo, **conteo)
+    return 204, None
 
 
 @router.post("/procesos", response={201: list[EvaluacionResumenOut]})

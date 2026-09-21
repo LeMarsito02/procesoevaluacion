@@ -47,3 +47,15 @@ def exigir_trabajo(usuario: Usuario, evaluacion: Evaluacion) -> None:
 def exigir_gestion(usuario: Usuario, evaluacion: Evaluacion) -> None:
     if not puede_gestionar(usuario, evaluacion):
         raise HttpError(403, "Solo el jefe del área o el administrador pueden hacer esto.")
+
+
+def puede_eliminar_proceso(usuario: Usuario, proceso) -> bool:
+    """El administrador de la entidad, el superadministrador o quien lo creó
+    (los abogados crean sus propios procesos y pueden equivocarse al crearlos)."""
+    if usuario.rol == Rol.CONSULTA:
+        return False
+    if usuario.es_superadmin:
+        return True
+    if proceso.entidad_id != usuario.entidad_id:
+        return False
+    return usuario.rol == Rol.ADMIN_ENTIDAD or proceso.creado_por_id == usuario.id

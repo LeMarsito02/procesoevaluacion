@@ -2932,3 +2932,112 @@ class NadaDeConsultasInnecesariasTests(FechaSoloSeGuardaSiSirveTests):
         self.assertEqual(r.status_code, 409)
         self.assertIn("no hace falta", r.json()["detail"])
         rnmc.assert_not_called()
+
+
+class EliminarProcesoTests(BaseEvaluaciones):
+    """Eliminar un proceso es irreversible: solo quien puede, con confirmación,
+    nunca uno aprobado, y sin dejar nada suelto."""
+
+    def eliminar(self, c, proceso_id, confirmacion):
+        return c.http.delete(
+            f"/api/evaluaciones/procesos/{proceso_id}",
+            data={"confirmacion": confirmacion},
+            content_type="application/json",
+            headers={"X-CSRFToken": c.csrf},
+        )
+
+    def proceso_de(self, ev):
+        from evaluaciones.models import Evaluacion
+
+        return Evaluacion.objects.get(pk=ev["id"]).proceso
+
+    def test_se_elimina_con_todo_lo_suyo(self):
+        from evaluaciones.models import Evaluacion, Proceso, Proponente, Resultado
+
+        jefe, ev = self.crear()
+        self.evaluar_todo(jefe, ev["id"])
+        proceso = self.proceso_de(ev)
+        self.assertTrue(Resultado.objects.filter(evaluacion_id=ev["id"]).exists())
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        r = self.eliminar(admin, proceso.id, proceso.codigo)
+        self.assertEqual(r.status_code, 204, r.content)
+        self.assertFalse(Proceso.objects.filter(pk=proceso.id).exists())
+        self.assertFalse(Evaluacion.objects.filter(pk=ev["id"]).exists())
+        self.assertFalse(Proponente.objects.filter(proceso_id=proceso.id).exists())
+        self.assertFalse(Resultado.objects.filter(evaluacion_id=ev["id"]).exists())
+
+    def test_hay_que_escribir_el_codigo(self):
+        jefe, ev = self.crear()
+        proceso = self.proceso_de(ev)
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        r = self.eliminar(admin, proceso.id, "otro código")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn(proceso.codigo, r.json()["detail"])
+
+    def test_quien_no_lo_creo_ni_administra_no_puede(self):
+        jefe, ev = self.crear()
+        proceso = self.proceso_de(ev)
+        otro = Cliente()
+        otro.entrar("abogado2@entidad.gov.co")
+        self.assertEqual(self.eliminar(otro, proceso.id, proceso.codigo).status_code, 403)
+        ajeno = Cliente()
+        ajeno.entrar("abogado@otraentidad.gov.co")
+        self.assertIn(self.eliminar(ajeno, proceso.id, proceso.codigo).status_code, (403, 404))
+
+    def test_quien_lo_creo_si_puede(self):
+        jefe, ev = self.crear()
+        proceso = self.proceso_de(ev)
+        self.assertEqual(self.eliminar(jefe, proceso.id, proceso.codigo.lower()).status_code, 204)
+
+    def test_un_proceso_con_evaluacion_aprobada_no_se_elimina(self):
+        from evaluaciones.models import EstadoEvaluacion, Evaluacion
+
+        jefe, ev = self.crear()
+        Evaluacion.objects.filter(pk=ev["id"]).update(estado=EstadoEvaluacion.APROBADA)
+        proceso = self.proceso_de(ev)
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        r = self.eliminar(admin, proceso.id, proceso.codigo)
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("aprobadas", r.json()["detail"])
+        listado = {p["id"]: p for p in admin.get("/api/evaluaciones/procesos").json()}
+        self.assertFalse(listado[str(proceso.id)]["puede_eliminar"])
+
+    def test_queda_en_la_auditoria(self):
+        from cuentas.models import EventoAuditoria
+
+        jefe, ev = self.crear()
+        proceso = self.proceso_de(ev)
+        codigo = proceso.codigo
+        self.eliminar(jefe, proceso.id, codigo)
+        self.assertTrue(EventoAuditoria.objects.filter(accion="proceso.eliminado", detalles__codigo=codigo).exists())
+
+
+class EliminarProcesoConCertificadosTests(BaseHistorico):
+    def test_se_eliminan_tambien_los_certificados_aportados_y_sus_archivos(self):
+        from evaluaciones.models import DocumentoAportado, Evaluacion, PersonaVerificada, Proceso
+
+        persona = self.abogado.post(
+            f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/personas",
+            {"rol": "representante_legal", "tipo": "natural", "nombre": "Pedro Pérez", "documento": "1020304"},
+        ).json()
+        self.assertEqual(self.aportar(self.abogado, self.p1, 14, persona["id"]).status_code, 201)
+        doc = DocumentoAportado.objects.get(evaluacion_id=self.ev["id"])
+        archivo = doc.archivo.name
+        self.assertTrue(doc.archivo.storage.exists(archivo))
+
+        proceso = Evaluacion.objects.get(pk=self.ev["id"]).proceso
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        with self.captureOnCommitCallbacks(execute=True):
+            r = admin.http.delete(
+                f"/api/evaluaciones/procesos/{proceso.id}", data={"confirmacion": proceso.codigo},
+                content_type="application/json", headers={"X-CSRFToken": admin.csrf},
+            )
+        self.assertEqual(r.status_code, 204, r.content)
+        self.assertFalse(Proceso.objects.filter(pk=proceso.id).exists())
+        self.assertFalse(DocumentoAportado.objects.filter(pk=doc.pk).exists())
+        self.assertFalse(PersonaVerificada.objects.filter(pk=persona["id"]).exists())
+        self.assertFalse(doc.archivo.storage.exists(archivo))  # el PDF tampoco queda en disco

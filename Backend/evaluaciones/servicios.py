@@ -499,3 +499,46 @@ def generar_informe_excel(evaluacion: Evaluacion) -> tuple[bytes, str]:
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
     # Mismo nombre que usa la plantilla oficial ("INFORME EVALUACION JURIDICA …"), sin tildes.
     return contenido, f"INFORME EVALUACION {evaluacion.tipo.upper()} {proceso.codigo}{borrador}.xlsx"
+
+
+def eliminar_proceso(proceso) -> dict[str, int]:
+    """Borra el proceso con todo lo suyo: evaluaciones, proponentes,
+    resultados, revisiones, personas, certificados aportados y expedientes,
+    y sus archivos en disco. El análisis del pliego se conserva (se reutiliza
+    si otro proceso usa el mismo pliego). Devuelve cuánto se borró.
+
+    Los archivos se borran solo si la base de datos confirma el borrado: si
+    algo falla a mitad de camino, no quedan registros apuntando a archivos
+    que ya no existen."""
+    from evaluaciones.models import DocumentoAportado, EstadoEvaluacion, Expediente, Trabajo
+
+    if proceso.evaluaciones.filter(estado=EstadoEvaluacion.APROBADA).exists():
+        raise ValueError(
+            "Este proceso tiene evaluaciones aprobadas: son el registro oficial de la decisión y no se pueden eliminar."
+        )
+    with transaction.atomic():
+        evaluaciones = list(proceso.evaluaciones.all())
+        aportados = DocumentoAportado.objects.filter(evaluacion__in=evaluaciones)
+        expedientes = Expediente.objects.filter(evaluacion__in=evaluaciones)
+        archivos = [d.archivo for d in aportados if d.archivo] + [e.archivo for e in expedientes if e.archivo]
+        conteo = {
+            "evaluaciones": len(evaluaciones),
+            "proponentes": proceso.proponentes.count(),
+            "certificados_aportados": aportados.count(),
+            "expedientes": expedientes.count(),
+        }
+        # Lo que tiene protección contra borrado en cascada va primero.
+        Trabajo.objects.filter(evaluacion__in=evaluaciones).delete()
+        aportados.delete()
+        expedientes.delete()
+        proceso.delete()
+
+        def borrar_archivos() -> None:
+            for archivo in archivos:
+                try:
+                    archivo.storage.delete(archivo.name)
+                except Exception:  # noqa: BLE001
+                    log.warning("No se pudo borrar el archivo %s del proceso eliminado", archivo.name)
+
+        transaction.on_commit(borrar_archivos)
+    return conteo
