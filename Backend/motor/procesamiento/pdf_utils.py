@@ -80,32 +80,42 @@ def _ocr_pagina(page, reforzado: bool = False) -> str:
     return salida.stdout.decode("utf-8", errors="ignore")
 
 
-def texto_ocr_reforzado(contenido: bytes, max_paginas: int = 2) -> str:
-    """Texto de las páginas escaneadas del PDF leído con el OCR reforzado
-    (cacheado en disco). Las páginas digitales no se leen: si ninguna página
-    es escaneada devuelve ""."""
+def paginas_ocr_reforzado(
+    contenido: bytes, max_paginas: int = 2, ademas: set[int] | frozenset[int] = frozenset()
+) -> list[tuple[int, str]]:
+    """(número de página, texto) de las páginas escaneadas del PDF leídas con
+    el OCR reforzado (cacheado en disco): las primeras `max_paginas` y las de
+    `ademas`. Las páginas digitales no se leen."""
     if not OCR_HABILITADO:
-        return ""
-    partes = []
+        return []
+    partes: list[tuple[int, str]] = []
     with abrir_pdf(contenido) as pdf:
         huella = pdf._huella_contenido
-        for page in pdf.pages[:max_paginas]:
+        for page in pdf.pages[:max([max_paginas, *ademas])]:
+            if page.page_number > max_paginas and page.page_number not in ademas:
+                continue
             try:
                 if not _necesita_ocr(page, page.extract_text() or ""):
                     continue
                 archivo_cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}_reforzado.txt"
                 if archivo_cache.exists():
-                    partes.append(archivo_cache.read_text(encoding="utf-8"))
+                    partes.append((page.page_number, archivo_cache.read_text(encoding="utf-8")))
                     continue
                 texto = _ocr_pagina(page, reforzado=True)
                 OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
                 archivo_cache.write_text(texto, encoding="utf-8")
-                partes.append(texto)
+                partes.append((page.page_number, texto))
             except Exception:  # noqa: BLE001
                 continue
             finally:
                 page.flush_cache()
-    return "\n".join(partes)
+    return partes
+
+
+def texto_ocr_reforzado(contenido: bytes, max_paginas: int = 2) -> str:
+    """Texto de las páginas escaneadas del PDF leído con el OCR reforzado. Si
+    ninguna página es escaneada devuelve ""."""
+    return "\n".join(texto for _, texto in paginas_ocr_reforzado(contenido, max_paginas))
 
 
 # Texto ya extraído en este worker para el proponente en curso, por

@@ -208,7 +208,7 @@ def cedula_de_persona(request: HttpRequest, evaluacion_id: UUID, proponente_id: 
     que el evaluador lea la fecha de expedición con sus propios ojos cuando ni
     el lector de texto ni la IA pudieron. Si el programa alcanzó a leer algo,
     lo sugiere en la cabecera X-Fecha-Sugerida."""
-    from motor.evaluacion.identidad import cedula_de, leer_fecha_expedicion
+    from motor.evaluacion.identidad import archivo_cedula_por_nombre, cedula_de, leer_fecha_expedicion
     from motor.integrations.drive import download_file_bytes
     from motor.procesamiento.zip_utils import extraer_pdfs
 
@@ -220,11 +220,14 @@ def cedula_de_persona(request: HttpRequest, evaluacion_id: UUID, proponente_id: 
         pdfs = extraer_pdfs(download_file_bytes(proponente.drive_file_id))
     except Exception as exc:  # noqa: BLE001
         raise HttpError(502, "No se pudieron abrir los documentos de la oferta.") from exc
-    archivo = cedula_de(pdfs, persona.nombre, persona.documento)
+    principal = persona.rol == "representante_legal"
+    archivo = cedula_de(pdfs, persona.nombre, persona.documento, principal=principal) or archivo_cedula_por_nombre(
+        pdfs, persona.nombre, persona.documento, principal=principal
+    )
     if archivo is None:
         raise HttpError(404, f"No se encontró la copia de la cédula de {persona.nombre} en la oferta.")
     respuesta = HttpResponse(pdfs[archivo], content_type="application/pdf")
-    lectura = leer_fecha_expedicion(pdfs, persona.nombre, persona.documento)
+    lectura = leer_fecha_expedicion(pdfs, persona.nombre, persona.documento, principal=principal)
     if lectura.fecha is not None:
         respuesta["X-Fecha-Sugerida"] = lectura.fecha.isoformat()
     respuesta["X-Archivo"] = archivo.rsplit("/", 1)[-1][:120]
@@ -425,7 +428,9 @@ def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date 
     sugerencia = ""
     try:
         pdfs = extraer_pdfs(download_file_bytes(proponente.drive_file_id))
-        lectura = leer_fecha_expedicion(pdfs, persona.nombre, persona.documento)
+        lectura = leer_fecha_expedicion(
+            pdfs, persona.nombre, persona.documento, principal=persona.rol == "representante_legal"
+        )
         if lectura.fecha is not None and not lectura.confiable:
             # Con una fecha dudosa no se consulta: la página la rechazaría y
             # se gastaría una consulta a una plataforma del Estado para nada.

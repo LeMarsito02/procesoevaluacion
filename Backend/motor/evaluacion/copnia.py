@@ -511,7 +511,7 @@ def evaluar_proponente_requisito2(proponente: Proponente, proceso: ProcesoDocume
 
     representante_legal = _obtener_representante_legal(pdfs)
     resultado = evaluar_requisito2(
-        pdfs, proceso.fecha_cierre, representante_legal, obtener_avalista(pdfs), exigir_tarjeta=not proceso.tarjeta_suplible
+        pdfs, proceso.fecha_cierre, representante_legal, obtener_avalista(pdfs), exigir_tarjeta=proceso.exige_tarjeta_profesional
     )
 
     datos = resultado.datos

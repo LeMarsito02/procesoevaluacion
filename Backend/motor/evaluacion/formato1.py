@@ -66,7 +66,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 60
+VERSION_LOGICA = 61
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -91,6 +91,8 @@ def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str
         payload["modalidad"] = proceso.modalidad
     if proceso.tarjeta_suplible:
         payload["tarjeta_suplible"] = True
+    if proceso.tarjeta_exigida is not None:
+        payload["tarjeta_exigida"] = proceso.tarjeta_exigida
     huella = criterios.huella_parametros()
     if huella:
         payload["criterios"] = huella

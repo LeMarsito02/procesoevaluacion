@@ -250,6 +250,11 @@ IA local:
   VISION_MODELO, VISION_HABILITADO, VISION_TIMEOUT, VISION_RESOLUCION
                                Lectura de cédulas escaneadas con IA (la fecha
                                de expedición que pide el RNMC)
+  VISION_EN_EVALUACION=1       En producción (GPU de 24 GB): la IA lee la fecha
+                               de expedición durante la evaluación, solo de las
+                               personas cuya cédula el OCR no alcanzó a leer.
+                               En un equipo con GPU de 4 GB dejar 0: el modelo
+                               corre casi todo en CPU (~2,5 min por persona).
 
 Otras:
 

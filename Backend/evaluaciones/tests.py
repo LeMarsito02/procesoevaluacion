@@ -2533,7 +2533,8 @@ class FechaSoloDeSuCedulaTests(TestCase):
                   "01-MAR-1979 MEDELLIN FECHA Y LUGAR DE EXPEDICION")
         with patch.object(identidad, "cedula_de", return_value="doc.pdf"), \
              patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
-             patch.object(identidad, "texto_ocr_reforzado", return_value=""):
+             patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             patch.object(identidad, "lecturas_de_paginas", side_effect=lambda *a, **k: ({1: pagina}, {})):
             propia = identidad.fecha_expedicion_cedula({"doc.pdf": b"x"}, "MARTA EUGENIA GARCIA BETANCUR", "43001767")
             ajena = identidad.fecha_expedicion_cedula({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
         self.assertEqual(propia.isoformat(), "1979-03-01")
@@ -2685,6 +2686,7 @@ class OcrDudosoVaALaIATests(TestCase):
              mock.patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
              mock.patch.object(identidad, "paginas_cedula_numeradas", return_value=[("doc.pdf", 1, pagina)]), \
              mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             mock.patch.object(identidad, "lecturas_de_paginas", side_effect=lambda *a, **k: ({1: pagina}, {})), \
              mock.patch("motor.llm.vision.leer_cedula_detallado",
                         return_value=__import__("motor.llm.vision", fromlist=["LecturaVision"]).LecturaVision(date(2002, 5, 22), 2)) as ia:
             lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
@@ -2701,6 +2703,7 @@ class OcrDudosoVaALaIATests(TestCase):
              mock.patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
              mock.patch.object(identidad, "paginas_cedula_numeradas", return_value=[("doc.pdf", 1, pagina)]), \
              mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             mock.patch.object(identidad, "lecturas_de_paginas", side_effect=lambda *a, **k: ({1: pagina}, {})), \
              mock.patch("motor.llm.vision.leer_cedula_detallado",
                         return_value=__import__("motor.llm.vision", fromlist=["LecturaVision"]).LecturaVision(None)):
             lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
@@ -2789,6 +2792,7 @@ class LaIADebeVerDosVecesLoMismoTests(TestCase):
              mock.patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
              mock.patch.object(identidad, "paginas_cedula_numeradas", return_value=[("doc.pdf", 1, pagina)]), \
              mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             mock.patch.object(identidad, "lecturas_de_paginas", side_effect=lambda *a, **k: ({1: pagina}, {})), \
              mock.patch("motor.llm.vision.leer_cedula_detallado", return_value=LecturaVision(date(2002, 5, 22), 1)):
             lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
         self.assertEqual(lectura.fecha, date(2002, 5, 22))
@@ -2805,6 +2809,7 @@ class LaIADebeVerDosVecesLoMismoTests(TestCase):
              mock.patch.object(identidad, "paginas_cedula", return_value=[("doc.pdf", pagina)]), \
              mock.patch.object(identidad, "paginas_cedula_numeradas", return_value=[("doc.pdf", 1, pagina)]), \
              mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""), \
+             mock.patch.object(identidad, "lecturas_de_paginas", side_effect=lambda *a, **k: ({1: pagina}, {})), \
              mock.patch("motor.llm.vision.leer_cedula_detallado", return_value=LecturaVision(date(1996, 5, 24), 1)):
             lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "ADRIANA MARCELA ROJAS PRIETO", "52371321")
         self.assertFalse(lectura.confiable)
@@ -3251,3 +3256,148 @@ class CopniaMasRecienteTests(TestCase):
         with mock.patch.object(copnia, "encontrar_copnias", return_value=[viejo, nuevo]):
             elegido = copnia._elegir_copnia_del_profesional({}, ["MARIA JOSE RESTREPO DIAZ"])
         self.assertEqual(elegido[0], "aportados/Req 3 - COPNIA.pdf")
+
+
+class TarjetaProfesionalAvalTests(TestCase):
+    """La copia de la tarjeta profesional del ingeniero que avala se exige
+    solo si la sección del aval del pliego la pide y no deja suplirla."""
+
+    def test_aval_solo_con_copnia_no_exige_tarjeta(self):
+        from motor.parsers.documento_base import _aval_pide_tarjeta
+
+        texto = ("la oferta tendrá que ser avalada por un Ingeniero, para lo cual adjuntará el certificado de vigencia "
+                 "de matrícula profesional expedida por el Copnia. El aval del ingeniero hace parte integral del Formato 1. "
+                 "Para el equipo de trabajo: copia de la tarjeta profesional y certificado de antecedentes.")
+        self.assertFalse(_aval_pide_tarjeta(texto))
+
+    def test_aval_que_pide_tarjeta(self):
+        from motor.parsers.documento_base import _aval_pide_tarjeta
+
+        texto = ("la oferta tendrá que ser avalada por un ingeniero, para lo cual debe adjuntar copia de la tarjeta "
+                 "profesional y copia del certificado de vigencia de matrícula profesional. El aval hace parte integral del Formato 1.")
+        self.assertTrue(_aval_pide_tarjeta(texto))
+
+    def test_aval_que_pide_tarjeta_suplible(self):
+        from motor.parsers.documento_base import _aval_pide_tarjeta
+
+        texto = ("la oferta tendrá que ser avalada por un ingeniero, para lo cual debe adjuntar copia de la tarjeta "
+                 "profesional y del certificado de vigencia. El requisito de la tarjeta profesional se puede suplir con el "
+                 "registro de que trata el artículo 18 del Decreto 2106 de 2019. El aval hace parte integral del Formato 1.")
+        self.assertFalse(_aval_pide_tarjeta(texto))
+
+    def test_documento_base_viejo_conserva_la_regla_anterior(self):
+        from motor.esquemas.proceso import ProcesoDocumentoBase
+
+        campos = ProcesoDocumentoBase.model_fields
+        self.assertIsNone(campos["tarjeta_exigida"].default)
+        doc = ProcesoDocumentoBase.model_construct(tarjeta_suplible=False, tarjeta_exigida=None)
+        self.assertTrue(doc.exige_tarjeta_profesional)
+        doc = ProcesoDocumentoBase.model_construct(tarjeta_suplible=False, tarjeta_exigida=False)
+        self.assertFalse(doc.exige_tarjeta_profesional)
+
+
+class GravamenesExistenciaTests(TestCase):
+    """Embargos, órdenes judiciales e insolvencia en el certificado de
+    existencia mandan el requisito a revisión; las frases de rutina no."""
+
+    def test_detecta_embargo_y_reorganizacion(self):
+        from motor.evaluacion.camara_comercio import gravamenes_del_certificado
+
+        casos = [
+            "** ORDENES DE AUTORIDADES COMPETENTES: POR OFICIO NO. 0816 DEL 22 DE MAYO DE 2026 DEL JUZGADO PRIMERO LABORAL "
+            "SE DECRETO EMBARGO DE ESTABLECIMIENTO DE COMERCIO.",
+            "SE DECRETO EL EMBARGO DE LAS CUOTAS SOCIALES QUE POSEA EL DEMANDADO EN LA SOCIEDAD DE LA REFERENCIA.",
+            "LA SUPERINTENDENCIA DE SOCIEDADES ORDENO LA ADMISION AL PROCESO DE REORGANIZACION DE LA SOCIEDAD DE LA REFERENCIA.",
+            "RAZON SOCIAL: CANO JIMENEZ ESTUDIOS S A - EN REORGANIZACION NIT: 800.000.000-1",
+            "SE NOMBRO PROMOTOR(A) DENTRO DEL TRAMITE DE REORGANIZACION EMPRESARIAL DE LA SOCIEDAD",
+        ]
+        for texto in casos:
+            self.assertTrue(gravamenes_del_certificado(texto), texto)
+
+    def test_frases_de_rutina_no_cuentan(self):
+        from motor.evaluacion.camara_comercio import gravamenes_del_certificado
+
+        casos = [
+            "LOS BIENES SUJETOS A REGISTRO MERCANTIL RELACIONADOS EN EL PRESENTE CERTIFICADO, SE ENCUENTRAN LIBRES DE EMBARGOS.",
+            "COMPRAR Y VENDER TODA CLASE DE BIENES, SIN EMBARGO SE PROHIBE EXPRESAMENTE A LA SOCIEDAD CONSTITUIRSE EN GARANTE.",
+            "LA PERSONA JURIDICA NO SE ENCUENTRA DISUELTA Y SU DURACION ES INDEFINIDA.",
+            "D) SOLICITAR LA ADMISION DE LA SOCIEDAD A UN PROCESO DE REORGANIZACION O DE LIQUIDACION EN LOS TERMINOS DEL "
+            "REGIMEN DE INSOLVENCIA QUE CONSAGRA LA LEY 1116 DE 2006",
+            "F) CUMPLIR LAS DISPOSICIONES LEGALES Y DEMAS ORDENES DE AUTORIDAD COMPETENTE",
+            "CONTRALORIA DE EMPRESAS EN LIQUIDACION, REALIZACION DE ESTUDIOS",
+        ]
+        for texto in casos:
+            self.assertEqual(gravamenes_del_certificado(texto), [], texto)
+
+
+class FechaExpedicionCedulaTests(TestCase):
+    """La fecha de expedición se lee de la cédula antigua y de la digital,
+    solo de páginas de la persona."""
+
+    def test_etiqueta_danada_por_el_ocr(self):
+        from motor.evaluacion.identidad import fecha_expedicion_en
+        from datetime import date
+
+        texto = "1.85 O+ M ESTATURA AS AH SEXO 14-DIC-1987 VALLEDUPAR FECHA Y LUGAR DE EXPED&CION REGISTRADOR"
+        self.assertEqual(fecha_expedicion_en(texto), date(1987, 12, 14))
+
+    def test_cedula_digital_con_etiqueta(self):
+        from motor.evaluacion.identidad import fecha_expedicion_en
+        from datetime import date
+
+        texto = "FECHA DE NACIMIENTO 09 OCT 1981 FECHA Y LUGAR DE EXPEDICION 26 ENE 2000, BUCARAMANGA"
+        self.assertEqual(fecha_expedicion_en(texto), date(2000, 1, 26))
+
+    def test_cedula_digital_sin_etiquetas_por_la_mrz(self):
+        from motor.evaluacion.identidad import fecha_expedicion_por_mrz
+        from datetime import date
+
+        texto = ("GOMEZ FALLA JORGE 27 MAR 1976 NEIVA (HUILA) 07 MAYO 1997 SARRANQUILLA 13 SEPT 2032 "
+                 "ICCOLOD3931792403001<<<<<<<<<< 7903270M3209136COL72007216<<<7 GOMEZ<FALLA<<JORGE<<<<")
+        self.assertEqual(fecha_expedicion_por_mrz(texto, "72007216"), date(1997, 5, 7))
+        # La MRZ es de otra persona: no se afirma nada.
+        self.assertIsNone(fecha_expedicion_por_mrz(texto, "91505590"))
+
+    def test_mrz_con_digito_de_control_malo_no_sirve(self):
+        from motor.evaluacion.identidad import fecha_expedicion_por_mrz
+
+        texto = "07 MAYO 1997 13 SEPT 2032 7903271M3209136COL72007216<<<7"
+        self.assertIsNone(fecha_expedicion_por_mrz(texto, "72007216"))
+
+    def test_mes_danado(self):
+        from motor.evaluacion.identidad import fecha_expedicion_por_mrz
+        from datetime import date
+
+        texto = "LORA MUNO MARIA ISABE 31 00T 2012 BARRANQUILLA 19 DIC 2033 9407288F3312197C0L1140872459<"
+        self.assertEqual(fecha_expedicion_por_mrz(texto, "1140872459"), date(2012, 10, 31))
+
+
+class LecturasQueNoCoincidenTests(TestCase):
+    """Cédula real: el texto decía 28-MAR-2017 y el OCR reforzado leyó
+    20-MAR-2017 con la etiqueta limpia. Si las dos lecturas no coinciden,
+    ninguna se usa sola."""
+
+    def test_dos_lecturas_distintas_no_son_confiables(self):
+        from datetime import date
+
+        from motor.evaluacion import identidad
+
+        normal = "CEDULA NUMERO 1.098.817.511 JIMENEZ CORREA DANIELA ANDREA 28-MAR-2017 BUCARAMANGA FECHA Y LUGAR DE EXPEDICION"
+        reforzada = "CEDULA 1.098.817.511 JIMENEZ CORREA DANIELA ANDREA 20-MAR-2017 BUCARAMANGA FECHA Y LUGAR DE EXPEDICION"
+        with mock.patch.object(identidad, "cedula_de", return_value="doc.pdf"), \
+             mock.patch.object(identidad, "lecturas_de_paginas", side_effect=lambda *a, **k: ({1: normal}, {1: reforzada})):
+            lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "DANIELA ANDREA JIMENEZ CORREA", "1098817511", con_ia=False)
+        self.assertFalse(lectura.confiable)
+        self.assertIn(lectura.fecha, {date(2017, 3, 28), date(2017, 3, 20)})
+
+    def test_dos_lecturas_iguales_con_etiqueta_danada_son_confiables(self):
+        from datetime import date
+
+        from motor.evaluacion import identidad
+
+        normal = "NUMERO 77.031.208 ARAQUE BLANCO JUAN JOSE 14-DIC-1987 VALLEDUPAR FECHA Y LUGAR DE EXPED&CION"
+        reforzada = "77033208 ARAQUE BLAQQ 14-DIC-1987 VALLEDUPAR FECHA Y LUGAR DE EXPEDIC|ON"
+        with mock.patch.object(identidad, "cedula_de", return_value="doc.pdf"), \
+             mock.patch.object(identidad, "lecturas_de_paginas", side_effect=lambda *a, **k: ({1: normal}, {1: reforzada})):
+            lectura = identidad.leer_fecha_expedicion({"doc.pdf": b"x"}, "JUAN JOSE ARAQUE BLANCO", "77031208", con_ia=False)
+        self.assertEqual((lectura.fecha, lectura.confiable), (date(1987, 12, 14), True))

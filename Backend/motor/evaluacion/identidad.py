@@ -31,7 +31,7 @@ from motor.evaluacion.proponente_plural import obtener_personas_a_verificar
 from motor.esquemas.proceso import PersonaAntecedente, ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.llm.vision import LecturaVision
-from motor.procesamiento.pdf_utils import abrir_pdf, texto_ocr_reforzado, texto_pagina
+from motor.procesamiento.pdf_utils import abrir_pdf, paginas_ocr_reforzado, texto_ocr_reforzado, texto_pagina
 
 MARCAS_CEDULA_RE = re.compile(
     r"IDENTIFICACION\s+PERSONAL|INDICE\s+DERECHO|\bNUIP\b|REGISTRADUR[IA]A?\s+NACIONAL|REGISTRADOR\s+NACIONAL"
@@ -196,6 +196,38 @@ def cedula_de(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal
     return None
 
 
+PAGINAS_MAXIMAS_ARCHIVO_CEDULA = 3
+
+
+def archivo_cedula_por_nombre(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False) -> str | None:
+    """Archivo corto llamado como la cédula de la persona ("CC ADRIANA ROJAS
+    RL", "CEDULA CEGG") cuyo escaneo es tan malo que el OCR no reconoce la
+    página como cédula. Solo sirve para buscar ahí la fecha de expedición (la
+    IA tiene que leer el mismo número de cédula) y para mostrárselo a quien
+    la escribe a mano; no cuenta como copia de la cédula en el requisito de
+    identidad."""
+    numero = _digitos(cedula or "")
+    bases = {a: _norm(a.rsplit("/", 1)[-1].rsplit(".", 1)[0]) for a in sorted(pdfs)}
+    candidatos = [a for a, b in bases.items() if _ARCHIVO_CEDULA_RE.search(b) and _nombre_en_archivo(nombre, b)]
+    if not candidatos and principal:
+        # "CC R.L.", "CEDULA REPRESENTANTE LEGAL": sirve para el representante
+        # legal solo si hay uno solo así.
+        del_representante = [a for a, b in bases.items()
+                             if _ARCHIVO_CEDULA_RE.search(b) and _ARCHIVO_DEL_REPRESENTANTE_RE.search(b)]
+        candidatos = del_representante if len(del_representante) == 1 else []
+    for archivo in candidatos:
+        try:
+            with abrir_pdf(pdfs[archivo]) as pdf:
+                if len(pdf.pages) > PAGINAS_MAXIMAS_ARCHIVO_CEDULA:
+                    continue
+            texto = _norm(texto_ocr_reforzado(pdfs[archivo], max_paginas=PAGINAS_MAXIMAS_ARCHIVO_CEDULA))
+        except Exception:  # noqa: BLE001
+            continue
+        if not _de_otra_persona(numero, texto):
+            return archivo
+    return None
+
+
 _NO_SON_INICIALES = {"DOC", "DOCS", "RUT", "RUP", "CED", "CCO", "RLS", "TPS", "PDF", "ACT", "COP", "CAM", "EXP", "ANT", "SEG"}
 
 
@@ -233,7 +265,13 @@ def suplentes_del_certificado(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
 MESES_CEDULA = {"ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
                 "JUL": 7, "AGO": 8, "SEP": 9, "SET": 9, "OCT": 10, "NOV": 11, "DIC": 12}
 FECHA_CEDULA_RE = re.compile(r"(\d{1,2})\s?[-/.]\s?([A-Z]{3})\s?[-/.]\s?(\d{4})")
-ETIQUETA_EXPEDICION_RE = re.compile(r"EXPEDICION|EXPEDIDA")
+# Cédula digital (desde 2020): la fecha va después de la etiqueta y con
+# espacios: "FECHA Y LUGAR DE EXPEDICION 26 ENE 2000, BUCARAMANGA".
+FECHA_CEDULA_DIGITAL_RE = re.compile(r"(\d{1,2})\s?[-/. ]\s?([A-Z]{3})\s?[-/. ]\s?(\d{4})")
+DESPUES_DE_LA_ETIQUETA = 36
+# Basta el comienzo: el OCR daña el final de la palabra con frecuencia
+# ("EXPED&CION", "EXPEDIC|ON") aunque la fecha de al lado salga bien.
+ETIQUETA_EXPEDICION_RE = re.compile(r"EXPED")
 # Distancia máxima entre la fecha y la etiqueta (en medio va la ciudad).
 CERCA_DE_LA_ETIQUETA = 70
 
@@ -280,6 +318,74 @@ def lectura_ocr(texto_norm: str) -> LecturaFecha:
     return LecturaFecha(fecha, limpia, "ocr")
 
 
+# Zona de lectura mecánica de la cédula digital, segunda línea:
+# "7903270M3209136COL72007216<<<7" = nacimiento AAMMDD + control, sexo,
+# vencimiento AAMMDD + control, "COL" y el número de cédula.
+MRZ_RE = re.compile(r"(\d{6})(\d)([MF<])(\d{6})(\d)C[O0]L(\d{6,10})<")
+# Fechas de la cédula digital con el mes dañado por el OCR ("31 00T 2012",
+# "07 MAYO 1997", "13 SEPT 2032").
+FECHA_DIGITAL_LAXA_RE = re.compile(r"\b(\d{1,2})\s?[-/. ]\s?([A-Z0-9]{3,4})\s?[-/. ]\s?((?:19|20)\d{2})\b")
+
+
+def _digito_control(datos: str) -> int:
+    """Dígito de control ICAO 9303 (pesos 7, 3, 1)."""
+    valores = [int(c) if c.isdigit() else (ord(c) - 55 if c.isalpha() else 0) for c in datos]
+    return sum(v * (7, 3, 1)[i % 3] for i, v in enumerate(valores)) % 10
+
+
+def _fecha_mrz(aammdd: str, futuro: bool) -> date | None:
+    anio, mes, dia = int(aammdd[:2]), int(aammdd[2:4]), int(aammdd[4:])
+    siglo = 2000 if (futuro or anio <= date.today().year % 100) else 1900
+    try:
+        return date(siglo + anio, mes, dia)
+    except ValueError:
+        return None
+
+
+def _mes_laxo(token: str) -> int | None:
+    token = token.replace("0", "O").replace("1", "I")[:3]
+    if token in MESES_CEDULA:
+        return MESES_CEDULA[token]
+    # Una sola letra dañada ("OOT" -> OCT), si no hay dos meses posibles.
+    parecidos = {m for k, m in MESES_CEDULA.items() if sum(a != b for a, b in zip(k, token)) == 1}
+    return parecidos.pop() if len(parecidos) == 1 else None
+
+
+def fecha_expedicion_por_mrz(texto_norm: str, numero: str) -> date | None:
+    """Cédula digital sin etiquetas legibles: la MRZ (con sus dígitos de
+    control) dice cuáles son la fecha de nacimiento y la de vencimiento; si en
+    la página queda exactamente otra fecha, es la de expedición. Solo si la
+    MRZ trae el número de esta persona."""
+    compacto = re.sub(r"\s+", "", texto_norm)
+    for m in MRZ_RE.finditer(compacto):
+        nacimiento_txt, c1, _, vence_txt, c2, cedula = m.groups()
+        if numero and _digitos(cedula) != _digitos(numero):
+            continue
+        if _digito_control(nacimiento_txt) != int(c1) or _digito_control(vence_txt) != int(c2):
+            continue
+        nacimiento, vence = _fecha_mrz(nacimiento_txt, False), _fecha_mrz(vence_txt, True)
+        if nacimiento is None or vence is None:
+            continue
+        otras = set()
+        for f in FECHA_DIGITAL_LAXA_RE.finditer(re.sub(r"\s+", " ", texto_norm)):
+            mes = _mes_laxo(f.group(2))
+            if not mes:
+                continue
+            try:
+                fecha = date(int(f.group(3)), mes, int(f.group(1)))
+            except ValueError:
+                continue
+            # Fuera la de nacimiento y la de vencimiento (tolerando que el OCR
+            # dañe un dígito del año o del día) y lo imposible.
+            if any((fecha.month, fecha.day) == (d.month, d.day) or abs((fecha - d).days) < 400 for d in (nacimiento, vence)):
+                continue
+            if nacimiento < fecha <= date.today():
+                otras.add(fecha)
+        if len(otras) == 1:
+            return otras.pop()
+    return None
+
+
 def fecha_expedicion_en(texto_norm: str) -> date | None:
     """La fecha de expedición que dice el reverso de la cédula, o None si no
     está clara. Se toma la fecha que está pegada a la etiqueta "FECHA Y LUGAR
@@ -294,8 +400,34 @@ def fecha_expedicion_en(texto_norm: str) -> date | None:
         # de cerca no se afirma nada.
         if encontradas:
             candidatas.append(encontradas[-1])
+        despues = texto[etiqueta.end() : etiqueta.end() + DESPUES_DE_LA_ETIQUETA]
+        siguiente = next((f for m in FECHA_CEDULA_DIGITAL_RE.finditer(despues) if (f := _fecha_de(m))), None)
+        if siguiente:
+            candidatas.append(siguiente)
     distintas = set(candidatas)
     return candidatas[0] if len(distintas) == 1 else None
+
+
+def lecturas_de_paginas(contenido: bytes, ademas: frozenset[int] = frozenset()) -> tuple[dict[int, str], dict[int, str]]:
+    """Texto normal y OCR reforzado (normalizados) de las primeras páginas
+    del archivo de la cédula y de las páginas `ademas` (las que ya se vieron
+    como cédula más adentro, p. ej. anexa al final del Formato 1)."""
+    normales: dict[int, str] = {}
+    try:
+        with abrir_pdf(contenido) as pdf:
+            for page in pdf.pages[:max([PAGINAS_REFORZADAS, *ademas])]:
+                if page.page_number <= PAGINAS_REFORZADAS or page.page_number in ademas:
+                    normales[page.page_number] = _norm(texto_pagina(page))
+                page.flush_cache()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        reforzadas = {
+            n: _norm(t) for n, t in paginas_ocr_reforzado(contenido, max_paginas=PAGINAS_REFORZADAS, ademas=ademas)
+        }
+    except Exception:  # noqa: BLE001
+        reforzadas = {}
+    return normales, reforzadas
 
 
 def leer_fecha_expedicion(
@@ -313,27 +445,53 @@ def leer_fecha_expedicion(
     Solo se lee de una página que sea demostrablemente suya (trae su número o
     su nombre): una carpeta puede traer las cédulas de varias personas y una
     fecha de otro no sirve para consultar nada."""
-    archivo = cedula_de(pdfs, nombre, cedula, principal=principal)
+    archivo = cedula_de(pdfs, nombre, cedula, principal=principal) or archivo_cedula_por_nombre(
+        pdfs, nombre, cedula, principal=principal
+    )
     if archivo is None:
         return LecturaFecha(None, False, "ninguna")
     numero = _digitos(cedula or "")
+    # Dos lecturas de cada página: el texto normal y el OCR reforzado (otro
+    # tratamiento de la imagen). Página por página: un PDF puede traer las
+    # cédulas de dos personas, y leerlo entero le asignaba a una la fecha de
+    # la otra (pasó en un consorcio real).
+    de_cedula = frozenset(n for a, n, _ in paginas_cedula_numeradas(pdfs) if a == archivo)
+    normales, reforzadas = lecturas_de_paginas(pdfs[archivo], de_cedula)
+    # Una página es suya si cualquiera de las dos lecturas trae su número o su
+    # nombre (el reverso de la cédula a veces solo lo trae en una de ellas).
+    suyas = sorted(
+        n for n in set(normales) | set(reforzadas)
+        if _es_suyo(nombre, numero, normales.get(n, "")) or _es_suyo(nombre, numero, reforzadas.get(n, ""))
+    )
+    # fecha -> (en cuántas lecturas salió, si alguna tenía la etiqueta limpia)
+    vistas: dict[date, list[int | bool]] = {}
+    for n in suyas:
+        for texto in (normales.get(n, ""), reforzadas.get(n, "")):
+            if not texto:
+                continue
+            lectura = lectura_ocr(texto)
+            fecha, limpia = lectura.fecha, lectura.confiable
+            if fecha is None:
+                # Cédula digital sin etiquetas legibles: la MRZ dice cuáles
+                # son el nacimiento y el vencimiento.
+                fecha, limpia = fecha_expedicion_por_mrz(texto, numero), True
+            if fecha is not None:
+                visto = vistas.setdefault(fecha, [0, False])
+                visto[0] += 1
+                visto[1] = visto[1] or limpia
     dudosa = LecturaFecha(None, False, "ninguna")
-    for nombre_archivo, texto in paginas_cedula(pdfs):
-        if nombre_archivo != archivo or not _es_suyo(nombre, numero, texto):
-            continue
-        lectura = lectura_ocr(texto)
-        if lectura.confiable:
-            return lectura
-        dudosa = lectura if lectura.fecha else dudosa
-    try:
-        reforzado = _norm(texto_ocr_reforzado(pdfs[archivo], max_paginas=PAGINAS_REFORZADAS))
-    except Exception:  # noqa: BLE001
-        reforzado = ""
-    if reforzado and _es_suyo(nombre, numero, reforzado):
-        lectura = lectura_ocr(reforzado)
-        if lectura.confiable:
-            return lectura
-        dudosa = lectura if lectura.fecha else dudosa
+    if len(vistas) == 1:
+        # Una sola fecha: se usa si las dos lecturas la vieron o si al lado
+        # estaba la etiqueta completa.
+        fecha, (veces, limpia) = next(iter(vistas.items()))
+        if veces >= 2 or limpia:
+            return LecturaFecha(fecha, True, "ocr")
+        dudosa = LecturaFecha(fecha, False, "ocr")
+    elif vistas:
+        # Las lecturas no coinciden (un 8 leído como 0, pasó con una cédula
+        # real): ninguna se usa sola. Se sugiere la más repetida.
+        fecha = max(vistas, key=lambda f: (vistas[f][0], vistas[f][1]))
+        dudosa = LecturaFecha(fecha, False, "ocr")
 
     if not con_ia:
         return dudosa
@@ -351,7 +509,7 @@ def leer_fecha_expedicion(
         return dudosa
     # Se da por buena cuando dos miradas coinciden, o cuando la IA confirma lo
     # que el OCR había leído a medias. Una sola lectura se sugiere, no se usa.
-    segura = de_la_ia.confirmada or de_la_ia.fecha == dudosa.fecha
+    segura = de_la_ia.confirmada or de_la_ia.fecha in vistas
     return LecturaFecha(de_la_ia.fecha, segura, "ia")
 
 
@@ -362,11 +520,11 @@ VISION_EN_EVALUACION = __import__("os").environ.get("VISION_EN_EVALUACION", "0")
 
 
 @memo_por_pdfs
-def fecha_de_la_persona(pdfs: dict[str, bytes], nombre: str, cedula: str | None) -> date | None:
+def fecha_de_la_persona(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False) -> date | None:
     """La fecha de expedición de su cédula, confiable, para dejarla en la
     ficha de la persona al evaluar (una sola vez por persona y oferta)."""
     try:
-        lectura = leer_fecha_expedicion(pdfs, nombre, cedula, con_ia=VISION_EN_EVALUACION)
+        lectura = leer_fecha_expedicion(pdfs, nombre, cedula, principal=principal, con_ia=VISION_EN_EVALUACION)
     except Exception:  # noqa: BLE001
         return None
     return lectura.fecha if lectura.confiable else None

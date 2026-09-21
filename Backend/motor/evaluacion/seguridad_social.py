@@ -59,7 +59,10 @@ def encontrar_formato5(pdfs: dict[str, bytes]) -> tuple[str, str] | None:
             continue
         if _es_certificado(_norm(texto)):
             return nombre, texto
-    return None
+    # Dentro de un paquete jurídico (Formato 2, parafiscales, antecedentes y
+    # cámara de comercio en un solo PDF) el formato no está al principio.
+    certificados = certificados_formato5(pdfs)
+    return certificados[0] if certificados else None
 
 
 def _es_certificado(texto_norm: str) -> bool:
@@ -108,6 +111,15 @@ def _nombre_aparece_en_texto(nombre: str, texto_norm: str) -> bool:
 
 
 PAGINAS_MAXIMAS_FORMATO5 = 8
+# Paquetes jurídicos: un solo PDF con Formato 2, separadores ("PARAFISCALES
+# EMPRESAS"), los Formatos 6 de cada integrante, antecedentes y cámara de
+# comercio (se vio uno real de 55 páginas con los formatos en las páginas 6 y
+# 10). Si el nombre del archivo o sus primeras páginas lo delatan, se lee más.
+PISTA_PAQUETE_JURIDICO_RE = re.compile(
+    r"PARAFISCAL|SEGURIDAD SOCIAL|APORTES|JURIDIC|HABILITANTE|CONFORMACION\s+(?:DE\s+)?PROPONENTE\s+PLURAL"
+)
+PAGINAS_MINIMAS_PAQUETE = 4
+PAGINAS_MAXIMAS_PAQUETE = 32
 
 REVISOR_FISCAL_CERTIFICA_RE = re.compile(r"EN (?:MI )?CALIDAD DE REVISOR(?:A)? FISCAL|EN MI CONDICION DE REVISOR(?:A)? FISCAL")
 
@@ -141,9 +153,14 @@ def certificados_formato5(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
         try:
             with abrir_pdf(pdfs[nombre]) as pdf:
                 actual: list[str] | None = None
-                for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_FORMATO5]):
+                es_paquete = bool(PISTA_PAQUETE_JURIDICO_RE.search(_norm(nombre.rsplit("/", 1)[-1])))
+                for indice, page in enumerate(pdf.pages[:PAGINAS_MAXIMAS_PAQUETE]):
+                    if indice >= (PAGINAS_MAXIMAS_PAQUETE if es_paquete else PAGINAS_MAXIMAS_FORMATO5):
+                        break
                     texto = texto_pagina(page)
                     page.flush_cache()
+                    if indice < PAGINAS_MINIMAS_PAQUETE and PISTA_PAQUETE_JURIDICO_RE.search(_norm(texto)):
+                        es_paquete = True
                     # El formulario de preguntas del SECOP cita el nombre del
                     # formato en el enunciado; no es el formato.
                     if _es_certificado(_norm(texto)):
@@ -152,7 +169,7 @@ def certificados_formato5(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:
                         actual = [texto]
                     elif actual is not None and len(actual) == 1:
                         actual.append(texto)
-                    elif actual is None and indice >= PAGINAS_A_REVISAR:
+                    elif actual is None and indice >= PAGINAS_A_REVISAR and not es_paquete:
                         break
                 if actual is not None:
                     certificados.append((nombre, "\n".join(actual)))

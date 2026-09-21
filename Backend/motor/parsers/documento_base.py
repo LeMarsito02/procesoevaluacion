@@ -77,11 +77,28 @@ class ParseResult:
     garantia: ParsedGarantia | None = None
     modalidad: str | None = None
     tarjeta_suplible: bool = False
+    tarjeta_exigida: bool = False
 
 
 # "El requisito de la tarjeta profesional se puede suplir con el registro de
 # que trata el artículo 18 del Decreto-Ley 2106 de 2019."
 TARJETA_SUPLIBLE_RE = re.compile(r"tarjeta profesional se (?:puede|podr[áa]) suplir con el registro", re.IGNORECASE)
+
+# Sección del aval: "…la oferta tendrá que ser avalada por un ingeniero, para
+# lo cual adjuntará…" hasta "El aval del ingeniero… hace parte integral". Unos
+# pliegos piden ahí solo el certificado COPNIA; otros, además, la copia de la
+# tarjeta profesional.
+_AVAL_RE = re.compile(r"avalada por un ingeniero(.{0,1500}?)(?:hace parte integral|$)", re.IGNORECASE | re.S)
+
+
+def _aval_pide_tarjeta(texto: str) -> bool:
+    """La sección del aval del ingeniero pide copia de la tarjeta profesional
+    y no dice que se pueda suplir con el registro."""
+    for m in _AVAL_RE.finditer(texto):
+        seccion = m.group(1)
+        if re.search(r"tarjeta profesional", seccion, re.IGNORECASE) and not TARJETA_SUPLIBLE_RE.search(seccion):
+            return True
+    return False
 
 
 def _find_budget_rows(pdf: pdfplumber.PDF) -> tuple[str, list[ParsedLote]]:
@@ -254,14 +271,15 @@ def parse_documento_base(pdf_bytes: bytes) -> ParseResult:
         # La modalidad se lee del encabezado de las primeras páginas.
         primeras = [(p.extract_text() or "") for p in pdf.pages[:8]]
         modalidad = modalidad_de(" ".join(primeras[:3]), " ".join(primeras))
-        tarjeta_suplible = False
+        paginas = []
         for page in pdf.pages:
-            if TARJETA_SUPLIBLE_RE.search(re.sub(r"\s+", " ", page.extract_text() or "")):
-                tarjeta_suplible = True
-                break
+            paginas.append(re.sub(r"\s+", " ", page.extract_text() or ""))
             page.flush_cache()
+        texto = " ".join(paginas)
+        tarjeta_suplible = bool(TARJETA_SUPLIBLE_RE.search(texto))
     return ParseResult(
-        objeto_general=objeto_general, lotes=lotes, garantia=garantia, modalidad=modalidad, tarjeta_suplible=tarjeta_suplible
+        objeto_general=objeto_general, lotes=lotes, garantia=garantia, modalidad=modalidad,
+        tarjeta_suplible=tarjeta_suplible, tarjeta_exigida=_aval_pide_tarjeta(texto),
     )
 
 
@@ -347,6 +365,7 @@ def build_proceso(codigo_proceso: str, fecha_cierre: date, pdf_bytes: bytes) -> 
         fecha_cierre=fecha_cierre,
         modalidad=parsed.modalidad,
         tarjeta_suplible=parsed.tarjeta_suplible,
+        tarjeta_exigida=parsed.tarjeta_exigida,
         objeto_general=parsed.objeto_general,
         lotes=lotes,
         lote_mayor_valor=lote_mayor.numero if lote_mayor else "",

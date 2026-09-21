@@ -58,6 +58,15 @@ class ProcesoDocumentoBase(BaseModel):
     # registro del art. 18 del Decreto-Ley 2106 de 2019 (el certificado
     # COPNIA): entonces no se exige la copia de la tarjeta.
     tarjeta_suplible: bool = False
+    # La sección del aval del ingeniero (art. 20 Ley 842 de 2003) pide copia
+    # de la tarjeta profesional y no permite suplirla. None = documento base
+    # guardado antes de leer esto: se usa `not tarjeta_suplible`.
+    tarjeta_exigida: bool | None = None
+
+    @property
+    def exige_tarjeta_profesional(self) -> bool:
+        return (not self.tarjeta_suplible) if self.tarjeta_exigida is None else self.tarjeta_exigida
+
     # Definición de evaluación de la entidad (motor.criterios.DefinicionEvaluacion
     # serializada). None = evaluación jurídica base del sistema.
     criterios: dict | None = Field(default=None, exclude=True)

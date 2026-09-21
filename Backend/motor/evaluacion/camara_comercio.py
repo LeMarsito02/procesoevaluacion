@@ -345,6 +345,43 @@ def _evaluar_vigencia_documentos(
     return ResultadoEvaluacionCamara(cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0])
 
 
+# Lo que la Cámara de Comercio inscribe cuando hay un embargo, una orden
+# judicial o un proceso de insolvencia sobre la sociedad o sus
+# establecimientos (se vio uno real: "ORDENES DE AUTORIDADES COMPETENTES: POR
+# OFICIO NO. 0816… SE DECRETO EMBARGO DE ESTABLECIMIENTO DE COMERCIO", que el
+# abogado rechazó). Es criterio jurídico si afecta la capacidad para
+# contratar, así que va a revisión con la frase exacta. Calibrado con 859
+# fragmentos de 327 ofertas reales para no confundirlo con "LIBRES DE
+# EMBARGOS", "SIN EMBARGO", "NO SE ENCUENTRA DISUELTA" ni con las facultades
+# ("solicitar la admisión de la sociedad a un proceso de reorganización").
+GRAVAMEN_RE = re.compile(
+    r"(?:DECRET[OA]|ORDEN[OA]|INSCRIBIO)\s+(?:EL\s+|LA\s+MEDIDA\s+CAUTELAR\s+DE\s+)?EMBARGO"
+    r"|\bEMBARGO\s+(?:DEL?\s+|DE\s+L[AO]S\s+)?(?:ESTABLECIMIENTO|CUOTAS|ACCIONES|DERECHOS|BIENES|REMANENTES)"
+    r"|EMBARGOS,?\s+DEMANDAS\s+Y\s+MEDIDAS\s+CAUTELARES\s+POR\s+OFICIO"
+    r"|(?<!DEMAS )ORDENES\s+DE\s+AUTORIDAD(?:ES)?\s+COMPETENTES?"
+    r"|INSCRIPCION\s+DE\s+LA\s+DEMANDA"
+    r"|(?:ADMISION|ADMITIR|ADMITIO|INICIO|APERTURA)\s+(?:AL|DEL|EL|A)\s+(?:UN\s+)?PROCESO\s+DE\s+(?:REORGANIZACION|LIQUIDACION|VALIDACION|INSOLVENCIA)"
+    r"|(?:AVISO\s+INICIO|PROCESOS\s+ESPECIALES|COORDINACION\s+DE\s+EL)\s+PROCESO\s+DE\s+REORGANIZACION"
+    r"|PROCESO\s+DE\s+REORGANIZACION\s+EMPRESARIAL,?\s+ADJUDICACION\s+O\s+LIQUIDACION\s+JUDICIAL"
+    r"|TRAMITE\s+DE\s+REORGANIZACION|NOMBRO\s+PROMOTOR"
+    r"|EN\s+LIQUIDACION\s+JUDICIAL"
+    r"|(?:\bLTDA|\bS\.?\s?A\.?\s?S|\bS\.?\s?A|\bE\.?\s?U)\.?\s+-?\s*EN\s+(?:LIQUIDACION|REORGANIZACION)\b"
+    r"|DISUELTA\s+Y\s+EN\s+(?:ESTADO\s+DE\s+)?LIQUIDACION|(?:DECRETO|DECLARO)\s+LA\s+DISOLUCION"
+)
+
+
+def gravamenes_del_certificado(texto_norm: str) -> list[str]:
+    """Fragmentos del certificado de existencia que registran embargos,
+    órdenes judiciales o procesos de insolvencia (sin repetir)."""
+    fragmentos: list[str] = []
+    for m in GRAVAMEN_RE.finditer(texto_norm):
+        inicio = max(0, m.start() - 80)
+        fragmento = texto_norm[inicio:m.end() + 120].strip()
+        if not any(m.group(0) in f for f in fragmentos):
+            fragmentos.append(fragmento)
+    return fragmentos
+
+
 def evaluar_requisito6(pdfs: dict[str, bytes], fecha_cierre: date, tipo_proponente: str | None) -> ResultadoEvaluacionCamara:
     """Requisito 6: Certificado de Existencia y Representación Legal,
     expedido máximo 1 mes antes de la fecha de cierre. N.A. si el
@@ -355,9 +392,23 @@ def evaluar_requisito6(pdfs: dict[str, bytes], fecha_cierre: date, tipo_proponen
         return ResultadoEvaluacionCamara(
             cumple=True, motivo="N.A. — persona natural, no aplica Certificado de Existencia y Representación Legal", archivo=None
         )
-    return _evaluar_vigencia_documentos(
+    resultado = _evaluar_vigencia_documentos(
         pdfs, TITULO_EXISTENCIA_RE, PISTAS_EXISTENCIA, "Certificado de Existencia y Representación Legal", fecha_cierre
     )
+    if resultado.archivo is None:
+        return resultado
+    motivos = [resultado.motivo] if resultado.motivo else []
+    for nombre in encontrar_documentos(pdfs, TITULO_EXISTENCIA_RE, PISTAS_EXISTENCIA):
+        fragmentos = gravamenes_del_certificado(_norm(_texto_completo(pdfs, nombre)))
+        if fragmentos:
+            citas = " … ".join(f"«{f}»" for f in fragmentos[:3])
+            motivos.append(
+                f"el certificado '{nombre}' registra embargos, órdenes judiciales o un proceso de insolvencia: {citas} "
+                "— revisa si afecta la capacidad jurídica para contratar"
+            )
+    if not motivos:
+        return resultado
+    return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(motivos), archivo=resultado.archivo)
 
 
 def evaluar_requisito9(pdfs: dict[str, bytes], fecha_cierre: date) -> ResultadoEvaluacionCamara:
