@@ -225,3 +225,16 @@ PASSWORD_RESET_TIMEOUT = 60 * 60 * 2
 # El panel de Django no pide segundo factor: en producción solo se publica
 # si se habilita explícitamente (y detrás de VPN).
 ADMIN_DJANGO_HABILITADO = DEBUG or os.environ.get("ADMIN_DJANGO", "0") == "1"
+
+
+# Registro: advertencias en adelante para todo, e información de la verificación
+# de reCAPTCHA (puntaje de cada acceso) y de la fila de evaluación.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"consola": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["consola"], "level": "WARNING"},
+    "loggers": {
+        "cuentas.recaptcha": {"handlers": ["consola"], "level": "INFO", "propagate": False},
+    },
+}
