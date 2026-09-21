@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import {
   agregarPersona,
   consultarEnLinea,
@@ -94,6 +94,29 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   }
   // Persona cuya fecha de expedición se está escribiendo en su ficha.
   const [editandoFecha, setEditandoFecha] = useState<string | null>(null)
+  // Cédula abierta debajo de la fila de la persona, para leer y guardar la fecha.
+  const [cedulaDe, setCedulaDe] = useState<{ persona: PersonaVerificada; url: string; archivo: string | null; fecha: string } | null>(null)
+  const [abriendoDe, setAbriendoDe] = useState<string | null>(null)
+
+  async function abrirCedula(persona: PersonaVerificada) {
+    if (cedulaDe?.persona.id === persona.id) return cerrarCedula()
+    setAbriendoDe(persona.id)
+    try {
+      const { blob, sugerida, archivo } = await verCedulaPersona(evaluacionId, proponenteId, persona.id)
+      if (cedulaDe) URL.revokeObjectURL(cedulaDe.url)
+      setCedulaDe({ persona, url: URL.createObjectURL(blob), archivo, fecha: persona.fecha_expedicion_documento ?? sugerida ?? '' })
+      setError(null)
+    } catch (e) {
+      setError(mensajeDe(e))
+    } finally {
+      setAbriendoDe(null)
+    }
+  }
+
+  function cerrarCedula() {
+    if (cedulaDe) URL.revokeObjectURL(cedulaDe.url)
+    setCedulaDe(null)
+  }
 
   const recargar = useCallback(() => {
     obtenerAntecedentes(evaluacionId, proponenteId)
@@ -192,7 +215,8 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
             </thead>
             <tbody>
               {ordenadas.map((per) => (
-                <tr key={per.id}>
+                <Fragment key={per.id}>
+                <tr>
                   <td style={{ paddingLeft: per.de_id ? 26 : undefined }}>
                     <strong className="small">{per.nombre}</strong>
                     {per.detectada && <span className="tag" style={{ marginLeft: 6 }}>de la oferta</span>}
@@ -251,6 +275,17 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                         >
                           {copiado === per.id ? '¡copiado!' : 'copiar datos'}
                         </button>
+                        {per.tipo !== 'juridica' && (
+                          <button
+                            type="button"
+                            className="enlace"
+                            title="Abrir la copia de su cédula que vino en la oferta"
+                            disabled={abriendoDe === per.id}
+                            onClick={() => void abrirCedula(per)}
+                          >
+                            {abriendoDe === per.id ? 'abriendo…' : cedulaDe?.persona.id === per.id ? 'cerrar cédula' : 'ver cédula'}
+                          </button>
+                        )}
                         {per.tipo === 'juridica' && (
                           <button type="button" className="enlace" onClick={() => setAgregando({ de: per })}>
                             + representante
@@ -371,6 +406,59 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                     )
                   })}
                 </tr>
+                {cedulaDe?.persona.id === per.id && (
+                  <tr>
+                    <td colSpan={datos.requisitos.length + 1}>
+                      <div className="formulario-inline" style={{ margin: 0 }}>
+                        <div className="acciones" style={{ justifyContent: 'space-between' }}>
+                          <strong className="small">
+                            Cédula de {per.nombre}
+                            {cedulaDe.archivo && <span className="muted" style={{ fontWeight: 400 }}> · {cedulaDe.archivo}</span>}
+                          </strong>
+                          <button type="button" className="enlace" onClick={cerrarCedula}>
+                            cerrar
+                          </button>
+                        </div>
+                        <iframe
+                          title={`Cédula de ${per.nombre}`}
+                          src={cedulaDe.url}
+                          style={{ width: '100%', height: 460, border: '1px solid var(--line)', borderRadius: 8 }}
+                        />
+                        {!soloLectura && (
+                          <div className="acciones" style={{ alignItems: 'flex-end' }}>
+                            <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              Fecha de expedición (reverso, junto a «FECHA Y LUGAR DE EXPEDICIÓN»)
+                              <input
+                                className="input select-sm"
+                                type="date"
+                                value={cedulaDe.fecha}
+                                style={{ width: 170 }}
+                                onChange={(e) => setCedulaDe({ ...cedulaDe, fecha: e.target.value })}
+                              />
+                            </label>
+                            {cedulaDe.fecha && cedulaDe.fecha !== per.fecha_expedicion_documento && !per.fecha_expedicion_documento && (
+                              <span className="small muted">sugerida por el programa: revísala antes de guardar</span>
+                            )}
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              disabled={!cedulaDe.fecha || cedulaDe.fecha === per.fecha_expedicion_documento}
+                              onClick={() =>
+                                accion(async () => {
+                                  await guardarFechaDocumento(evaluacionId, per.id, cedulaDe.fecha)
+                                  cerrarCedula()
+                                })
+                              }
+                            >
+                              Guardar fecha
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

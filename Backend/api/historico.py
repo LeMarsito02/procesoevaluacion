@@ -208,7 +208,12 @@ def cedula_de_persona(request: HttpRequest, evaluacion_id: UUID, proponente_id: 
     que el evaluador lea la fecha de expedición con sus propios ojos cuando ni
     el lector de texto ni la IA pudieron. Si el programa alcanzó a leer algo,
     lo sugiere en la cabecera X-Fecha-Sugerida."""
-    from motor.evaluacion.identidad import archivo_cedula_por_nombre, cedula_de, leer_fecha_expedicion
+    from motor.evaluacion.identidad import (
+        VISION_EN_EVALUACION,
+        archivo_cedula_por_nombre,
+        cedula_de,
+        leer_fecha_expedicion,
+    )
     from motor.integrations.drive import download_file_bytes
     from motor.procesamiento.zip_utils import extraer_pdfs
 
@@ -227,7 +232,11 @@ def cedula_de_persona(request: HttpRequest, evaluacion_id: UUID, proponente_id: 
     if archivo is None:
         raise HttpError(404, f"No se encontró la copia de la cédula de {persona.nombre} en la oferta.")
     respuesta = HttpResponse(pdfs[archivo], content_type="application/pdf")
-    lectura = leer_fecha_expedicion(pdfs, persona.nombre, persona.documento, principal=principal)
+    # Con la misma configuración de la evaluación: en una GPU pequeña la IA
+    # tardaría minutos en responder a un clic.
+    lectura = leer_fecha_expedicion(
+        pdfs, persona.nombre, persona.documento, principal=principal, con_ia=VISION_EN_EVALUACION
+    )
     if lectura.fecha is not None:
         respuesta["X-Fecha-Sugerida"] = lectura.fecha.isoformat()
     respuesta["X-Archivo"] = archivo.rsplit("/", 1)[-1][:120]
