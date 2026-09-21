@@ -54,20 +54,37 @@ interface FilaPersona {
   porRequisito: Map<number, PersonaAntecedente['estado']>
 }
 
+// "Adriana Marcela Rojas Prieto" y "ADRIANA MARCELA ROJAS PRIETO" son la misma.
+const normal = (texto: string) =>
+  texto
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
 function personasDe(lista: ResultadoRequisito[] | undefined): FilaPersona[] {
-  const filas = new Map<string, FilaPersona>()
+  const filas: FilaPersona[] = []
   for (const r of lista ?? []) {
     for (const per of r.personas_antecedente ?? []) {
-      const clave = per.documento || per.nombre.toUpperCase()
-      const fila =
-        filas.get(clave) ??
-        { clave, nombre: per.nombre, documento: per.documento, tipo: per.tipo, rol: per.rol, porRequisito: new Map() }
+      // Un requisito puede traer a la persona con su cédula y otro sin ella:
+      // es la misma si coincide el documento o, a falta de él, el nombre.
+      const documento = (per.documento ?? '').replace(/\D/g, '')
+      let fila = filas.find(
+        (f) =>
+          (documento && (f.documento ?? '').replace(/\D/g, '') === documento) || normal(f.nombre) === normal(per.nombre),
+      )
+      if (!fila) {
+        fila = { clave: documento || normal(per.nombre), nombre: per.nombre, documento: per.documento, tipo: per.tipo, rol: per.rol, porRequisito: new Map() }
+        filas.push(fila)
+      }
+      if (!fila.documento && per.documento) fila.documento = per.documento
       fila.porRequisito.set(r.requisito, per.estado)
-      filas.set(clave, fila)
     }
   }
   const orden: PersonaAntecedente['rol'][] = ['proponente', 'representante_legal', 'suplente', 'integrante']
-  return [...filas.values()].sort((a, b) => orden.indexOf(a.rol) - orden.indexOf(b.rol) || a.nombre.localeCompare(b.nombre))
+  return filas.sort((a, b) => orden.indexOf(a.rol) - orden.indexOf(b.rol) || a.nombre.localeCompare(b.nombre))
 }
 
 const TIPO: Record<string, string> = {

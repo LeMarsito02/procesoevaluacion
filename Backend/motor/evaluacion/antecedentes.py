@@ -492,6 +492,14 @@ def _evaluar_proponente_antecedente(
         fecha_cierre=proceso.fecha_cierre,
     )
 
+    # La fecha de expedición de cada cédula que venga en la oferta queda en la
+    # ficha de la persona: la piden las páginas de consulta (RNMC, Policía).
+    from motor.evaluacion.identidad import fecha_de_la_persona
+
+    for persona in resultado.personas:
+        if persona.tipo == "natural" and persona.fecha_expedicion_documento is None:
+            persona.fecha_expedicion_documento = fecha_de_la_persona(pdfs, persona.nombre, persona.documento)
+
     return finalizar(
         ResultadoRequisito(
             **base,

@@ -109,11 +109,25 @@ _ARCHIVO_CEDULA_RE = re.compile(r"CEDULA|\bC\.?\s?C\b|DOCUMENTO\s+DE\s+IDENTIDAD
 # Archivo de la cédula del representante legal: "CEDULA REPRESENTANTE
 # LEGAL", "2. CEDULA REP LEGAL", "acedula-rl-consorcio", "Dcto Representante
 # Legal".
-_ARCHIVO_DEL_REPRESENTANTE_RE = re.compile(r"REPRESENTANTE|REP\.?\s*LEGAL|\bR\.?\s?L\b|\bRL\b|LEGAL")
+# "LEGAL" solo no basta: "DOC LEGAL MEGB" es la carpeta de documentos legales
+# de otra persona (así se le asignó la cédula de la suplente a la
+# representante, una aprobación indebida).
+_ARCHIVO_DEL_REPRESENTANTE_RE = re.compile(r"REPRESENTANTE|REP\.?\s*LEGAL|\bR\.?\s?L\b|\bRL\b")
 
 
 def _es_suyo(nombre: str, numero: str, texto: str) -> bool:
     return (bool(numero) and _numero_en(numero, texto)) or _nombres_coinciden(nombre, " ".join(re.findall(r"[A-ZÑ]{2,}", texto)))
+
+
+def _de_otra_persona(numero: str, texto_norm: str) -> bool:
+    """La página trae una cédula legible que no es la de esta persona. El
+    reverso de la cédula repite el número en su código ("…-F-0043001767-…"):
+    si hay números con forma de cédula y ninguno es el suyo, es de otro."""
+    if len(numero) < 6:
+        return False
+    candidatos = {d.lstrip("0") for d in re.findall(r"\d{7,11}", re.sub(r"[.\s]", "", texto_norm))}
+    candidatos = {d for d in candidatos if 6 <= len(d) <= 10}
+    return bool(candidatos) and not any(_numero_en(numero, d) for d in candidatos)
 
 
 def cedula_de(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False) -> str | None:
@@ -127,6 +141,10 @@ def cedula_de(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal
     for archivo, texto in paginas:
         if _es_suyo(nombre, numero, texto):
             return archivo
+        # Si la página muestra la cédula de otra persona, el nombre del
+        # archivo no la vuelve suya.
+        if _de_otra_persona(numero, texto):
+            continue
         base = _norm(archivo.rsplit("/", 1)[-1].rsplit(".", 1)[0])
         if _ARCHIVO_CEDULA_RE.search(base) and _nombre_en_archivo(nombre, base):
             return archivo
@@ -243,7 +261,7 @@ def fecha_expedicion_en(texto_norm: str) -> date | None:
 
 
 def leer_fecha_expedicion(
-    pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False
+    pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False, con_ia: bool = True
 ) -> LecturaFecha:
     """La fecha de expedición de la cédula de esa persona, leída de la copia
     que viene en la oferta (los proponentes la escanean por ambos lados). La
@@ -279,6 +297,9 @@ def leer_fecha_expedicion(
             return lectura
         dudosa = lectura if lectura.fecha else dudosa
 
+    if not con_ia:
+        return dudosa
+
     from motor.llm.vision import leer_cedula_detallado
 
     # Solo las páginas que parecen cédula, no las primeras del archivo: en un
@@ -294,6 +315,23 @@ def leer_fecha_expedicion(
     # que el OCR había leído a medias. Una sola lectura se sugiere, no se usa.
     segura = de_la_ia.confirmada or de_la_ia.fecha == dudosa.fecha
     return LecturaFecha(de_la_ia.fecha, segura, "ia")
+
+
+# Al evaluar un proceso completo la IA puede tardar mucho en una GPU pequeña:
+# con 0 la evaluación usa solo el lector de texto y la IA queda para cuando se
+# pide consultar. En producción (GPU de 24 GB) conviene 1.
+VISION_EN_EVALUACION = __import__("os").environ.get("VISION_EN_EVALUACION", "0") == "1"
+
+
+@memo_por_pdfs
+def fecha_de_la_persona(pdfs: dict[str, bytes], nombre: str, cedula: str | None) -> date | None:
+    """La fecha de expedición de su cédula, confiable, para dejarla en la
+    ficha de la persona al evaluar (una sola vez por persona y oferta)."""
+    try:
+        lectura = leer_fecha_expedicion(pdfs, nombre, cedula, con_ia=VISION_EN_EVALUACION)
+    except Exception:  # noqa: BLE001
+        return None
+    return lectura.fecha if lectura.confiable else None
 
 
 def fecha_expedicion_cedula(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal: bool = False) -> date | None:
@@ -343,7 +381,7 @@ def evaluar_identidad(pdfs: dict[str, bytes], proceso: ProcesoDocumentoBase, tip
             )
         detalle.append(PersonaAntecedente(
             nombre=nombre,
-            documento=cedula or None,
+            documento=_digitos(cedula or "") or None,
             tipo="natural",
             rol=rol if indice == 0 else ("suplente" if indice == 1 else "integrante"),
             estado="cumple" if encontrado else "falta",

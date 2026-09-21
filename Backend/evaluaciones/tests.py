@@ -3041,3 +3041,32 @@ class EliminarProcesoConCertificadosTests(BaseHistorico):
         self.assertFalse(DocumentoAportado.objects.filter(pk=doc.pk).exists())
         self.assertFalse(PersonaVerificada.objects.filter(pk=persona["id"]).exists())
         self.assertFalse(doc.archivo.storage.exists(archivo))  # el PDF tampoco queda en disco
+
+
+class CedulaDeOtraPersonaTests(TestCase):
+    """Caso real (P-06): la carpeta «DOC LEGAL/MEGB» traía la cédula de la
+    suplente, y por decir «LEGAL» se le asignaba a la representante legal."""
+
+    REVERSO_DE_MARTA = (
+        "REPUBLICA DE COLOMBIA CEDULA DE CIUDADANIA FECHA DE NACIMIENTO 09-SEP-1960 MEDELLIN (ANTIOQUIA) LUGAR DE "
+        "NACIMIENTO 1.60 A+ F ESTATURA G.S. RH SEXO 01-MAR-1979 MEDELLIN FECHA Y LUGAR DE EXPEDICION INDICE DERECHO "
+        "REGISTRADOR NACIONAL A-0100100-00157053-F-0043001767-20090520 0011606230A"
+    )
+
+    def test_no_se_asigna_por_el_nombre_del_archivo(self):
+        from motor.evaluacion import identidad
+
+        with mock.patch.object(identidad, "paginas_cedula",
+                               return_value=[("DOC LEGAL/MEGB/Doc Legal MEGB.pdf", self.REVERSO_DE_MARTA)]), \
+             mock.patch.object(identidad, "texto_ocr_reforzado", return_value=""):
+            adriana = identidad.cedula_de({"x": b""}, "ADRIANA MARCELA ROJAS PRIETO", "52371321", principal=True)
+            marta = identidad.cedula_de({"x": b""}, "MARTA EUGENIA GARCIA BETANCUR", "43001767")
+        self.assertIsNone(adriana)
+        self.assertEqual(marta, "DOC LEGAL/MEGB/Doc Legal MEGB.pdf")
+
+    def test_la_cedula_de_otro_se_reconoce_por_el_numero(self):
+        from motor.evaluacion.identidad import _de_otra_persona
+
+        self.assertTrue(_de_otra_persona("52371321", self.REVERSO_DE_MARTA))
+        self.assertFalse(_de_otra_persona("43001767", self.REVERSO_DE_MARTA))
+        self.assertFalse(_de_otra_persona("52371321", "REPUBLICA DE COLOMBIA FECHA Y LUGAR DE EXPEDICION"))  # sin números
