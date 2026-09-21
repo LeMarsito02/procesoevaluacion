@@ -2814,6 +2814,13 @@ class FechaSoloSeGuardaSiSirveTests(BaseHistorico):
     """Una fecha que la página rechazó no puede quedarse pegada a la persona:
     todas las consultas siguientes fallarían por el mismo dato malo."""
 
+    def setUp(self):
+        super().setUp()
+        # Una pausa por falla de la página no puede pasar de una prueba a otra.
+        from django.core.cache import cache
+
+        cache.clear()
+
     def persona(self):
         return self.abogado.post(
             f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/personas",
@@ -2845,12 +2852,6 @@ class FechaSoloSeGuardaSiSirveTests(BaseHistorico):
 class FallasDeLaPaginaNoSonDeLosDatosTests(FechaSoloSeGuardaSiSirveTests):
     """Si la página de la Policía falla por su cuenta, no se toca la fecha
     guardada y no se le vuelve a insistir por un rato."""
-
-    def setUp(self):
-        super().setUp()
-        from django.core.cache import cache
-
-        cache.clear()
 
     def fecha_guardada(self, persona_id):
         from evaluaciones.models import PersonaVerificada
