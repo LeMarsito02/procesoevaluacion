@@ -120,9 +120,9 @@ def _estados(personas: list[PersonaVerificada], requisitos: list[dict], datos: d
         lista = (datos.get(req["numero"]) or {}).get("personas_antecedente") or []
         if not lista:
             continue
-        por_clave = {servicios.clave_persona(x["nombre"], x.get("documento")): x for x in lista}
+        por_clave = {servicios.clave_persona(x["nombre"], x.get("documento"), x.get("tipo")): x for x in lista}
         for persona in personas:
-            x = por_clave.get(servicios.clave_persona(persona.nombre, persona.documento))
+            x = por_clave.get(servicios.clave_persona(persona.nombre, persona.documento, persona.tipo))
             estado = {"estado": x["estado"], "archivo": x.get("archivo")} if x else {"estado": "no_requerido", "archivo": None}
             salida.setdefault(str(persona.id), {})[req["numero"]] = estado
     return salida
@@ -358,9 +358,9 @@ def _ya_cumple(evaluacion, proponente, requisito: int, persona) -> bool:
     resultado = Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente, requisito=requisito).first()
     if resultado is None:
         return False
-    clave = servicios.clave_persona(persona.nombre, persona.documento)
+    clave = servicios.clave_persona(persona.nombre, persona.documento, persona.tipo)
     return any(
-        servicios.clave_persona(x["nombre"], x.get("documento")) == clave and x.get("estado") == "cumple"
+        servicios.clave_persona(x["nombre"], x.get("documento"), x.get("tipo")) == clave and x.get("estado") == "cumple"
         for x in (resultado.datos.get("personas_antecedente") or [])
     )
 
@@ -488,6 +488,13 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
         raise HttpError(503, enfriando)
 
     fecha_usada = None
+    # En un proceso de demostración las personas son inventadas: nada de
+    # consultarlas en las páginas oficiales.
+    if evaluacion.proceso.codigo.upper().startswith("DEMO-"):
+        from motor.consultas.linea import simular
+
+        certificado = simular(fuente, persona.nombre if persona else None, persona.documento if persona else None, datos.matricula)
+        return _guardar_consultado(request, evaluacion, proponente, datos, persona, fuente, certificado, None, usuario)
     try:
         if fuente == "rnmc":
             es_empresa = persona.tipo == "juridica"
@@ -528,6 +535,12 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
             "Vuelva a intentarlo en unos minutos; si sigue igual, consúltelo usted y súbalo con el botón «Subir».",
         ) from exc
 
+    return _guardar_consultado(request, evaluacion, proponente, datos, persona, fuente, certificado, fecha_usada, usuario)
+
+
+def _guardar_consultado(request, evaluacion, proponente, datos, persona, fuente, certificado, fecha_usada, usuario):
+    """Guarda el certificado consultado (o simulado, en una demostración) como
+    documento aportado y vuelve a evaluar al proponente."""
     # Si la página no dice claramente que la persona está sin novedades, el
     # certificado igual se guarda: lo revisa el evaluador, nunca se aprueba solo.
     # Si la página no dijo nada concluyente, no se adjunta un PDF que no
@@ -540,6 +553,8 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
         )
     de_quien = f" a nombre de {certificado.nombre}" if certificado.nombre else ""
     nota = f"Consultado en línea por MiEvaluador en la página oficial ({'RNMC' if fuente == 'rnmc' else 'COPNIA'}){de_quien}."
+    if evaluacion.proceso.codigo.upper().startswith("DEMO-"):
+        nota = f"Consulta simulada de la demostración ({'RNMC' if fuente == 'rnmc' else 'COPNIA'}){de_quien}: sin validez."
     if certificado.sin_novedades is True:
         nota += (
             " La matrícula está vigente y sin antecedentes disciplinarios."
@@ -578,7 +593,6 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
         )
     _reevaluar(evaluacion, proponente, usuario)
     return 201, _aportado_out(doc)
-
 
 @router.get("/{evaluacion_id}/pliego")
 def ver_pliego(request: HttpRequest, evaluacion_id: UUID) -> FileResponse:

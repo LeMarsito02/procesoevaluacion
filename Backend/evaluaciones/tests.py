@@ -3194,3 +3194,46 @@ class RequisitosRetiradosNoCuentanTests(BaseEvaluaciones):
         evaluacion.estado = EstadoEvaluacion.APROBADA
         evaluacion.save(update_fields=["estado"])
         self.assertEqual(servicios.depurar_requisitos_retirados(evaluacion), 0)
+
+
+class CedulaConCerosDeLaCamaraTests(TestCase):
+    """La Cámara de Comercio escribe la cédula del suplente con ceros a la
+    izquierda ("C.C. 000000009990000006"): sigue siendo la misma cédula."""
+
+    def test_los_ceros_no_impiden_reconocer_la_cedula(self):
+        from motor.evaluacion.identidad import SUPLENTE_RE, _digitos, _es_suyo
+
+        certificado = "SUPLENTE DEL GERENTE CASTRO MEJIA PAULA ANDREA C.C. 000000009990000006"
+        m = SUPLENTE_RE.search(certificado)
+        self.assertEqual(_digitos(m.group(2)), "9990000006")
+        cedula = "REPUBLICA DE COLOMBIA IDENTIFICACION PERSONAL CEDULA DE CIUDADANIA NUMERO 9.990.000.006 CASTRO MEJIA PAULA ANDREA"
+        self.assertTrue(_es_suyo("CASTRO MEJIA PAULA ANDREA", _digitos(m.group(2)), cedula))
+
+
+class PersonasConCedulasConsecutivasTests(TestCase):
+    """Dos personas con cédulas de 10 dígitos consecutivas (hermanos que la
+    sacaron el mismo día) no pueden fundirse en una: los antecedentes de una
+    taparían los de la otra."""
+
+    def test_la_cedula_completa_distingue_a_las_personas(self):
+        from evaluaciones.servicios import clave_persona
+
+        self.assertNotEqual(clave_persona("LAURA MENDEZ", "1020304050", "natural"), clave_persona("JORGE PAREDES", "1020304051", "natural"))
+        self.assertEqual(clave_persona("LAURA MENDEZ", "1.020.304.050", "natural"), clave_persona("LAURA MENDEZ", "1020304050", "natural"))
+        # El NIT con o sin dígito de verificación es la misma empresa.
+        self.assertEqual(clave_persona("ACME SAS", "900123456-7", "juridica"), clave_persona("ACME SAS", "900123456", "juridica"))
+
+
+class CedulasConsecutivasNoSeConfundenTests(TestCase):
+    def test_la_cedula_del_hermano_no_es_suya(self):
+        from motor.evaluacion.identidad import _es_suyo
+
+        reverso_de_jorge = "21-JUN-2005 BOGOTA FECHA Y LUGAR DE EXPEDICION INDICE DERECHO A-0000000-00000000-M-1999000002-20050621"
+        self.assertFalse(_es_suyo("LAURA CAMILA MENDEZ RIOS", "1999000001", reverso_de_jorge))
+        self.assertTrue(_es_suyo("JORGE ANDRES PAREDES LUNA", "1999000002", reverso_de_jorge))
+
+    def test_un_digito_mal_leido_con_su_nombre_si_es_suya(self):
+        from motor.evaluacion.identidad import _es_suyo
+
+        anverso_ocr = "CEDULA DE CIUDADANIA NUMERO 1.999.000.007 MENDEZ RIOS LAURA CAMILA"  # el OCR leyó 7 por 1
+        self.assertTrue(_es_suyo("LAURA CAMILA MENDEZ RIOS", "1999000001", anverso_ocr))

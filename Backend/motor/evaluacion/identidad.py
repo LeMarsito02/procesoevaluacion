@@ -57,7 +57,9 @@ SUPLENTE_RE = re.compile(
 
 
 def _digitos(texto: str) -> str:
-    return re.sub(r"\D", "", texto)
+    """Solo los dígitos, sin ceros a la izquierda: la Cámara de Comercio
+    escribe las cédulas rellenas con ceros ("C.C. 000000079939017")."""
+    return re.sub(r"\D", "", texto).lstrip("0")
 
 
 @memo_por_pdfs
@@ -89,7 +91,7 @@ def paginas_cedula_numeradas(pdfs: dict[str, bytes]) -> list[tuple[str, int, str
     return paginas
 
 
-def _numero_en(numero: str, texto_norm: str) -> bool:
+def _numero_en(numero: str, texto_norm: str, exacto: bool = False) -> bool:
     """El número de cédula está en el texto, con a lo sumo un dígito mal
     leído (el OCR confunde 1/7, 0/8, 5/6…)."""
     if len(numero) < 6:
@@ -98,7 +100,7 @@ def _numero_en(numero: str, texto_norm: str) -> bool:
         d = _digitos(candidato)
         if d == numero:
             return True
-        if len(d) == len(numero) and sum(a != b for a, b in zip(d, numero)) <= 1:
+        if not exacto and len(d) == len(numero) and sum(a != b for a, b in zip(d, numero)) <= 1:
             return True
     return False
 
@@ -135,10 +137,17 @@ def _nombre_completo_en(nombre: str, texto: str) -> bool:
 
 
 def _es_suyo(nombre: str, numero: str, texto: str) -> bool:
-    """La página es de esta persona: trae su número, o su nombre completo y
-    ninguna otra cédula legible."""
-    if numero and _numero_en(numero, texto):
+    """La página es de esta persona: trae su número exacto, o su nombre
+    completo y ninguna otra cédula legible.
+
+    Un número con un dígito distinto puede ser un error del OCR… o la cédula
+    de un hermano: dos cédulas expedidas el mismo día son consecutivas
+    (1.020.304.050 y 1.020.304.051). Por eso con un dígito distinto se exige
+    además el nombre completo."""
+    if numero and _numero_en(numero, texto, exacto=True):
         return True
+    if numero and _numero_en(numero, texto):
+        return _nombre_completo_en(nombre, texto)
     if numero and _de_otra_persona(numero, texto):
         return False
     return _nombre_completo_en(nombre, texto)

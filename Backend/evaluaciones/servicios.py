@@ -158,11 +158,17 @@ def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultado
         sincronizar_personas(evaluacion, proponente)
 
 
-def clave_persona(nombre: str, documento: str | None) -> str:
-    """Una misma persona se reconoce por su documento; sin él, por su nombre."""
-    digitos = "".join(c for c in (documento or "") if c.isdigit())
+def clave_persona(nombre: str, documento: str | None, tipo: str | None = None) -> str:
+    """Una misma persona se reconoce por su documento; sin él, por su nombre.
+
+    Del NIT de una empresa cuentan los 9 dígitos (el décimo es el de
+    verificación). De una cédula cuentan TODOS: las cédulas nuevas tienen 10
+    dígitos y dos personas con cédulas consecutivas (1.020.304.050 y
+    1.020.304.051) comparten los 9 primeros; cortarlas las fundía en una sola
+    y los antecedentes de una tapaban los de la otra."""
+    digitos = "".join(c for c in (documento or "") if c.isdigit()).lstrip("0")
     if len(digitos) >= 5:
-        return digitos[:9] if len(digitos) >= 9 else digitos
+        return digitos[:9] if tipo == "juridica" and len(digitos) >= 9 else digitos
     return " ".join(sorted(nombre.upper().split()))
 
 
@@ -178,13 +184,13 @@ def sincronizar_personas(evaluacion: Evaluacion, proponente: Proponente) -> None
     detectadas: dict[str, dict] = {}
     for datos in Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente).values_list("datos", flat=True):
         for per in datos.get("personas_antecedente") or []:
-            clave = clave_persona(per["nombre"], per.get("documento"))
+            clave = clave_persona(per["nombre"], per.get("documento"), per.get("tipo"))
             # Entre varios resultados de la misma persona gana el que trae la
             # fecha de expedición de su documento.
             if clave not in detectadas or (per.get("fecha_expedicion_documento") and not detectadas[clave].get("fecha_expedicion_documento")):
                 detectadas[clave] = per
     existentes = {
-        clave_persona(x.nombre, x.documento): x for x in PersonaVerificada.objects.filter(evaluacion=evaluacion, proponente=proponente)
+        clave_persona(x.nombre, x.documento, x.tipo): x for x in PersonaVerificada.objects.filter(evaluacion=evaluacion, proponente=proponente)
     }
     roles = set(RolPersona.values)
     for clave, per in detectadas.items():

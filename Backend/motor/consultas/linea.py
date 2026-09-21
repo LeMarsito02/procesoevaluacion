@@ -222,3 +222,48 @@ def consultar_copnia(identificacion: str, por: str = "matricula") -> Certificado
         nombre=de_quien.group(1).strip() if de_quien else None,
         documento=re.sub(r"\D", "", de_quien.group(2)) if de_quien else None,
     )
+
+
+def simular(fuente: str, nombre: str | None, documento: str | None, matricula: str | None = None) -> CertificadoEnLinea:
+    """Certificado simulado para los procesos de demostración: sus personas
+    son inventadas y consultarlas en las páginas oficiales sería justo una
+    consulta innecesaria al Estado. Lleva la marca de que no tiene validez."""
+    from motor.procesamiento.pdf_utils import extraer_texto
+
+    hoy = date.today()
+    if fuente == "rnmc":
+        titulo = "Sistema Registro Nacional de Medidas Correctivas RNMC"
+        cuerpo = (
+            f"<p>La Policía Nacional de Colombia informa:</p><p>Que a la fecha, {hoy:%d/%m/%Y} el ciudadano con "
+            f"Cédula de Ciudadanía Nº. {documento} y Nombre: {nombre}.</p>"
+            "<p><b>NO TIENE MEDIDAS CORRECTIVAS PENDIENTES POR CUMPLIR.</b></p>"
+        )
+    else:
+        titulo = "Certificado de vigencia y antecedentes disciplinarios"
+        cuerpo = (
+            f"<p>COPNIA · EL DIRECTOR GENERAL CERTIFICA:</p><p>1. Que {nombre or 'EL PROFESIONAL'}, identificado(a) con "
+            f"CEDULA DE CIUDADANIA {documento or '—'}, se encuentra inscrito(a) en el Registro Profesional Nacional con "
+            f"MATRICULA PROFESIONAL {matricula or '—'}.</p><p>3. Que el(la) referido(a) MATRICULA PROFESIONAL se encuentra VIGENTE</p>"
+            "<p>4. Que el profesional no tiene antecedentes disciplinarios ético-profesionales.</p>"
+            f"<p>5. Que la presente certificación se expide en Bogotá, D.C., a los ({hoy.day}) días del mes de "
+            f"{['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][hoy.month - 1]} "
+            f"del año dos mil veintiseis ({hoy.year}).</p>"
+        )
+    html = (
+        "<html><head><meta charset='utf-8'></head><body style='font-family:Arial;font-size:11pt'>"
+        f"<h2>{titulo}</h2>{cuerpo}<p style='color:#b00020;border-top:1px solid #b00020;margin-top:40px'>"
+        "CONSULTA SIMULADA PARA UNA DEMOSTRACIÓN · DATOS FICTICIOS · SIN VALIDEZ</p></body></html>"
+    )
+    with _navegador() as play:
+        navegador = play.chromium.launch()
+        try:
+            pagina = navegador.new_page()
+            pagina.set_content(html)
+            pdf = pagina.pdf(format="Letter")
+        finally:
+            navegador.close()
+    return CertificadoEnLinea(
+        fuente=fuente, texto=extraer_texto(pdf, max_paginas=1), pdf=pdf,
+        nombre_archivo=f"{'RNMC' if fuente == 'rnmc' else 'COPNIA'} {documento or matricula} (simulado).pdf",
+        fecha_expedicion=hoy, sin_novedades=True, nombre=nombre, documento=documento,
+    )

@@ -71,10 +71,12 @@ function personasDe(lista: ResultadoRequisito[] | undefined): FilaPersona[] {
       // Un requisito puede traer a la persona con su cédula y otro sin ella:
       // es la misma si coincide el documento o, a falta de él, el nombre.
       const documento = (per.documento ?? '').replace(/\D/g, '')
-      let fila = filas.find(
-        (f) =>
-          (documento && (f.documento ?? '').replace(/\D/g, '') === documento) || normal(f.nombre) === normal(per.nombre),
-      )
+      let fila = filas.find((f) => {
+        const suyo = (f.documento ?? '').replace(/\D/g, '').replace(/^0+/, '')
+        // Con los dos documentos, manda el documento (dos personas pueden llamarse igual).
+        if (documento && suyo) return suyo === documento.replace(/^0+/, '')
+        return normal(f.nombre) === normal(per.nombre)
+      })
       if (!fila) {
         fila = { clave: documento || normal(per.nombre), nombre: per.nombre, documento: per.documento, tipo: per.tipo, rol: per.rol, porRequisito: new Map() }
         filas.push(fila)
