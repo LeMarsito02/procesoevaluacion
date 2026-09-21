@@ -216,23 +216,13 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
       {error && <p className="small" style={{ color: 'var(--bad)' }}>{error}</p>}
 
       {ordenadas.length > 0 && (
-        <div className="tabla-wrap" style={{ marginTop: 8 }}>
-          <table className="tabla tabla-antecedentes">
-            <thead>
-              <tr>
-                <th>Persona</th>
-                {datos.requisitos.map((r) => (
-                  <th key={r.numero} title={r.titulo}>
-                    {r.corto}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
+        // Una ficha por persona: sus datos y, debajo, una casilla por
+        // antecedente que se acomoda al ancho (sin desplazarse a la derecha).
+        <div className="antecedentes-personas">
               {ordenadas.map((per) => (
                 <Fragment key={per.id}>
-                <tr>
-                  <td style={{ paddingLeft: per.de_id ? 26 : undefined }}>
+                <div className="persona-ant" data-representante={!!per.de_id}>
+                  <div className="persona-ant-datos">
                     <strong className="small">{per.nombre}</strong>
                     {per.detectada && <span className="tag" style={{ marginLeft: 6 }}>de la oferta</span>}
                     <div className="small muted">
@@ -318,11 +308,12 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                         )}
                       </div>
                     )}
-                  </td>
+                  </div>
+                  <div className="persona-ant-reqs">
                   {datos.requisitos.map((r) => {
                     const docs = aportado(per.id, r.numero)
                     return (
-                      <td
+                      <div
                         key={r.numero}
                         className={`celda-antecedente${esElFoco(per, r.numero) ? ' celda-foco' : ''}`}
                         ref={
@@ -331,6 +322,9 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                             : undefined
                         }
                       >
+                        <div className="celda-antecedente-titulo" title={r.titulo}>
+                          {r.corto}
+                        </div>
                         {docs.map((d) => (
                           <div key={d.id} className="aportado">
                             <button
@@ -365,7 +359,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                             disabled={!estado(per.id, r.numero)?.archivo || !onVerDocumento}
                             onClick={() => onVerDocumento?.(estado(per.id, r.numero)!.archivo!, r.numero)}
                           >
-                            <span className="dot" /> Ver certificado
+                            <Icono nombre="ojo" tam={12} /> Cumple
                           </button>
                         )}
                         {docs.length === 0 && estado(per.id, r.numero)?.estado === 'no_requerido' && (
@@ -425,13 +419,13 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                               )}
                             </div>
                           ))}
-                      </td>
+                      </div>
                     )
                   })}
-                </tr>
+                  </div>
+                </div>
                 {cedulaDe?.persona.id === per.id && (
-                  <tr>
-                    <td colSpan={datos.requisitos.length + 1}>
+                  <div className="persona-ant-cedula">
                       <div className="formulario-inline" style={{ margin: 0 }}>
                         <div className="acciones" style={{ justifyContent: 'space-between' }}>
                           <strong className="small">
@@ -478,13 +472,10 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                           </div>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                  </div>
                 )}
                 </Fragment>
               ))}
-            </tbody>
-          </table>
         </div>
       )}
 

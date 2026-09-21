@@ -511,8 +511,19 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 
 /* ---------- Antecedentes, justificación y expediente ---------- */
 .antecedentes { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
-.tabla-antecedentes th, .tabla-antecedentes td { padding: 8px 10px; font-size: 13px; }
-.celda-antecedente { text-align: center; white-space: nowrap; }
+/* Antecedentes por persona: fichas que caben en el panel, sin scroll lateral. */
+.antecedentes-personas { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.persona-ant { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.persona-ant[data-representante='true'] { margin-left: 18px; }
+.persona-ant-datos { margin-bottom: 10px; }
+.persona-ant-reqs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.celda-antecedente {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  padding: 8px 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); min-width: 0;
+}
+.celda-antecedente-titulo { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.01em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.celda-antecedente .pill { font-size: 11.5px; padding: 3px 8px; white-space: normal; line-height: 1.2; max-width: 100%; }
+.persona-ant-cedula { margin-left: 0; }
 .aportado { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); }
 .aportado .enlace { font-size: 12px; }
 .formulario-inline { margin-top: 10px; padding: 12px; border: 1px solid var(--brand); border-radius: 12px; background: var(--brand-soft); display: flex; flex-direction: column; gap: 10px; }
