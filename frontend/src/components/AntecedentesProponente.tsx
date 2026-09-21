@@ -16,7 +16,7 @@ import {
   type PersonaVerificada,
   type RolPersona,
 } from '../historico'
-import { mensajeDe } from '../http'
+import { ErrorApi, mensajeDe } from '../http'
 import Icono from './Icono'
 
 const AYUDA_TIPO: Record<string, string> = {
@@ -119,7 +119,9 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
       const mensaje = mensajeDe(e)
       // La página oficial necesita ese dato: se pide aquí mismo, con la
       // cédula a la vista si vino en la oferta.
-      if (/fecha de expedici/i.test(mensaje)) {
+      // Solo un 400 es un problema de los datos; un 503 es la página oficial
+      // que falló, y ahí no hay que pedir ni cambiar nada.
+      if (e instanceof ErrorApi && e.status === 400 && /fecha de expedici/i.test(mensaje)) {
         setPideFecha({ persona, requisito, motivo: mensaje, hayCedula: !/no se encontró la copia de su cédula/i.test(mensaje) })
         setError(null)
       } else {

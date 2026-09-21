@@ -12,6 +12,7 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from ninja import File, Form, Schema
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
@@ -338,6 +339,33 @@ class ConsultaIn(Schema):
 FUENTES_EN_LINEA = {"juridica.rnmc": "rnmc", "juridica.copnia_antecedentes": "copnia", "juridica.aval_ingeniero": "copnia"}
 
 
+# Cuánto se deja descansar una página oficial que falló antes de volver a
+# consultarla.
+PAUSA_TRAS_FALLA = 5 * 60
+
+
+def _pausar_pagina(fuente: str) -> None:
+    from django.core.cache import cache
+
+    cache.set(f"consulta_en_pausa_{fuente}", timezone.now().timestamp() + PAUSA_TRAS_FALLA, PAUSA_TRAS_FALLA)
+
+
+def _pagina_en_pausa(fuente: str) -> str | None:
+    """Mensaje si la página falló hace poco (y por eso no se la consulta)."""
+    from django.core.cache import cache
+
+    hasta = cache.get(f"consulta_en_pausa_{fuente}")
+    if not hasta:
+        return None
+    minutos = max(1, round((hasta - timezone.now().timestamp()) / 60))
+    donde = "la Policía (RNMC)" if fuente == "rnmc" else "el COPNIA"
+    return (
+        f"La página de {donde} falló hace un momento. Para no insistirle a una plataforma que no está respondiendo, "
+        f"el programa espera unos {minutos} min antes de volver a consultarla. Mientras tanto puede subir el "
+        "certificado a mano."
+    )
+
+
 def _reevaluar(evaluacion, proponente, usuario) -> None:
     """Pone al proponente en la fila para que el motor lea el certificado que
     se acaba de adjuntar: así el requisito deja de estar pendiente solo, sin
@@ -395,7 +423,13 @@ def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date 
 def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, datos: ConsultaIn):
     """Consulta el certificado en la página oficial y lo adjunta al expediente,
     igual que si el evaluador lo hubiera descargado y subido."""
-    from motor.consultas.linea import ConsultaError, consultar_copnia, consultar_rnmc
+    from motor.consultas.linea import (
+        ConsultaError,
+        FechaRechazada,
+        PaginaNoDisponible,
+        consultar_copnia,
+        consultar_rnmc,
+    )
 
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
@@ -410,6 +444,12 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
     persona = get_object_or_404(PersonaVerificada, pk=datos.persona_id, evaluacion=evaluacion, proponente=proponente) if datos.persona_id else None
     if persona is None and not (fuente == "copnia" and datos.matricula):
         raise HttpError(400, "Indique de quién es el certificado.")
+
+    # Si la página falló hace un momento, no se le insiste: sería mandarle
+    # solicitudes a una plataforma del Estado que no está respondiendo.
+    enfriando = _pagina_en_pausa(fuente)
+    if enfriando:
+        raise HttpError(503, enfriando)
 
     fecha_usada = None
     try:
@@ -427,18 +467,24 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
             raise HttpError(400, "El COPNIA certifica personas naturales, no empresas.")
         else:
             certificado = consultar_copnia(persona.documento, por="cedula")
+    except FechaRechazada as exc:
+        # Solo cuando la página dice explícitamente que la fecha no es la de
+        # esa cédula se descarta la guardada, para volver a pedirla.
+        PersonaVerificada.objects.filter(pk=persona.pk).update(fecha_expedicion_documento=None)
+        raise HttpError(400, str(exc)) from exc
+    except PaginaNoDisponible as exc:
+        # Falla de la página, no de los datos: nada se borra y se pausan las
+        # consultas a esa página un rato.
+        _pausar_pagina(fuente)
+        raise HttpError(503, str(exc)) from exc
     except ConsultaError as exc:
-        # La página rechazó la fecha: la que estuviera guardada no sirve y se
-        # borra, para que la próxima vez se vuelva a pedir en vez de repetir
-        # la consulta con un dato malo.
-        if "fecha de expedicion" in str(exc).lower() or "fecha de expedición" in str(exc).lower():
-            PersonaVerificada.objects.filter(pk=persona.pk).update(fecha_expedicion_documento=None)
         # Algo que la persona puede resolver (falta un dato, no existe el registro).
         raise HttpError(400, str(exc)) from exc
     except HttpError:
         raise
     except Exception as exc:  # noqa: BLE001
         log.exception("Falló la consulta en línea de %s", fuente)
+        _pausar_pagina(fuente)
         donde = "la Policía (RNMC)" if fuente == "rnmc" else "el COPNIA"
         raise HttpError(
             502,

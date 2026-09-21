@@ -2830,13 +2830,59 @@ class FechaSoloSeGuardaSiSirveTests(BaseHistorico):
         return self.abogado.post(f"/api/evaluaciones/{self.ev['id']}/proponentes/{self.p1}/consultar", datos)
 
     def test_la_fecha_rechazada_por_la_pagina_se_borra(self):
-        from motor.consultas.linea import ConsultaError
+        from motor.consultas.linea import FechaRechazada
         from evaluaciones.models import PersonaVerificada
 
         persona = self.persona()
         with mock.patch("motor.consultas.linea.consultar_rnmc",
-                        side_effect=ConsultaError("La página de la Policía responde: «La fecha de expedición de la cedula "
+                        side_effect=FechaRechazada("La página de la Policía responde: «La fecha de expedición de la cedula "
                                                   "de ciudadania no es correcta, por favor verifique.»")):
             r = self.consultar(persona["id"], "1999-09-09")
         self.assertEqual(r.status_code, 400)
         self.assertIsNone(PersonaVerificada.objects.get(pk=persona["id"]).fecha_expedicion_documento)
+
+
+class FallasDeLaPaginaNoSonDeLosDatosTests(FechaSoloSeGuardaSiSirveTests):
+    """Si la página de la Policía falla por su cuenta, no se toca la fecha
+    guardada y no se le vuelve a insistir por un rato."""
+
+    def setUp(self):
+        super().setUp()
+        from django.core.cache import cache
+
+        cache.clear()
+
+    def fecha_guardada(self, persona_id):
+        from evaluaciones.models import PersonaVerificada
+
+        return PersonaVerificada.objects.get(pk=persona_id).fecha_expedicion_documento
+
+    def test_un_error_de_la_pagina_no_borra_la_fecha_y_pausa_las_consultas(self):
+        from motor.consultas.linea import PaginaNoDisponible
+
+        persona = self.persona()
+        falla = PaginaNoDisponible("La página de la Policía respondió con un error propio: «Servicio no disponible».")
+        with mock.patch("motor.consultas.linea.consultar_rnmc", side_effect=falla) as rnmc:
+            primera = self.consultar(persona["id"])
+            segunda = self.consultar(persona["id"])
+        self.assertEqual(primera.status_code, 503)
+        self.assertIsNotNone(self.fecha_guardada(persona["id"]))  # la fecha buena sigue ahí
+        self.assertEqual(segunda.status_code, 503)
+        self.assertIn("no insistirle", segunda.json()["detail"])
+        self.assertEqual(rnmc.call_count, 1)  # la segunda no llegó a la Policía
+
+    def test_una_falla_inesperada_tampoco_borra_la_fecha(self):
+        persona = self.persona()
+        with mock.patch("motor.consultas.linea.consultar_rnmc", side_effect=TimeoutError("chromium")):
+            r = self.consultar(persona["id"])
+        self.assertEqual(r.status_code, 502)
+        self.assertIsNotNone(self.fecha_guardada(persona["id"]))
+
+    def test_el_aviso_de_la_pagina_se_clasifica(self):
+        from motor.consultas import linea
+
+        fecha_mala = linea._AVISO_RNMC_RE.search(linea._norm(
+            "× Error La fecha de expedición de la Cedula de Ciudadania no es correcta, por favor verifique. Aceptar"))
+        otro = linea._AVISO_RNMC_RE.search(linea._norm("× Error El servicio no está disponible en este momento. Aceptar"))
+        self.assertIn("FECHA DE EXPEDICI", fecha_mala.group(1))
+        self.assertNotIn("FECHA DE EXPEDICI", otro.group(1))

@@ -38,6 +38,16 @@ class ConsultaError(RuntimeError):
     """La página no respondió o respondió algo que no se puede interpretar."""
 
 
+class FechaRechazada(ConsultaError):
+    """La página dijo explícitamente que la fecha de expedición no corresponde
+    a esa cédula. Es el único caso en que la fecha guardada se descarta."""
+
+
+class PaginaNoDisponible(ConsultaError):
+    """La página falló por su cuenta (caída, lenta, error propio): no es culpa
+    de los datos de la persona, así que no se toca nada y no se insiste."""
+
+
 @dataclass
 class CertificadoEnLinea:
     """Lo que devolvió la página oficial."""
@@ -103,7 +113,7 @@ def consultar_rnmc(numero: str, tipo: str = "cedula", fecha_expedicion: date | N
                     timeout=ESPERA * 1000,
                 )
             except Exception as exc:  # noqa: BLE001
-                raise ConsultaError(
+                raise PaginaNoDisponible(
                     f"La página de la Policía (RNMC) no respondió en {int(ESPERA)} segundos. Suele pasar cuando su "
                     "servicio está caído: vuelve a intentarlo más tarde o sube el certificado a mano."
                 ) from exc
@@ -118,7 +128,14 @@ def consultar_rnmc(numero: str, tipo: str = "cedula", fecha_expedicion: date | N
     # verifique. · Aceptar". Ese mensaje es el que necesita ver la persona.
     aviso = _AVISO_RNMC_RE.search(plano)
     if aviso and "NO TIENE MEDIDAS CORRECTIVAS PENDIENTES" not in plano:
-        raise ConsultaError(f"La página de la Policía responde: «{aviso.group(1).strip().capitalize()}»")
+        mensaje = aviso.group(1).strip()
+        if "FECHA DE EXPEDICION" in mensaje or "FECHA DE EXPEDICIÓN" in mensaje:
+            raise FechaRechazada(f"La página de la Policía responde: «{mensaje.capitalize()}»")
+        # Cualquier otro aviso es un problema de la página, no de los datos.
+        raise PaginaNoDisponible(
+            f"La página de la Policía respondió con un error propio: «{mensaje.capitalize()}». No es un problema de "
+            "los datos de la persona: vuelve a intentarlo en unos minutos o sube el certificado a mano."
+        )
     if "NO SE ENCONTR" in plano or "NO EXISTE" in plano:
         raise ConsultaError(
             f"La Policía no encontró el documento {numero} en el RNMC. Verifica el número de identificación de la persona."
@@ -127,7 +144,7 @@ def consultar_rnmc(numero: str, tipo: str = "cedula", fecha_expedicion: date | N
         sin_novedades: bool | None = True
     elif "NO COINCIDE" in plano or "NO CORRESPONDE" in plano:
         cuando = fecha_expedicion.strftime("%d/%m/%Y") if fecha_expedicion else "—"
-        raise ConsultaError(
+        raise FechaRechazada(
             f"La Policía responde que la cédula {numero} y la fecha de expedición {cuando} no corresponden entre sí. "
             "Verifica la fecha en el reverso de la cédula (o el número del documento) y vuelve a intentarlo."
         )
