@@ -27,6 +27,7 @@ interface Props {
 /** Qué requisitos pide la entidad para este tipo de evaluación, cómo se verifica cada uno y con qué parámetros. */
 export default function EditorEvaluacion({ plantilla, catalogo, entidadId, esSuper, onPublicado, onError }: Props) {
   const [definicion, setDefinicion] = useState<DefinicionEvaluacion>(() => structuredClone(plantilla.definicion))
+  const [activando, setActivando] = useState<string | null>(null)
   const [nombre, setNombre] = useState(plantilla.activa?.nombre ?? `Evaluación ${plantilla.tipo_nombre.toLowerCase()}`)
   const [nota, setNota] = useState('')
   const [editando, setEditando] = useState<{ indice: number | null; req: RequisitoDefinicion } | null>(null)
@@ -121,13 +122,16 @@ export default function EditorEvaluacion({ plantilla, catalogo, entidadId, esSup
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
-                    onClick={() =>
+                    disabled={activando !== null}
+                    onClick={() => {
+                      setActivando(v.id)
                       activarVersionPlantilla(v.id)
                         .then(() => onPublicado(`Versión ${v.version} activada`))
                         .catch((e: unknown) => onError(mensajeDe(e)))
-                    }
+                        .finally(() => setActivando(null))
+                    }}
                   >
-                    Volver a esta
+                    {activando === v.id ? <span className="spinner oscuro" /> : null} Volver a esta
                   </button>
                 )}
               </div>

@@ -23,6 +23,7 @@ export default function Raiz() {
   const [usuario, setUsuario] = useState<Usuario | null>(null)
   const [cargando, setCargando] = useState(true)
   const [errorConexion, setErrorConexion] = useState(false)
+  const [saliendoEntidad, setSaliendoEntidad] = useState(false)
 
   const consultarSesion = useCallback(
     () =>
@@ -132,8 +133,19 @@ export default function Raiz() {
         <div className="aviso-soporte" role="status">
           <Icono nombre="escudo" tam={15} /> Acceso de soporte a <strong>{usuario.entidad?.nombre}</strong> · solo lectura · hasta{' '}
           {new Date(usuario.acceso_soporte_hasta).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => salirDeEntidad().then((u) => setUsuario(u))}>
-            Salir de la entidad
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={saliendoEntidad}
+            onClick={() => {
+              setSaliendoEntidad(true)
+              salirDeEntidad()
+                .then((u) => setUsuario(u))
+                .catch(() => window.location.reload())
+                .finally(() => setSaliendoEntidad(false))
+            }}
+          >
+            {saliendoEntidad ? <span className="spinner oscuro" /> : null} Salir de la entidad
           </button>
         </div>
       )}

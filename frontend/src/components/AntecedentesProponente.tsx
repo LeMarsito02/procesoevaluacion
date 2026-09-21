@@ -97,6 +97,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   // Cédula abierta debajo de la fila de la persona, para leer y guardar la fecha.
   const [cedulaDe, setCedulaDe] = useState<{ persona: PersonaVerificada; url: string; archivo: string | null; fecha: string } | null>(null)
   const [abriendoDe, setAbriendoDe] = useState<string | null>(null)
+  const [abriendoAportado, setAbriendoAportado] = useState<string | null>(null)
 
   async function abrirCedula(persona: PersonaVerificada) {
     if (cedulaDe?.persona.id === persona.id) return cerrarCedula()
@@ -161,16 +162,30 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
   }
 
 
+  // Algo se está guardando: los botones que escriben quedan quietos y con
+  // indicador hasta que responda el servidor.
+  const [trabajando, setTrabajando] = useState(false)
+
   async function accion(f: () => Promise<unknown>) {
+    setTrabajando(true)
     try {
       await f()
       recargar()
     } catch (e) {
       setError(mensajeDe(e))
+    } finally {
+      setTrabajando(false)
     }
   }
 
-  if (!datos) return error ? <p className="small" style={{ color: 'var(--bad)' }}>{error}</p> : null
+  if (!datos)
+    return error ? (
+      <p className="small" style={{ color: 'var(--bad)' }}>{error}</p>
+    ) : (
+      <p className="small muted" role="status" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span className="spinner oscuro" /> Cargando las personas y sus antecedentes…
+      </p>
+    )
   if (datos.requisitos.length === 0) return null
 
   // La subida puede venir de una casilla de la tabla o de la tarjeta del requisito.
@@ -234,6 +249,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                             className="input select-sm"
                             type="date"
                             defaultValue={per.fecha_expedicion_documento ?? ''}
+                            disabled={trabajando}
                             style={{ width: 150 }}
                             onChange={(e) =>
                               accion(async () => {
@@ -242,9 +258,13 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                               })
                             }
                           />
-                          <button type="button" className="enlace" onClick={() => setEditandoFecha(null)}>
-                            cancelar
-                          </button>
+                          {trabajando ? (
+                            <span className="spinner oscuro" aria-label="Guardando" />
+                          ) : (
+                            <button type="button" className="enlace" onClick={() => setEditandoFecha(null)}>
+                              cancelar
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <button
@@ -292,7 +312,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                           </button>
                         )}
                         {!per.detectada && (
-                          <button type="button" className="enlace" style={{ color: 'var(--ink-3)' }} onClick={() => accion(() => quitarPersona(evaluacionId, per.id))}>
+                          <button type="button" className="enlace" style={{ color: 'var(--ink-3)' }} disabled={trabajando} onClick={() => accion(() => quitarPersona(evaluacionId, per.id))}>
                             quitar
                           </button>
                         )}
@@ -317,16 +337,19 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                               type="button"
                               className="enlace"
                               title={`Aportado por ${d.subido_por ?? 'el evaluador'}${d.observacion ? ` · ${d.observacion}` : ''}`}
-                              onClick={() =>
+                              disabled={abriendoAportado === d.id}
+                              onClick={() => {
+                                setAbriendoAportado(d.id)
                                 archivoAportado(evaluacionId, d.id)
                                   .then(({ blob }) => onVerPdf(blob, `${r.titulo} · ${per.nombre}`))
                                   .catch((e: unknown) => setError(mensajeDe(e)))
-                              }
+                                  .finally(() => setAbriendoAportado(null))
+                              }}
                             >
-                              <Icono nombre="check" tam={12} grosor={3} /> {fecha(d.fecha_expedicion)}
+                              {abriendoAportado === d.id ? <span className="spinner oscuro" /> : <Icono nombre="check" tam={12} grosor={3} />} {fecha(d.fecha_expedicion)}
                             </button>
                             {!soloLectura && (
-                              <button type="button" className="enlace" aria-label="Quitar certificado" onClick={() => accion(() => quitarAportado(evaluacionId, d.id))}>
+                              <button type="button" className="enlace" aria-label="Quitar certificado" disabled={trabajando} onClick={() => accion(() => quitarAportado(evaluacionId, d.id))}>
                                 <Icono nombre="x" tam={11} />
                               </button>
                             )}
@@ -442,7 +465,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                             <button
                               type="button"
                               className="btn btn-primary btn-sm"
-                              disabled={!cedulaDe.fecha || cedulaDe.fecha === per.fecha_expedicion_documento}
+                              disabled={trabajando || !cedulaDe.fecha || cedulaDe.fecha === per.fecha_expedicion_documento}
                               onClick={() =>
                                 accion(async () => {
                                   await guardarFechaDocumento(evaluacionId, per.id, cedulaDe.fecha)
@@ -450,7 +473,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                                 })
                               }
                             >
-                              Guardar fecha
+                              {trabajando ? <span className="spinner" /> : null} Guardar fecha
                             </button>
                           </div>
                         )}
@@ -486,6 +509,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
 
       {agregando && (
         <FormularioPersona
+          ocupado={trabajando}
           de={agregando.de}
           sugerido={agregando.de ? null : datos.representante_legal}
           tipoProponente={datos.tipo_proponente}
@@ -546,6 +570,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
       )}
       {subida && (
         <FormularioCertificado
+          ocupado={trabajando}
           titulo={`${datos.requisitos.find((r) => r.numero === subida.requisito)?.titulo ?? `Requisito ${subida.requisito}`}${subida.persona ? ` · ${subida.persona.nombre}` : ''}`}
           fuente={fuenteDe(datos.requisitos.find((r) => r.numero === subida.requisito)?.pistas ?? [])}
           personas={subida.persona ? null : ordenadas}
@@ -577,7 +602,9 @@ function FormularioPersona({
   tipoProponente,
   onCerrar,
   onGuardar,
+  ocupado = false,
 }: {
+  ocupado?: boolean
   de: PersonaVerificada | null
   sugerido: string | null
   tipoProponente: string | null
@@ -628,7 +655,7 @@ function FormularioPersona({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={nombre.trim().length < 3 || documento.trim().length < 4}
+          disabled={ocupado || nombre.trim().length < 3 || documento.trim().length < 4}
           onClick={() =>
             onGuardar({
               rol,
@@ -639,7 +666,7 @@ function FormularioPersona({
             })
           }
         >
-          Agregar
+          {ocupado ? <span className="spinner" /> : null} Agregar
         </button>
       </div>
     </div>
@@ -652,7 +679,9 @@ function FormularioCertificado({
   personas,
   onCerrar,
   onGuardar,
+  ocupado = false,
 }: {
+  ocupado?: boolean
   titulo: string
   /** Página oficial donde se consulta este antecedente, si la hay. */
   fuente?: (typeof FUENTES)[number] | null
@@ -709,10 +738,10 @@ function FormularioCertificado({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={!archivo || !expedicion || faltaPersona}
+          disabled={ocupado || !archivo || !expedicion || faltaPersona}
           onClick={() => archivo && onGuardar({ fecha_expedicion: expedicion, observacion, archivo }, persona || null)}
         >
-          Subir certificado
+          {ocupado ? <span className="spinner" /> : null} {ocupado ? 'Subiendo…' : 'Subir certificado'}
         </button>
       </div>
     </div>

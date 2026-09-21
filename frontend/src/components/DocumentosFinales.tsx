@@ -18,6 +18,8 @@ const megas = (b: number | null) => (b === null ? '' : `${(b / 1e6).toFixed(1)} 
 export default function DocumentosFinales({ resumen }: { resumen: EvaluacionResumen }) {
   const [expedientes, setExpedientes] = useState<ExpedienteInfo[]>([])
   const [ocupado, setOcupado] = useState<string | null>(null)
+  const [regenerando, setRegenerando] = useState(false)
+  const [cargados, setCargados] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const aprobada = resumen.estado === 'aprobada'
   const enCurso = expedientes.some((e) => e.estado === 'pendiente' || e.estado === 'generando')
@@ -28,9 +30,9 @@ export default function DocumentosFinales({ resumen }: { resumen: EvaluacionResu
       listarExpedientes(resumen.id)
         .then((l) => vigente && setExpedientes(l))
         .catch(() => undefined)
+        .finally(() => vigente && setCargados(true))
     cargar()
-    if (!enCurso && !aprobada) return
-    const t = window.setInterval(cargar, 5000)
+    const t = enCurso || aprobada ? window.setInterval(cargar, 5000) : undefined
     return () => {
       vigente = false
       window.clearInterval(t)
@@ -88,7 +90,11 @@ export default function DocumentosFinales({ resumen }: { resumen: EvaluacionResu
           </div>
           <Icono nombre="escudo" tam={22} />
         </div>
-        {!aprobada && expedientes.length === 0 ? (
+        {!cargados ? (
+          <p className="small muted" role="status" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="spinner oscuro" /> Cargando el expediente…
+          </p>
+        ) : !aprobada && expedientes.length === 0 ? (
           <p className="small muted">Se genera automáticamente cuando el jefe del área aprueba la evaluación.</p>
         ) : (
           <div className="lista-expedientes">
@@ -121,13 +127,16 @@ export default function DocumentosFinales({ resumen }: { resumen: EvaluacionResu
                 type="button"
                 className="btn btn-ghost btn-sm"
                 style={{ alignSelf: 'flex-start' }}
-                onClick={() =>
+                disabled={regenerando}
+                onClick={() => {
+                  setRegenerando(true)
                   regenerarExpediente(resumen.id)
                     .then((nuevo) => setExpedientes((l) => [nuevo, ...l]))
                     .catch((err: unknown) => setError(mensajeDe(err)))
-                }
+                    .finally(() => setRegenerando(false))
+                }}
               >
-                <Icono nombre="deshacer" tam={14} /> Generar una nueva versión
+                {regenerando ? <span className="spinner oscuro" /> : <Icono nombre="deshacer" tam={14} />} Generar una nueva versión
               </button>
             )}
           </div>

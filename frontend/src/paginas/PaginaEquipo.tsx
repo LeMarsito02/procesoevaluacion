@@ -85,6 +85,8 @@ export default function PaginaEquipo() {
   const idConsulta = esSuper ? entidadId : null
   const claveCarga = esSuper ? entidadId : 'propia'
   const [cargadaPara, setCargadaPara] = useState<string | null>(null)
+  // Persona cuya fila se está guardando: sus controles quedan quietos.
+  const [guardandoId, setGuardandoId] = useState<string | null>(null)
   const cargando = claveCarga !== null && cargadaPara !== claveCarga
 
   useEffect(() => {
@@ -111,23 +113,29 @@ export default function PaginaEquipo() {
   }, [aviso])
 
   async function cambiar(u: Miembro, cambios: { rol?: Rol; areas?: TipoArea[]; activo?: boolean }) {
+    setGuardandoId(u.id)
     try {
       const nuevo = await actualizarUsuario(u.id, cambios)
       setUsuarios((lista) => lista.map((x) => (x.id === u.id ? nuevo : x)))
       setAviso('Cambios guardados')
     } catch (e) {
       setError(mensajeDe(e, 'No se pudo guardar.'))
+    } finally {
+      setGuardandoId(null)
     }
   }
 
   async function reiniciar(u: Miembro) {
     if (!window.confirm(`¿Darle una contraseña temporal nueva a ${u.nombre_completo}? La actual dejará de servir.`)) return
+    setGuardandoId(u.id)
     try {
       const nuevas = await reiniciarClave(u.id)
       setUsuarios((lista) => lista.map((x) => (x.id === u.id ? nuevas.usuario : x)))
       setCredenciales(nuevas)
     } catch (e) {
       setError(mensajeDe(e, 'No se pudo reiniciar la contraseña.'))
+    } finally {
+      setGuardandoId(null)
     }
   }
 
@@ -231,7 +239,7 @@ export default function PaginaEquipo() {
                     </td>
                     <td>
                       {editable ? (
-                        <select className="select select-sm" value={u.rol} onChange={(e) => cambiar(u, { rol: e.target.value as Rol })}>
+                        <select className="select select-sm" value={u.rol} disabled={guardandoId === u.id} onChange={(e) => cambiar(u, { rol: e.target.value as Rol })}>
                           {ROLES.map((r) => (
                             <option key={r.id} value={r.id}>
                               {r.nombre}
@@ -254,6 +262,7 @@ export default function PaginaEquipo() {
                               className="chip"
                               data-activo={activa}
                               aria-pressed={activa}
+                              disabled={guardandoId === u.id}
                               onClick={() => {
                                 const actuales = u.areas.map((x) => x.tipo)
                                 cambiar(u, { areas: activa ? actuales.filter((t) => t !== a.id) : [...actuales, a.id] })
@@ -273,19 +282,20 @@ export default function PaginaEquipo() {
                         </span>
                         {editable && (
                           <>
-                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => reiniciar(u)}>
+                            <button type="button" className="btn btn-ghost btn-sm" disabled={guardandoId === u.id} onClick={() => reiniciar(u)}>
                               <Icono nombre="llave" tam={14} /> Contraseña
                             </button>
                             <button
                               type="button"
                               className={`btn btn-sm ${u.activo ? 'btn-ghost' : 'btn-secondary'}`}
+                              disabled={guardandoId === u.id}
                               onClick={() => {
                                 if (!u.activo || window.confirm(`¿Desactivar a ${u.nombre_completo}? Perderá el acceso de inmediato.`)) {
                                   cambiar(u, { activo: !u.activo })
                                 }
                               }}
                             >
-                              {u.activo ? 'Desactivar' : 'Reactivar'}
+                              {guardandoId === u.id ? <span className="spinner oscuro" /> : null} {u.activo ? 'Desactivar' : 'Reactivar'}
                             </button>
                           </>
                         )}
@@ -515,6 +525,7 @@ function SoporteEntidad({
   onError: (t: string) => void
 }) {
   const [datos, setDatos] = useState<{ accesos: AccesoSoporte[]; personal: PersonaSoporte[] } | null>(null)
+  const [revocando, setRevocando] = useState<string | null>(null)
   const [persona, setPersona] = useState('')
   const [horas, setHoras] = useState(4)
   const [motivo, setMotivo] = useState('')
@@ -608,16 +619,19 @@ function SoporteEntidad({
                     <button
                       type="button"
                       className="btn btn-bad btn-sm"
-                      onClick={() =>
+                      disabled={revocando === a.id}
+                      onClick={() => {
+                        setRevocando(a.id)
                         revocarSoporte(a.id)
                           .then(() => {
                             onAviso('Acceso revocado')
                             setVersion((v) => v + 1)
                           })
                           .catch((e: unknown) => onError(mensajeDe(e)))
-                      }
+                          .finally(() => setRevocando(null))
+                      }}
                     >
-                      Revocar
+                      {revocando === a.id ? <span className="spinner" /> : null} Revocar
                     </button>
                   )}
                 </td>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { navegar, useRuta } from '../rutas'
+import { navegar, useRuta, volver } from '../rutas'
 import { puedeGestionarEquipo, useSesion } from '../sesion'
 import type { Paso } from '../pasos'
 import Icono from './Icono'
@@ -20,7 +20,7 @@ interface Props {
 export default function Topbar({ codigoProceso = null, pasos }: Props) {
   return (
     <header className="topbar">
-      <div className="topbar-inner">
+      <div className="topbar-inner" data-con-pasos={!!pasos}>
         <button type="button" className="brand brand-boton" onClick={() => navegar('/')} aria-label="Ir al inicio">
           <img className="brand-mark" src="/icono-mievaluador.png" alt="" />
           <div className="brand-text">
@@ -30,7 +30,15 @@ export default function Topbar({ codigoProceso = null, pasos }: Props) {
             <span className="sub">{codigoProceso ? `Proceso ${codigoProceso}` : 'by LeMarTek'}</span>
           </div>
         </button>
-        <Navegacion compacta={!!pasos} />
+        {pasos ? (
+          // Dentro de un proceso los pasos ocupan el centro: en lugar de los
+          // enlaces (no caben) queda siempre un botón para volver.
+          <button type="button" className="btn btn-ghost btn-sm volver-topbar" onClick={volver} title="Volver a la pantalla anterior">
+            <Icono nombre="atras" tam={15} /> <span className="volver-texto">Volver</span>
+          </button>
+        ) : (
+          <Navegacion />
+        )}
         {pasos && <Stepper {...pasos} />}
         <MenuUsuario />
       </div>
@@ -38,7 +46,7 @@ export default function Topbar({ codigoProceso = null, pasos }: Props) {
   )
 }
 
-function Navegacion({ compacta }: { compacta: boolean }) {
+function Navegacion() {
   const sesion = useSesion()
   const ruta = useRuta()
   if (!sesion) return null
@@ -51,7 +59,7 @@ function Navegacion({ compacta }: { compacta: boolean }) {
     { ruta: '/entidades', nombre: 'Entidades', visible: u.rol === 'superadmin' },
   ]
   return (
-    <nav className="nav-principal" data-compacta={compacta} aria-label="Secciones">
+    <nav className="nav-principal" aria-label="Secciones">
       {enlaces
         .filter((e) => e.visible)
         .map((e) => (

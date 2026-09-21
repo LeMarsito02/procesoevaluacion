@@ -11,6 +11,7 @@ type Filtro = 'activas' | 'por_revisar' | 'aprobadas' | 'todas'
 export default function PaginaInicio() {
   const { usuario } = useSesion()!
   const [evaluaciones, setEvaluaciones] = useState<EvaluacionResumen[] | null>(null)
+  const [asignando, setAsignando] = useState<string | null>(null)
   // Equipo por entidad (el superadmin gestiona varias).
   const [equipos, setEquipos] = useState<Record<string, MiembroCarga[]>>({})
   const [error, setError] = useState<string | null>(null)
@@ -83,6 +84,7 @@ export default function PaginaInicio() {
   }, [evaluaciones, porAsignar.length])
 
   async function asignar(e: EvaluacionResumen, responsableId: string) {
+    setAsignando(e.id)
     try {
       const nueva = await asignarEvaluacion(e.id, responsableId)
       setEvaluaciones((l) => l?.map((x) => (x.id === e.id ? nueva : x)) ?? null)
@@ -90,6 +92,8 @@ export default function PaginaInicio() {
       recargarEquipos()
     } catch (err) {
       setAviso(mensajeDe(err))
+    } finally {
+      setAsignando(null)
     }
   }
 
@@ -162,8 +166,15 @@ export default function PaginaInicio() {
                   e={e}
                   mostrarEntidad={esSuper}
                   accion={
-                    <select className="select select-sm" value="" onChange={(ev) => ev.target.value && asignar(e, ev.target.value)} aria-label="Asignar a">
-                      <option value="">Asignar a…</option>
+                    <select
+                      className="select select-sm"
+                      value=""
+                      disabled={asignando === e.id}
+                      aria-busy={asignando === e.id}
+                      onChange={(ev) => ev.target.value && asignar(e, ev.target.value)}
+                      aria-label="Asignar a"
+                    >
+                      <option value="">{asignando === e.id ? 'Asignando…' : 'Asignar a…'}</option>
                       {candidatos.map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.nombre_completo} · {m.evaluaciones_activas} activas · {m.pendientes} por revisar

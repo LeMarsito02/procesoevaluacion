@@ -10,6 +10,7 @@ const hora = (iso: string) => new Date(iso).toLocaleString('es-CO', { dateStyle:
 export default function PaginaSoporte({ onEntrar }: { onEntrar: (u: Usuario) => void }) {
   const { usuario } = useSesion()!
   const [accesos, setAccesos] = useState<Awaited<ReturnType<typeof accesosDisponibles>> | null>(null)
+  const [entrando, setEntrando] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -50,13 +51,22 @@ export default function PaginaSoporte({ onEntrar }: { onEntrar: (u: Usuario) => 
               <button
                 type="button"
                 className="tarjeta-ev-principal"
-                onClick={() =>
+                disabled={entrando !== null}
+                aria-busy={entrando === a.entidad.id}
+                onClick={() => {
+                  setEntrando(a.entidad.id)
                   entrarComoSoporte(a.entidad.id)
                     .then(onEntrar)
-                    .catch((e: unknown) => setError(mensajeDe(e)))
-                }
+                    .catch((e: unknown) => {
+                      setError(mensajeDe(e))
+                      setEntrando(null)
+                    })
+                }}
               >
-                <h3>{a.entidad.nombre}</h3>
+                <h3>
+                  {entrando === a.entidad.id && <span className="spinner oscuro" style={{ marginRight: 8 }} />}
+                  {a.entidad.nombre}
+                </h3>
                 <p className="small muted">{a.motivo}</p>
                 <p className="small">
                   <Icono nombre="reloj" tam={13} /> Hasta {hora(a.expira_en)}

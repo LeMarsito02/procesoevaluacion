@@ -1,10 +1,26 @@
 /** Enrutador mínimo sobre la History API (la app tiene pocas páginas). */
 import { useEffect, useState } from 'react'
 
+// Páginas recorridas dentro de la app: con 0 se entró por un enlace directo y
+// «volver» no debe sacar a la persona de la aplicación.
+let recorridas = 0
+window.addEventListener('popstate', () => {
+  recorridas = Math.max(0, recorridas - 1)
+})
+
+/** Vuelve a la página anterior de la app o, si no la hay, al inicio. */
+export function volver() {
+  if (recorridas > 0) window.history.back()
+  else navegar('/')
+}
+
 export function navegar(ruta: string, reemplazar = false) {
   if (ruta === window.location.pathname) return
   if (reemplazar) window.history.replaceState(null, '', ruta)
-  else window.history.pushState(null, '', ruta)
+  else {
+    window.history.pushState(null, '', ruta)
+    recorridas += 1
+  }
   window.dispatchEvent(new Event('cambio-ruta'))
   window.scrollTo(0, 0)
 }

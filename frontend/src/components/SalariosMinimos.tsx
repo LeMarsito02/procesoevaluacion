@@ -64,6 +64,11 @@ export default function SalariosMinimos({ onAviso }: { onAviso: (t: string) => v
         </div>
       )}
       {error && <div className="callout callout-bad" style={{ marginBottom: 12 }}>{error}</div>}
+      {lista === null && !error && (
+        <p className="small muted" role="status" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="spinner oscuro" /> Cargando…
+        </p>
+      )}
       {lista && lista.length > 0 && (
         <div className="tabla-wrap" style={{ marginBottom: 14 }}>
           <table className="tabla">

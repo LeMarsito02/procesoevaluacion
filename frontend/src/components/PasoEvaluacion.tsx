@@ -197,7 +197,7 @@ export default function PasoEvaluacion(p: Props) {
             solo.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div className="page-head-acciones">
           {kpis.pendientes > 0 && (
             <button className="btn btn-secondary" type="button" onClick={p.onSiguientePendiente}>
               Revisar pendientes <Icono nombre="flecha" tam={16} />
@@ -250,7 +250,7 @@ export default function PasoEvaluacion(p: Props) {
           {!p.puedeEvaluar ? null : evaluando ? (
             p.progreso!.enFila > 0 && (
               <button className="btn btn-secondary" type="button" onClick={p.onDetener} disabled={p.ocupado}>
-                <Icono nombre="pausa" tam={15} /> Pausar
+                {p.ocupado ? <span className="spinner oscuro" /> : <Icono nombre="pausa" tam={15} />} Pausar
               </button>
             )
           ) : (

@@ -85,12 +85,17 @@ export default function PaginaEvaluacion({ id }: { id: string }) {
     )
   }
   if (!detalle) {
+    // La misma barra que tendrá la evaluación (pasos en gris), para que no
+    // salte al terminar de cargar.
     return (
       <>
-        <Topbar />
-        <div className="vacio">
-          <span className="spinner oscuro" />
-        </div>
+        <Topbar pasos={{ lista: PASOS_EVALUACION, paso: 'evaluacion', pasosDisponibles: new Set(), onIr: () => {} }} />
+        <div className="barra-evaluacion-esqueleto" aria-hidden="true" />
+        <main className="page">
+          <div className="cargando-pagina" role="status">
+            <span className="spinner oscuro" /> Cargando la evaluación…
+          </div>
+        </main>
       </>
     )
   }
@@ -682,27 +687,38 @@ function BarraEvaluacion({
                 </option>
               ))}
             </select>
+          ) : resumen.puede_gestionar && !equipo && resumen.estado !== 'aprobada' ? (
+            // Mientras llega el equipo, la lista del mismo tamaño (no salta).
+            <select className="select select-sm" disabled value="" aria-busy="true">
+              <option value="">{resumen.responsable?.nombre_completo ?? 'Cargando equipo…'}</option>
+            </select>
           ) : (
             <strong className="small">{resumen.responsable ? (esYo ? 'Usted' : resumen.responsable.nombre_completo) : 'Sin asignar'}</strong>
           )}
           {resumen.puede_gestionar &&
             (resumen.estado === 'aprobada' ? (
               <button className="btn btn-secondary btn-sm" type="button" disabled={ocupado} onClick={() => accion(() => reabrirEvaluacion(resumen.id), 'Evaluación reabierta')}>
-                <Icono nombre="deshacer" tam={15} /> Reabrir
+                {ocupado ? <span className="spinner oscuro" /> : <Icono nombre="deshacer" tam={15} />} Reabrir
               </button>
             ) : (
               <button
                 className="btn btn-ok btn-sm"
                 type="button"
                 disabled={ocupado || avance.pendientes > 0 || avance.evaluados < avance.proponentes}
-                title={avance.pendientes > 0 ? 'Quedan requisitos por revisar' : undefined}
+                title={
+                  avance.evaluados < avance.proponentes
+                    ? 'Faltan proponentes por evaluar'
+                    : avance.pendientes > 0
+                      ? 'Quedan requisitos por revisar'
+                      : undefined
+                }
                 onClick={() => {
                   if (window.confirm('¿Aprobar la evaluación? El informe quedará como definitivo y no se podrá modificar sin reabrirla.')) {
                     accion(() => aprobarEvaluacion(resumen.id), 'Evaluación aprobada')
                   }
                 }}
               >
-                <Icono nombre="check" tam={15} /> Aprobar
+                {ocupado ? <span className="spinner" /> : <Icono nombre="check" tam={15} />} Aprobar
               </button>
             ))}
         </div>

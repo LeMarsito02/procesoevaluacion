@@ -235,8 +235,11 @@ function TarjetaPlantilla({
             e.target.value = ''
             if (!f) return
             setSubiendo(true)
-            await onSubir(f)
-            setSubiendo(false)
+            try {
+              await onSubir(f)
+            } finally {
+              setSubiendo(false)
+            }
           }}
         />
       </div>
