@@ -3120,3 +3120,31 @@ class PliegoSeAutoadaptaTests(TestCase):
                 cumple, motivo, _ = personalizado.evaluar_config({"c.pdf": b"%PDF"}, config, date(2026, 5, 25), None, [], "ACME")
         self.assertFalse(cumple)
         self.assertIn("firma", motivo)
+
+
+class AuditoriaDeHoyTests(TestCase):
+    """Riesgos encontrados en la auditoría."""
+
+    def test_dos_palabras_en_comun_no_hacen_suya_una_cedula(self):
+        from motor.evaluacion.identidad import _es_suyo
+
+        cedula_de_marta = "REPUBLICA DE COLOMBIA CEDULA GARCIA BETANCUR MARTA EUGENIA FECHA Y LUGAR DE EXPEDICION"
+        self.assertTrue(_es_suyo("MARTA EUGENIA GARCIA BETANCUR", "", cedula_de_marta))
+        self.assertFalse(_es_suyo("EUGENIA GARCIA LOPEZ", "", cedula_de_marta))
+
+    def test_palabras_de_archivo_no_son_iniciales(self):
+        from motor.evaluacion.identidad import _nombre_en_archivo
+
+        self.assertFalse(_nombre_en_archivo("DIANA ORTEGA CASTRO", "DOC LEGAL MEGB"))
+        self.assertTrue(_nombre_en_archivo("MARTA EUGENIA GARCIA BETANCUR", "DOC LEGAL MEGB"))
+
+    def test_varias_empresas_sin_razon_social_no_se_cruzan(self):
+        from motor.evaluacion.antecedentes import _con_integrantes_juridicos
+        from motor.evaluacion.camara_comercio import Empresa
+        from motor.evaluacion.proponente_plural import Integrante
+
+        empresas = [Empresa(None, "900000001"), Empresa(None, "900000002")]
+        integrantes = [Integrante("ALFA SAS", None, False), Integrante("BETA SAS", None, False)]
+        resultado = _con_integrantes_juridicos(empresas, integrantes)
+        self.assertEqual([e.nit for e in resultado], ["900000001", "900000002"])
+        self.assertTrue(all(e.razon_social is None for e in resultado))  # sin nombres cruzados ni duplicados

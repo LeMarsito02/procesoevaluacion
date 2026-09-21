@@ -111,7 +111,10 @@ def esta_firmado(contenido: bytes | None) -> bool:
             return True
         with abrir_pdf(contenido) as pdf:
             for page in pdf.pages[:6]:
-                hay = bool(page.images)
+                # Los logos van arriba; la firma, en la parte de abajo. Una
+                # imagen en el encabezado no es una firma.
+                alto = float(page.height or 1)
+                hay = any(float(img.get("top", 0)) > alto * 0.4 for img in page.images)
                 page.flush_cache()
                 if hay:
                     return True

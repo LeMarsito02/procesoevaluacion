@@ -115,8 +115,33 @@ _ARCHIVO_CEDULA_RE = re.compile(r"CEDULA|\bC\.?\s?C\b|DOCUMENTO\s+DE\s+IDENTIDAD
 _ARCHIVO_DEL_REPRESENTANTE_RE = re.compile(r"REPRESENTANTE|REP\.?\s*LEGAL|\bR\.?\s?L\b|\bRL\b")
 
 
+_PALABRAS_DE_LA_CEDULA = {
+    "REPUBLICA", "COLOMBIA", "IDENTIFICACION", "PERSONAL", "CEDULA", "CIUDADANIA", "NUMERO", "APELLIDOS", "NOMBRES",
+    "FIRMA", "FECHA", "LUGAR", "NACIMIENTO", "EXPEDICION", "ESTATURA", "SEXO", "INDICE", "DERECHO", "REGISTRADOR",
+    "NACIONAL", "DE", "DEL", "LA", "Y",
+}
+
+
+def _nombre_completo_en(nombre: str, texto: str) -> bool:
+    """Todas las palabras del nombre (salvo una, si tiene cuatro o más) están
+    en la página. Con dos en común no basta: «MARTA EUGENIA GARCÍA BETANCUR»
+    y «EUGENIA GARCÍA LÓPEZ» comparten dos y son personas distintas."""
+    partes = [p for p in re.findall(r"[A-ZÑ]{2,}", _norm(nombre)) if p not in _PALABRAS_DE_LA_CEDULA]
+    if len(partes) < 2:
+        return False
+    en_pagina = set(re.findall(r"[A-ZÑ]{2,}", texto))
+    faltan = sum(1 for p in partes if p not in en_pagina)
+    return faltan == 0 or (len(partes) >= 4 and faltan == 1)
+
+
 def _es_suyo(nombre: str, numero: str, texto: str) -> bool:
-    return (bool(numero) and _numero_en(numero, texto)) or _nombres_coinciden(nombre, " ".join(re.findall(r"[A-ZÑ]{2,}", texto)))
+    """La página es de esta persona: trae su número, o su nombre completo y
+    ninguna otra cédula legible."""
+    if numero and _numero_en(numero, texto):
+        return True
+    if numero and _de_otra_persona(numero, texto):
+        return False
+    return _nombre_completo_en(nombre, texto)
 
 
 def _de_otra_persona(numero: str, texto_norm: str) -> bool:
@@ -162,6 +187,9 @@ def cedula_de(pdfs: dict[str, bytes], nombre: str, cedula: str | None, principal
     return None
 
 
+_NO_SON_INICIALES = {"DOC", "DOCS", "RUT", "RUP", "CED", "CCO", "RLS", "TPS", "PDF", "ACT", "COP", "CAM", "EXP", "ANT", "SEG"}
+
+
 def _nombre_en_archivo(nombre: str, base: str) -> bool:
     """El archivo (ya reconocido como cédula) es de esta persona: trae su
     nombre ("CEDULA JUAN JOSE ARAQUE"), su primer nombre ("CEDULA Y TARJETA
@@ -175,7 +203,8 @@ def _nombre_en_archivo(nombre: str, base: str) -> bool:
     if len(partes[0]) >= 4 and partes[0] in palabras:
         return True
     iniciales = {"".join(p[0] for p in partes), "".join(p[0] for p in partes[:3]), partes[0][0] + "".join(p[0] for p in partes[-2:])}
-    return any(len(i) >= 3 and i in palabras for i in iniciales)
+    # "DOC", "RUT", "RUP"… son palabras de nombres de archivo, no iniciales.
+    return any(len(i) >= 3 and i in palabras and i not in _NO_SON_INICIALES for i in iniciales)
 
 
 def suplentes_del_certificado(pdfs: dict[str, bytes]) -> list[tuple[str, str]]:

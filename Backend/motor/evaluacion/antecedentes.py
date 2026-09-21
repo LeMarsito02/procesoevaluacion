@@ -237,11 +237,15 @@ def _con_integrantes_juridicos(empresas: list[Empresa], integrantes: list[Integr
         if any((nit and e.nit == nit) or _nombres_coinciden(integrante.nombre, e.razon_social or "") for e in todas):
             continue
         sueltos.append((integrante, nit))
-    for indice, empresa in enumerate(todas):
-        if empresa.razon_social or not sueltos:
-            continue
-        integrante, _ = sueltos.pop(0)
-        todas[indice] = Empresa(integrante.nombre, empresa.nit)
+    sin_nombre = [i for i, e in enumerate(todas) if not e.razon_social]
+    # Un integrante suelto y un certificado sin razón social: son el mismo.
+    # Con varios de cada uno no se sabe cuál es cuál, y ponerle a un NIT el
+    # nombre de otra empresa confundiría al evaluador: se dejan como están.
+    if len(sueltos) == 1 and len(sin_nombre) == 1:
+        integrante, _ = sueltos.pop()
+        todas[sin_nombre[0]] = Empresa(integrante.nombre, todas[sin_nombre[0]].nit)
+    elif sin_nombre and len(todas) >= len(juridicos):
+        return todas  # hay tantos certificados como integrantes jurídicos: no falta nadie
     return todas + [Empresa(integrante.nombre, nit) for integrante, nit in sueltos]
 
 
