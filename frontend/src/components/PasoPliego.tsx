@@ -55,6 +55,11 @@ export default function PasoPliego(p: Props) {
   const obligaciones = hallazgos.filter((h) => h.tipo === 'obligacion')
   const fuera = hallazgos.filter((h) => h.tipo === 'fuera_de_alcance')
   const listos = porDecidir.filter((h) => decisionCompleta(p.decisiones[h.id])).length
+  // "Aplicar todos" acepta lo que ajusta o agrega. Quitar un requisito es lo
+  // único que puede terminar en una aprobación indebida: eso se decide uno a uno.
+  const aplicables = porDecidir.filter((h) => h.tipo !== 'requisito_no_exigido' && p.decisiones[h.id]?.decision !== 'aceptado')
+  const quitanRequisitos = porDecidir.filter((h) => h.tipo === 'requisito_no_exigido').length
+  const aplicarTodos = () => aplicables.forEach((h) => p.onDecidir(h.id, { decision: 'aceptado', nota: '' }))
   const ia = p.pliego?.lectura_ia
   const iaLeyendo = !!ia && (ia.estado === 'pendiente' || ia.estado === 'leyendo')
   // Mientras la IA lee pueden aparecer requisitos nuevos: se espera a que termine.
@@ -126,6 +131,19 @@ export default function PasoPliego(p: Props) {
                 <h2>Cambian la evaluación</h2>
                 <p>{porDecidir.length ? `${listos} de ${porDecidir.length} decididos` : 'Nada que decidir'}</p>
               </div>
+              {aplicables.length > 0 && (
+                <div style={{ textAlign: 'right' }}>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={aplicarTodos} disabled={p.ocupado}>
+                    <Icono nombre="check" tam={14} /> Aplicar {aplicables.length === 1 ? 'el cambio' : `los ${aplicables.length} cambios`}
+                  </button>
+                  {quitanRequisitos > 0 && (
+                    <div className="small muted" style={{ marginTop: 4, maxWidth: 260 }}>
+                      {quitanRequisitos === 1 ? 'El que quita un requisito' : `Los ${quitanRequisitos} que quitan requisitos`} se
+                      decide{quitanRequisitos === 1 ? '' : 'n'} uno a uno.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             {porDecidir.length === 0 ? (
               <div className="callout callout-ok">
