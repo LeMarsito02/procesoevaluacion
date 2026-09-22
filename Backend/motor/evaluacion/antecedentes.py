@@ -503,7 +503,7 @@ def _evaluar_proponente_antecedente(
     for persona in resultado.personas:
         if persona.tipo == "natural" and persona.fecha_expedicion_documento is None:
             persona.fecha_expedicion_documento = fecha_de_la_persona(
-                pdfs, persona.nombre, persona.documento, principal=persona.rol == "representante_legal"
+                pdfs, persona.nombre, persona.documento, persona.rol == "representante_legal"
             )
 
     return finalizar(

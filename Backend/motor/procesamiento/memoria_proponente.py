@@ -24,19 +24,19 @@ class PdfsProponente(dict):
 
 
 def memo_por_pdfs(func: Callable[..., R]) -> Callable[..., R]:
-    """Memoriza `func(pdfs, *args)` dentro del PdfsProponente recibido. Si
+    """Memoriza `func(pdfs, *args, **kwargs)` dentro del PdfsProponente recibido. Si
     `pdfs` es un dict normal (ej. en pruebas) simplemente llama a la función.
     Solo para funciones puras sobre los PDF cuyo resultado no se modifica
     después: el mismo objeto se devuelve a todos los requisitos."""
 
     @functools.wraps(func)
-    def envoltura(pdfs, *args):
+    def envoltura(pdfs, *args, **kwargs):
         memo = getattr(pdfs, "memo", None)
         if memo is None:
-            return func(pdfs, *args)
-        clave = (func.__module__, func.__qualname__, args)
+            return func(pdfs, *args, **kwargs)
+        clave = (func.__module__, func.__qualname__, args, tuple(sorted(kwargs.items())))
         if clave not in memo:
-            memo[clave] = func(pdfs, *args)
+            memo[clave] = func(pdfs, *args, **kwargs)
         return memo[clave]
 
     return envoltura
