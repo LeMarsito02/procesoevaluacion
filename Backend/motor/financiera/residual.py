@@ -26,7 +26,10 @@ import re
 from dataclasses import dataclass, field
 
 from motor.financiera.capacidad import Revision
-from motor.financiera.integrantes import _agrupado, _del_integrante, _nit_escrito, _nombre_escrito, estados_del_integrante
+from motor.financiera.integrantes import (
+    _agrupado, _del_integrante, _nit_escrito, _nombre_escrito, estados_del_integrante, integrante_del_titular,
+    titulares_del_documento,
+)
 from motor.financiera.parametros import LoteFinanciero
 from motor.llm.cliente import consultar_json
 from motor.tecnica.experiencia import IntegranteTecnico
@@ -49,12 +52,15 @@ _FORMATO5_RE = re.compile(r"CAPACIDAD\s+RESIDUAL|FORMATO\s*(?:N[O°º]\.?\s*)?5(
 # INGRESOS" a secas no, porque puede sumar los no operacionales.
 _VALORES_FILA = r"(?:(?:\(\s*|\b)(?:NOTA\s*)?\d{1,2}(?:\s\d)?\s*\)?\s+)?((?:\$?\s*\(?\d{1,3}(?:[.,]\d{3}){2,}(?:[.,]\d{1,2})?\)?\s*){1,2})"
 _INGRESOS_TOTAL_RE = re.compile(
-    r"(?:TOTAL\s+INGRESOS\s+(?:OPERACIONALES|ORDINARIOS|NETOS|(?:(?:DE|POR)\s+)?(?:LAS\s+)?ACTIVIDADES\s+ORDINARIAS)"
-    r"|INGRESOS\s+(?:(?:DE|POR)\s+(?:LAS\s+)?ACTIVIDADES\s+ORDINARIAS|OPERACIONALES|ORDINARIOS)\s+NETOS"
+    # "ACTIVI…": también "ACTIVIDAD ORDINARIA" y "ACTIVIADES" (errores de digitación).
+    r"(?:TOTAL\s+INGRESOS\s+(?:OPERACIONALES|ORDINARIOS|NETOS|(?:(?:DE|POR)\s+)?(?:LAS\s+)?ACTIVI\w*\s+ORDINARIAS?)"
+    r"|INGRESOS\s+(?:(?:DE|POR)\s+(?:LAS\s+)?ACTIVI\w*\s+ORDINARIAS?|OPERACIONALES|ORDINARIOS)\s+NETOS"
     r"|VENTAS\s+NETAS|INGRESOS\s+NETOS\s+OPERACIONALES)[\s:]{0,5}" + _VALORES_FILA
 )
 _INGRESOS_RE = re.compile(
-    r"(?:INGRESOS?\s+(?:(?:DE|POR)\s+(?:LAS\s+)?ACTIVIDADES\s+ORDINARIAS|OPERACIONALES|ORDINARIOS)|VENTAS\s+NETAS)[^\d$\n]{0,60}?"
+    r"(?:INGRESOS?\s+(?:(?:DE|POR)\s+(?:LAS\s+)?ACTIVI\w*\s+ORDINARIAS?|OPERACIONALES|ORDINARIOS)|VENTAS\s+NETAS"
+    # "VENTAS 10 10.510.259.000": solo con nota o "$" enseguida, y no "COSTO DE VENTAS".
+    r"|(?<!COSTO\s)(?<!COSTOS\s)(?<!DE\s)\bVENTAS(?=\s+(?:\(?\s*(?:NOTA\s*)?\d{1,2}\s*\)?\s+|\$)))[^\d$\n]{0,60}?"
     + _VALORES_FILA
 )
 _CIFRA_RE = re.compile(r"\(?\d{1,3}(?:[.,]\d{3}){2,}(?:[.,]\d{1,2})?\)?")
@@ -129,16 +135,22 @@ class ResidualIntegrante:
     uso_ia: bool = False
 
 
-def _textos_formato5(pdfs: dict[str, bytes], excels: dict[str, bytes]) -> dict[str, str]:
-    from motor.procesamiento.pdf_utils import extraer_texto
+def _texto_formato(contenido: bytes, paginas: int = 25) -> str:
+    """Texto del formato; las páginas escaneadas, con OCR fila por fila (la
+    tabla de contratos queda renglón por renglón)."""
+    from motor.procesamiento.pdf_utils import texto_completo
 
+    return texto_completo(contenido, max_paginas=paginas)
+
+
+def _textos_formato5(pdfs: dict[str, bytes], excels: dict[str, bytes]) -> dict[str, str]:
     textos = {}
     for archivo, contenido in pdfs.items():
         # "Formato 5 - Capacidad residual", "OBRAS SAS 5C.pdf", "FORMA 5.3".
         if not re.search(r"RESIDUAL|FORMA(?:TO)?\s*5|CAPACIDAD|\b5\s*[A-D]\b|\b5\.[1-4]\b|\bK\b", normalizar(archivo)):
             continue
         try:
-            texto = normalizar(" ".join(extraer_texto(contenido, max_paginas=25).split()))
+            texto = normalizar(" ".join(_texto_formato(contenido).split()))
         except Exception:  # noqa: BLE001
             continue
         if _FORMATO5_RE.search(texto):
@@ -173,9 +185,11 @@ def _numero_escrito(valor: float, texto: str) -> re.Match | None:
 # Título del listado; no una mención dentro de las notas ("…debe incluirse
 # en el Formato 5C con el valor total…").
 _SECCION_SCE_RE = re.compile(
-    r"(?<!EN\sEL\s)(?<!DEL\s)(?<!AL\s)(?<!EL\s)"
+    r"(?<!EN\sEL\s)(?<!DEL\s)(?<!AL\s)(?<!EL\s)(?<!FORMATO\s)"
     r"(?:FORMATO\s*(?:N[O°º]\.?\s*)?5\s*(?:\.\s*3|-?\s*C)\b|LISTADO\s+DE\s+(?:LOS\s+)?CONTRATOS\s+EN\s+EJECUCION"
     r"|SALDOS?\s+(?:DE\s+)?CONTRATOS\s+EN\s+EJECUCION)"
+    # Una frase de las notas sigue con coma o con "cuando…", "y se encuentren…".
+    r"(?!\s*,)(?!\s+(?:Y\s+SE\s|CUANDO\b|CON\s+EL\s+VALOR|DEBE\b|SE\s+DEBE\b|DE\s+LA\s+A\b))"
 )
 _FIN_SCE_RE = re.compile(r"EN\s+CONSTANCIA|NOTA\s*1\s*:|FIRMA\s+REPRESENTANTE|FORMATO\s*(?:N[O°º]\.?\s*)?5\s*(?:\.\s*[124]|-?\s*[ABD])\b")
 # La fila de total del listado: "SUMATORIA COLUMNA (F) $2.935.598.357", "TOTAL $ 4.412.531.329,82".
@@ -378,6 +392,100 @@ def _bloques_sce_hoja(contenido: bytes) -> list[tuple[str, float | None]]:
     return bloques
 
 
+def _monto_celda(celda: str | None) -> float | None:
+    """Cifra de una celda de tabla, aunque el renglón la parta ("$3.059.701.53 5,00")."""
+    t = re.sub(r"[\s$]", "", celda or "").strip("()")
+    if not re.fullmatch(r"\d[\d.,]*", t):
+        return None
+    return _cifra(t) if re.search(r"\d[.,]\d{3}", t) else numero(t)
+
+
+def _duenio_de_la_tabla(contexto: str, integrantes: list[IntegranteTecnico]) -> IntegranteTecnico | None:
+    """ "…INTEGRANTES: A (90 %), B (10 %) PARA A (90 %):": la tabla es del
+    integrante nombrado después del último "PARA"."""
+    ultimo = None
+    for m in re.finditer(r"\bPARA\s+(.{4,90})", contexto):
+        ultimo = m
+    if ultimo is None:
+        return None
+    compacto = re.sub(r"\s+", "", ultimo.group(1))
+    duenios = [i for i in integrantes if _nombre_escrito(i, compacto)]
+    return duenios[0] if len(duenios) == 1 else None
+
+
+def _bloques_sce_pdf(contenido: bytes) -> list[tuple[str, float | None]]:
+    """Formato 5C en PDF con tabla dibujada: cada tabla del listado leída por
+    celdas, con el texto que tiene justo encima (dice de qué integrante es) y
+    la suma de la columna del saldo del contrato en ejecución, o su fila de
+    total. None si una fila no se puede leer o su saldo no cuadra con el
+    valor del contrato por la participación."""
+    from motor.procesamiento.pdf_utils import abrir_pdf
+
+    bloques = []
+    with abrir_pdf(contenido) as pdf:
+        for page in pdf.pages[:25]:
+            if "EJECUCION" not in normalizar(page.extract_text() or ""):
+                page.flush_cache()
+                continue
+            for tabla in page.find_tables():
+                filas = [[" ".join((c or "").split()) for c in f] for f in tabla.extract()]
+                encabezado = next((i for i, f in enumerate(filas[:4])
+                                   if any(re.search(r"SALDO\s*(?:DEL\s*)?CONTRATO", normalizar(c)) for c in f)), None)
+                if encabezado is None:
+                    continue
+                cab = [normalizar(c) for c in filas[encabezado]]
+                col_saldo = next((j for j, c in enumerate(cab) if re.search(r"SALDO", c) and not re.search(r"DIARIO", c)
+                                  and re.search(r"EJECU|CONTRATO", c)), None)
+                col_valor = next((j for j, c in enumerate(cab) if re.search(r"VALOR", c)), None)
+                col_part = next((j for j, c in enumerate(cab) if re.search(r"%|PARTICI", c)), None)
+                if col_saldo is None:
+                    continue
+                arriba = page.crop((0, max(0, tabla.bbox[1] - 110), page.width, tabla.bbox[1])).extract_text() or ""
+                suma, n, total, valido = 0.0, 0, None, True
+                for f in filas[encabezado + 1:]:
+                    texto = normalizar(" ".join(f))
+                    if not texto.strip() or "FORMULA" in texto:
+                        continue
+                    saldo = _monto_celda(f[col_saldo] if col_saldo < len(f) else None)
+                    if re.search(r"\bTOTAL|SUMATORIA", texto):
+                        total = saldo if saldo is not None else next(
+                            (v for c in reversed(f) if (v := _monto_celda(c)) is not None), None)
+                        break
+                    if saldo is None:
+                        valido = False
+                        continue
+                    valor = _monto_celda(f[col_valor]) if col_valor is not None and col_valor < len(f) else None
+                    part = numero(re.sub(r"[%\s]", "", f[col_part])) if col_part is not None and col_part < len(f) else None
+                    if valor is None or part is None or not 0 < part <= 100 or saldo > valor * part / 100 * 1.01:
+                        valido = False
+                    suma += saldo
+                    n += 1
+                dato = max(suma, total or 0.0) if valido and (n or total is not None) else None
+                bloques.append((normalizar(" ".join(arriba.split())), dato))
+            page.flush_cache()
+    return bloques
+
+
+def _es_su_listado(integrante: IntegranteTecnico, tramo: str, del_archivo: bool, integrantes: list[IntegranteTecnico]) -> bool:
+    """El listado es de este integrante: lo dice el propio formato ("PROPONENTE
+    O INTEGRANTE: …"), lo nombra o trae su NIT; si no nombra a ninguno, es del
+    dueño del archivo."""
+    if len(integrantes) <= 1:
+        return True
+    cabeza = tramo[:700]
+    # En las hojas de cálculo el rótulo puede venir después de las notas del
+    # bloque anterior: se busca en todo el contexto.
+    titulares = titulares_del_documento(cabeza) or titulares_del_documento(tramo[:4000])
+    if titulares:
+        elegido = integrante_del_titular(titulares, integrantes)
+        if elegido is not None:
+            return elegido is integrante
+    if _del_integrante(integrante, cabeza, integrantes):
+        return True
+    nombra = any(_nit_escrito(i, cabeza) or _nombre_escrito(i, re.sub(r"\s+", "", cabeza)) for i in integrantes)
+    return del_archivo and not nombra
+
+
 def residual_del_proponente(
     pdfs: dict[str, bytes], excels: dict[str, bytes], integrantes: list[IntegranteTecnico],
     lotes: list[LoteFinanciero], smmlv: float, plural: bool, estados: dict[str, str] | None = None,
@@ -393,6 +501,13 @@ def residual_del_proponente(
         return Revision(False, ["no se encontró el Formato 5 – Capacidad residual"])
     resultados: list[ResidualIntegrante] = []
     bloques_hoja = [b for contenido in excels.values() for b in _bloques_sce_hoja(contenido)]
+    bloques_pdf = []
+    for archivo in textos:
+        if archivo in pdfs and "EJECUCION" in textos[archivo]:
+            try:
+                bloques_pdf += [(archivo, c, v) for c, v in _bloques_sce_pdf(pdfs[archivo])]
+            except Exception:  # noqa: BLE001
+                pass
     for integrante in integrantes:
         r = ResidualIntegrante(integrante.nombre)
         suyos = {a: t for a, t in textos.items() if _del_integrante(integrante, t, integrantes)}
@@ -437,16 +552,19 @@ def residual_del_proponente(
         # SCE.
         # Cada listado del PDF es de quien lo encabeza ("INTEGRANTE: …"); si
         # no nombra a ningún integrante, del dueño del archivo.
-        de_pdf = [
-            tramo for a, t in textos.items() if a in pdfs for tramo in _tramos_sce(t)
-            if _del_integrante(integrante, tramo[:700], integrantes)
-            or (a in suyos and not any(_nit_escrito(i, tramo[:700]) or _nombre_escrito(i, re.sub(r"\s+", "", tramo[:700]))
-                                       for i in integrantes))
-        ]
+        de_pdf = [tramo for a, t in textos.items() if a in pdfs for tramo in _tramos_sce(t)
+                   if _es_su_listado(integrante, tramo, a in suyos, integrantes)]
         # Separados por el cierre del formato, para que no se fundan en uno.
         saldos = [_sce(" EN CONSTANCIA ".join(de_pdf))] if de_pdf else []
+        # Tablas dibujadas del PDF leídas por celdas (el texto corrido las revuelve).
+        saldos += [(v, False) for a, contexto, v in bloques_pdf
+                   if _duenio_de_la_tabla(contexto, integrantes) is integrante
+                   or _duenio_de_la_tabla(contexto, integrantes) is None and _del_integrante(integrante, contexto, integrantes)
+                   or (a in suyos and not any(_nit_escrito(i, contexto) or _nombre_escrito(i, re.sub(r"\s+", "", contexto))
+                                              for i in integrantes))]
         # En hojas de cálculo, cada listado por su columna y de quien lo encabece.
-        saldos += [(v, False) for contexto, v in bloques_hoja if _del_integrante(integrante, contexto, integrantes)]
+        saldos += [(v, False) for contexto, v in bloques_hoja
+                   if _es_su_listado(integrante, contexto, False, integrantes)]
         # El PDF firmado y su copia en Excel son el mismo listado: vale el
         # mayor de los que se pudieron leer (lo prudente).
         leidos = [(v, ia) for v, ia in saldos if v is not None]

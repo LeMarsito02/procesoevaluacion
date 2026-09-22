@@ -461,3 +461,17 @@ class SoporteDelContratoTests(SimpleTestCase):
         self.assertTrue(con.cumple, con.motivos)
         self.assertFalse(sin.cumple)
         self.assertTrue(any("acta o certificación" in m for m in sin.motivos))
+
+
+class SoportePorObjetoTests(SimpleTestCase):
+    def test_el_formato_3_no_sirve_de_soporte(self):
+        from motor.tecnica.longitud import _objeto_en, _puede_ser_acta
+
+        objeto = "PAVIMENTACION DE LA VIA VEREDA MONTEBELLO SECTOR CHIRIGUANA HASTA EL PUENTE AMARILLO"
+        acta = "ACTA DE RECIBO FINAL DE OBRA: PAVIMENTACION VEREDA MONTEBELLO SECTOR CHIRIGUANA PUENTE AMARILLO"
+        self.assertTrue(_puede_ser_acta("acta.pdf", acta))
+        self.assertTrue(_objeto_en(objeto, acta))
+        formato3 = "FORMATO 3 - EXPERIENCIA CCE-EICP-FM-04 PAVIMENTACION VEREDA MONTEBELLO CHIRIGUANA PUENTE AMARILLO"
+        self.assertFalse(_puede_ser_acta("EXPERIENCIA REQUERIDA.pdf", formato3))
+        # Un objeto de palabras corrientes no alcanza para dar por suyo un acta.
+        self.assertFalse(_objeto_en("MANTENIMIENTO DE VIAS DEL MUNICIPIO", acta))

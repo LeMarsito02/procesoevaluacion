@@ -25,8 +25,9 @@ from motor.tecnica.rup import normalizar
 _MESES = {m: i for i, m in enumerate(
     "ENERO FEBRERO MARZO ABRIL MAYO JUNIO JULIO AGOSTO SEPTIEMBRE OCTUBRE NOVIEMBRE DICIEMBRE".split(), 1)}
 _TP_JCC_RE = re.compile(r"TARJETAPROFESIONALN[O°º]?\.?(\d{3,7})-?T")
-_FECHA_JCC_RE = re.compile(r"DADOEN[A-Z.]{2,30}?ALOS(\d{1,2})DIASDELMESDE([A-Z]+)DE(?:L)?(\d{4})")
-_VIGENCIA_JCC_RE = re.compile(r"CONVIGENCIADE\(?0?(\d{1,2})\)?MESES")
+# Tolera lo que confunde el OCR: "25 DIIAS DEL MES", "CAN VIGENCIA".
+_FECHA_JCC_RE = re.compile(r"DADOEN[A-Z.]{2,30}?ALOS(\d{1,2})D[A-Z]{1,3}SDELMESDE([A-Z]+)DE(?:L)?(\d{4})")
+_VIGENCIA_JCC_RE = re.compile(r"C[A-Z]NVIGENCIADE\(?0?(\d{1,2})\)?MESES")
 _NOMBRE_JCC_RE = re.compile(r"(?:CONTADOR\s+PUBLICO|REVISOR\s+FISCAL)\s+(.{5,80}?)\s+IDENTIFICAD")
 _CEDULA_JCC_RE = re.compile(r"CEDULADECIUDADANIA(?:NO\.?)?(\d{5,11})")
 _ESTADOS_RE = re.compile(r"ESTADOS?\s+DE\s+RESULTADOS?|ESTADO\s+DE\s+RESULTADO\s+INTEGRAL|ESTADOS?\s+DE\s+SITUACION\s+FINANCIERA|BALANCE\s+GENERAL|ESTADOS\s+FINANCIEROS")
@@ -58,7 +59,9 @@ class CertificadoJCC:
 def leer_certificado_jcc(archivo: str, texto: str) -> CertificadoJCC | None:
     norm = normalizar(texto)
     compacto = re.sub(r"\s+", "", norm)
-    if "JUNTACENTRALDECONTADORES" not in compacto or "CERTIFICA" not in compacto:
+    # El certificado de antecedentes; no otro documento que nombre la Junta
+    # (una certificación de composición accionaria firmada por el contador).
+    if "JUNTACENTRALDECONTADORES" not in compacto or "CERTIFICA" not in compacto or "ANTECEDENTES" not in compacto:
         return None
     tp = _TP_JCC_RE.search(compacto)
     if tp is None:
@@ -89,26 +92,11 @@ class DocumentosFinancieros:
 
 
 def _texto(page) -> str:
-    """Texto de la página; si es una imagen con apenas la firma del contador
-    en texto (estados financieros escaneados), con OCR, cacheado. La regla
-    general de OCR no la lee porque la firma ya cuenta como texto."""
+    """Texto de la página de un documento financiero, fila por fila si está
+    escaneada (ver motor.procesamiento.pdf_utils.texto_pagina_tabla)."""
     from motor.procesamiento import pdf_utils
 
-    texto = pdf_utils.texto_pagina(page)
-    if len(texto.strip()) >= 300 or not page.images or not pdf_utils.OCR_HABILITADO:
-        return texto
-    huella = getattr(page.pdf, "_huella_contenido", None)
-    cache = pdf_utils.OCR_CACHE_DIR / f"{huella}_{page.page_number}_financiera.txt" if huella else None
-    try:
-        if cache is not None and cache.exists():
-            return cache.read_text(encoding="utf-8") or texto
-        ocr = pdf_utils._ocr_pagina(page)
-        if cache is not None:
-            pdf_utils.OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            cache.write_text(ocr, encoding="utf-8")
-        return ocr if len(ocr.strip()) > len(texto.strip()) else texto
-    except Exception:  # noqa: BLE001
-        return texto
+    return pdf_utils.texto_pagina_tabla(page)
 
 
 def documentos_financieros(pdfs: dict[str, bytes]) -> DocumentosFinancieros:
@@ -163,6 +151,30 @@ def documentos_financieros(pdfs: dict[str, bytes]) -> DocumentosFinancieros:
     return docs
 
 
+def _parecidas(a: str, b: str) -> bool:
+    """Un dígito distinto o dos contiguos invertidos (lo que confunde el OCR
+    al leer la tarjeta profesional de una firma escaneada)."""
+    if len(a) != len(b) or a == b:
+        return False
+    distintos = [i for i in range(len(a)) if a[i] != b[i]]
+    if len(distintos) == 1:
+        return True
+    return len(distintos) == 2 and distintos[1] == distintos[0] + 1 and a[distintos[0]] == b[distintos[1]] and a[distintos[1]] == b[distintos[0]]
+
+
+def _por_tarjeta_parecida(tp: str, certificados: list[CertificadoJCC], texto_estados: str) -> list[CertificadoJCC]:
+    """Certificados de una tarjeta casi igual a la leída en la firma, solo si
+    el nombre del contador del certificado está en los estados financieros
+    (así no se toma el certificado de otra persona)."""
+    compacto = re.sub(r"\s+", "", texto_estados)
+    elegidos = []
+    for c in certificados:
+        palabras = [p for p in re.findall(r"[A-Z]{3,}", normalizar(c.nombre))]
+        if _parecidas(tp, c.tarjeta) and len(palabras) >= 2 and all(p in compacto for p in palabras[:3]):
+            elegidos.append(c)
+    return elegidos
+
+
 def validez_capacidad_organizacional(
     integrantes: list[IntegranteTecnico], docs: DocumentosFinancieros, fecha_cierre: date,
 ) -> Revision:
@@ -189,8 +201,9 @@ def validez_capacidad_organizacional(
             motivos.append(f"{integrante.nombre}: firma un revisor fiscal pero no se encontró su dictamen")
             todo_bien = False
         estado_tarjetas = {}
+        texto_estados = " ".join(estados.values())
         for tp in tarjetas:
-            certs = por_tarjeta.get(tp, [])
+            certs = por_tarjeta.get(tp, []) or _por_tarjeta_parecida(tp, docs.certificados, texto_estados)
             vigentes = [c for c in certs if c.vigente(fecha_cierre)]
             if vigentes:
                 estado_tarjetas[tp] = f"vigente ({vigentes[0].expedicion:%d/%m/%Y})"

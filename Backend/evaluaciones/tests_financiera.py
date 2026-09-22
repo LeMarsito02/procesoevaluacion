@@ -329,3 +329,45 @@ class UmbralesPlataformaTests(TestCase):
         self.assertIn("Ana Ficticia", datos["umbrales"]["fuente"])
         with self.assertRaises(ValueError):
             servicios.registrar_umbrales_financieros(proceso, {"liquidez_min": 1.2}, usuario)
+
+
+class SceNotasDelFormatoTests(SimpleTestCase):
+    def test_las_notas_no_anulan_el_listado_bueno(self):
+        texto = normalizar(
+            "FORMATO 5C SALDO CONTRATOS EN EJECUCION (SCE) PROPONENTE O INTEGRANTE: OBRAS FICTICIAS SAS "
+            "1 $ 1.000.000.000,00 6,00 6/04/2026 90% $ 5.000.000,00 $ 300.000.000,00 NO TOTAL $ 300.000.000,00 "
+            "NOTA 8: EN TODO CASO LA ENTIDAD SOLICITARA SUBSANAR EL FORMATO FORMATO 5C, CUANDO ESTE EN ALGUNO DE SUS "
+            "CONTRATOS PRESENTE SALDO NEGATIVO. NOTA 7: UNA VEZ LA ENTIDAD VERIFIQUE EL FORMATO SALDO CONTRATOS EN "
+            "EJECUCION Y SE ENCUENTREN ERRORES ARITMETICOS"
+        )
+        self.assertEqual(_sce(texto), (300_000_000, False))
+
+
+class TarjetaParecidaTests(SimpleTestCase):
+    def test_tarjeta_mal_leida_solo_con_el_nombre_en_los_estados(self):
+        from motor.financiera.contadores import CertificadoJCC, _parecidas, _por_tarjeta_parecida
+
+        self.assertTrue(_parecidas("209794", "209791"))
+        self.assertTrue(_parecidas("106849", "106489"))
+        self.assertFalse(_parecidas("106849", "106999"))
+        cert = CertificadoJCC("jcc.pdf", "209791", nombre="MARIA FICTICIA RUIZ")
+        self.assertEqual(_por_tarjeta_parecida("209794", [cert], "FIRMA MARIA FICTICIA RUIZ CONTADORA T.P. 209794-T"), [cert])
+        self.assertEqual(_por_tarjeta_parecida("209794", [cert], "FIRMA PEDRO INVENTADO T.P. 209794-T"), [])
+
+
+class TitularDelListadoTests(SimpleTestCase):
+    def test_el_formato_dice_de_quien_es(self):
+        from motor.financiera.integrantes import integrante_del_titular, titulares_del_documento
+
+        socafer = IntegranteTecnico("SOCAFER SAS", None, 0.3, None)
+        emaus = IntegranteTecnico("M&D EMAUS CONSTRUCCIONES S.A.S", None, 0.7, None)
+        texto = "FORMATO 5C SALDO CONTRATOS EN EJECUCION (SCE) PROPONENTE O INTEGRANTE: M&D EMAUS SAS FECHA: 3/08/2026"
+        self.assertEqual(titulares_del_documento(texto), ["M&D EMAUS SAS"])
+        self.assertIs(integrante_del_titular(titulares_del_documento(texto), [socafer, emaus]), emaus)
+        # El texto de las notas no es un rótulo.
+        nota = "NOTA 2: EL FORMULARIO DEBE SER DILIGENCIADO POR EL PROPONENTE O POR CADA UNO DE LOS INTEGRANTES"
+        self.assertEqual(titulares_del_documento(nota), [])
+        # Dos integrantes con el mismo parecido: nadie gana, se decide por otra vía.
+        a = IntegranteTecnico("VIAS DEL SUR S.A.S", None, 0.5, None)
+        b = IntegranteTecnico("VIAS DEL NORTE S.A.S", None, 0.5, None)
+        self.assertIsNone(integrante_del_titular(["VIAS DEL"], [a, b]))

@@ -403,7 +403,9 @@ def _integrantes_de_tabla(contenido: bytes) -> list[Integrante]:
                 for fila in filas:
                     celdas = [c for c in fila if c]
                     texto = _norm(" ".join(celdas))
-                    if not celdas or "NOMBRE DEL INTEGRANTE" in texto or re.match(r"^(?:TOTAL|\(%\))", texto):
+                    # La fila del total ("TOTAL", "PORCENTAJE TOTAL 100%") no es un integrante.
+                    if not celdas or "NOMBRE DEL INTEGRANTE" in texto or re.match(r"^(?:TOTAL|\(%\))", texto) \
+                            or re.search(r"\bPORCENTAJE\s+TOTAL\b", texto):
                         continue
                     porcentaje = next((c for c in celdas if _PORCENTAJE_CELDA_RE.match(c)), None)
                     otras = [_norm(c) for c in celdas if not _PORCENTAJE_CELDA_RE.match(c)]

@@ -60,7 +60,10 @@ OCR_REFORZADO_RESOLUCION = 300
 OCR_REFORZADO_UMBRAL = 120
 
 
-def _ocr_pagina(page, reforzado: bool = False) -> str:
+def _ocr_pagina(page, reforzado: bool = False, filas: bool = False) -> str:
+    """`filas`: tesseract en modo bloque uniforme (--psm 6), que conserva cada
+    fila de una tabla (etiqueta y cifras juntas) en vez de leer columna por
+    columna; lo usan los estados financieros escaneados."""
     if reforzado:
         imagen = page.to_image(resolution=OCR_REFORZADO_RESOLUCION).original.convert("L")
         imagen = imagen.point(lambda v: 255 if v > OCR_REFORZADO_UMBRAL else 0)
@@ -71,13 +74,54 @@ def _ocr_pagina(page, reforzado: bool = False) -> str:
     del imagen
     entorno = {**os.environ, "OMP_THREAD_LIMIT": "2"}
     salida = subprocess.run(
-        ["tesseract", "stdin", "stdout", "-l", "spa", *(["--psm", "6"] if reforzado else [])],
+        ["tesseract", "stdin", "stdout", "-l", "spa", *(["--psm", "6"] if reforzado or filas else [])],
         input=buffer.getvalue(),
         capture_output=True,
         timeout=OCR_TIMEOUT_SEGUNDOS,
         env=entorno,
     )
     return salida.stdout.decode("utf-8", errors="ignore")
+
+
+def texto_pagina_tabla(page) -> str:
+    """Texto de la página pensado para tablas: si es escaneada (imagen con
+    poco o ningún texto), se lee con OCR fila por fila (--psm 6), de modo que
+    la etiqueta de cada renglón quede junto a sus cifras. Cacheado aparte del
+    OCR general."""
+    crudo = page.extract_text() or ""
+    if len(crudo.strip()) >= 300 or not page.images or not OCR_HABILITADO:
+        return texto_pagina(page)
+    huella = getattr(page.pdf, "_huella_contenido", None)
+    cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}_filas.txt" if huella else None
+    try:
+        if cache is not None and cache.exists():
+            return cache.read_text(encoding="utf-8") or crudo
+        ocr = _ocr_pagina(page, filas=True)
+        if cache is not None:
+            OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache.write_text(ocr, encoding="utf-8")
+        return ocr if len(ocr.strip()) > len(crudo.strip()) else crudo
+    except Exception:  # noqa: BLE001
+        return texto_pagina(page)
+
+
+def texto_de_tablas(contenido: bytes, max_paginas: int = 15) -> str:
+    """Texto del PDF leyendo cada página como tabla (ver `texto_pagina_tabla`)."""
+    with abrir_pdf(contenido) as pdf:
+        partes = []
+        for page in pdf.pages[:max_paginas]:
+            partes.append(texto_pagina_tabla(page))
+            page.flush_cache()
+    return " ".join(partes)
+
+
+def texto_completo(contenido: bytes, max_paginas: int = 15) -> str:
+    """Las dos lecturas del PDF, una detrás de la otra: la normal y la de
+    tablas (OCR fila por fila). Cada una rescata lo que la otra pierde en los
+    escaneados, y ambas quedan cacheadas."""
+    normal = extraer_texto(contenido, max_paginas=max_paginas)
+    tablas = texto_de_tablas(contenido, max_paginas=max_paginas)
+    return f"{normal}\n{tablas}" if tablas.strip() != normal.strip() else normal
 
 
 def paginas_ocr_reforzado(

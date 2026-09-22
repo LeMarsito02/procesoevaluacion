@@ -70,3 +70,53 @@ def estados_del_integrante(integrante: IntegranteTecnico, estados: dict[str, str
         if _del_integrante(integrante, texto, integrantes):
             suyos[clave] = texto
     return suyos
+
+
+# El propio formato dice de quién es: "PROPONENTE O INTEGRANTE: X",
+# "INTEGRANTES (SI ES OFERENTE PLURAL): X".
+_TITULAR_RE = re.compile(
+    r"(?:NOMBRE\s+DEL\s+)?(?:PROPONENTRE|PROPONENTE|OFERENTE)\s*(?:O\s*(?:INTEGRANTE|MIEMBRO))?\s*:\s*(.{3,90})"
+    r"|INTEGRANTES?\s*(?:\(SI\s+ES\s+OFERENTE\s+PLURAL\))?\s*:\s*(.{3,90})"
+)
+_FIN_TITULAR_RE = re.compile(r"\b(?:FECHA|NIT|C\.?C\.?|PROC|PROCESO|CON\s+EL\s+FIN|SENORES?|NUMERO)\b")
+_PALABRAS_TITULAR = {"CONSORCIO", "UNION", "TEMPORAL", "SAS", "SA", "LTDA", "EU", "BIC", "DEL", "DE", "LA", "Y", "O"}
+
+
+def titulares_del_documento(texto: str) -> list[str]:
+    """Nombres que el formato declara como suyos (el del proponente plural y
+    el del integrante)."""
+    nombres = []
+    for m in _TITULAR_RE.finditer(normalizar(texto)):
+        bruto = m.group(1) or m.group(2) or ""
+        corte = _FIN_TITULAR_RE.search(bruto)
+        nombre = " ".join(bruto[: corte.start() if corte else len(bruto)].split()).strip(" .,:-_")
+        if len(nombre) >= 4:
+            nombres.append(nombre)
+    return nombres
+
+
+def _tokens(nombre: str) -> set[str]:
+    return {p for p in re.findall(r"[A-Z0-9&]{2,}", normalizar(nombre).replace(".", "").replace(" & ", "&"))
+            if p not in _PALABRAS_TITULAR}
+
+
+def integrante_del_titular(titulares: list[str], integrantes: list[IntegranteTecnico]) -> IntegranteTecnico | None:
+    """El integrante al que se refiere el formato: el que comparte más
+    palabras con alguno de los títulos y gana con claridad."""
+    puntajes = []
+    for integrante in integrantes:
+        propias = _tokens(integrante.nombre)
+        mejor = max((len(propias & _tokens(t)) for t in titulares), default=0)
+        puntajes.append((mejor, integrante))
+    puntajes.sort(key=lambda x: -x[0])
+    if not puntajes or puntajes[0][0] < 1:
+        return None
+    if len(puntajes) > 1 and puntajes[1][0] >= puntajes[0][0]:
+        return None
+    if puntajes[0][0] == 1:
+        # Una sola palabra en común: vale si es distintiva ("KONKON") y de
+        # nadie más.
+        comunes = {p for t in titulares for p in _tokens(t)} & _tokens(puntajes[0][1].nombre)
+        if not any(len(p) >= 5 for p in comunes):
+            return None
+    return puntajes[0][1]

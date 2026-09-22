@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 from motor.llm.cliente import cita_literal, consultar_json
-from motor.procesamiento.pdf_utils import extraer_texto
+from motor.procesamiento.pdf_utils import texto_completo
 from motor.tecnica.rup import normalizar, numero
 
 PAGINAS_POR_SOPORTE = 15
@@ -22,12 +22,16 @@ PAGINAS_POR_SOPORTE = 15
 # páginas (actas largas: la relación de longitudes va al final), se sigue
 # leyendo solo ese documento.
 PAGINAS_SOPORTE_DEL_CONTRATO = 40
-_UNIDAD = r"(KMS?|KILOMETROS?|ML|MTS?|METROS?(?:\s+LINEALES)?)\b"
+# La unidad no puede ser de área ni de volumen ("METROS CUADRADOS" no es longitud).
+_UNIDAD = r"(KMS?|KILOMETROS?|ML|MTS?|METROS?(?:\s+LINEALES)?)\b(?!\s*(?:CUADRADOS|CUBICOS|2|3|²|³))"
 _VERBO = r"(?:INTERVEN|EJECUT|CONSTRU|PAVIMENT|MEJOR|REHABILIT|RECONSTRU|REPAVIMENT|ATENDID)\w*"
 _LONGITUD_RE = re.compile(
     rf"LONGITUD(?:ES)?[^\n\d]{{0,60}}?{_VERBO}[^\n\d]{{0,40}}?(\d[\d.,]*)\s*{_UNIDAD}"
     rf"|{_VERBO}[^\n\d]{{0,15}}(?:UNA\s+)?LONGITUD[^\n\d]{{0,30}}?(\d[\d.,]*)\s*{_UNIDAD}"
     rf"|{_VERBO}[^\n\d]{{0,30}}?(\d[\d.,]*)\s*(KMS?|KILOMETROS?|METROS\s+LINEALES)\b"
+    # La cifra escrita en letras y repetida entre paréntesis: "LONGITUD TOTAL
+    # DE VIA INTERVENIDA FUE DE SEIS MIL … PUNTO CINCO METROS LINEALES (6.872.5) ML".
+    rf"|LONGITUD(?:ES)?(?:[^\n]|\n(?!\s*\n)){{0,140}}?\(\s*(\d[\d.,]*)\s*\)\s*{_UNIDAD}"
 )
 # Área intervenida: no reemplaza la longitud (el pliego pide longitud, 3.5.5 D;
 # el evaluador técnico la pide como aclaración), pero se reporta.
@@ -169,9 +173,11 @@ def longitud_con_ia(texto: str) -> tuple[float | None, str | None]:
 
 
 def _texto_soporte(pdfs: dict[str, bytes], textos: dict[str, str], archivo: str) -> str:
+    """Texto del soporte; las páginas escaneadas, fila por fila (las actas
+    traen la relación de longitudes en tablas)."""
     if archivo not in textos:
         try:
-            textos[archivo] = normalizar(extraer_texto(pdfs[archivo], max_paginas=PAGINAS_POR_SOPORTE))
+            textos[archivo] = normalizar(texto_completo(pdfs[archivo], max_paginas=PAGINAS_POR_SOPORTE))
         except Exception:  # noqa: BLE001
             textos[archivo] = ""
     return textos[archivo]
@@ -187,36 +193,115 @@ def _cita_el_contrato(archivo: str, texto: str, numeros: list[str], palabras: se
     return cita_numero and (not palabras or any(p in texto for p in palabras))
 
 
-def soporte_del_contrato(pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str) -> str | None:
-    """Primer soporte (acta, certificación) que cita el contrato (3.5.6)."""
+# Palabras que aparecen en casi todos los objetos de obra: no distinguen un
+# contrato de otro.
+_PALABRAS_OBJETO_COMUNES = {
+    "CONSTRUCCION", "MANTENIMIENTO", "MEJORAMIENTO", "REHABILITACION", "REPARACION", "ADECUACION", "CONTRATO",
+    "CONTRATAR", "EJECUCION", "EJECUTAR", "REALIZAR", "PROYECTO", "PROYECTOS", "MUNICIPIO", "DEPARTAMENTO",
+    "VIAS", "VIAL", "VIALES", "OBRA", "OBRAS", "CIVILES", "PUBLICA", "PUBLICO", "INFRAESTRUCTURA", "SERVICIOS",
+    "MEDIANTE", "SISTEMA", "PRECIOS", "UNITARIOS", "ACTIVIDADES", "NECESARIAS", "INCLUIDA", "TERRITORIO",
+    "NACIONAL", "GENERAL", "ESTUDIOS", "DISENOS", "SUMINISTRO", "INTERVENTORIA", "CORRESPONDIENTE",
+}
+# Palabras del objeto que tienen que aparecer en el soporte para darlo por suyo.
+_MINIMO_PALABRAS_OBJETO = 5
+_FRACCION_PALABRAS_OBJETO = 0.7
+
+
+def _palabras_del_objeto(objeto: str) -> list[str]:
+    palabras = [p for p in re.findall(r"[A-ZÑ]{6,}", normalizar(objeto)) if p not in _PALABRAS_OBJETO_COMUNES]
+    # Las más largas son las que identifican el contrato (nombres de vías, veredas).
+    vistas: list[str] = []
+    for p in sorted(dict.fromkeys(palabras), key=len, reverse=True):
+        vistas.append(p)
+        if len(vistas) == 8:
+            break
+    return vistas
+
+
+def _coinciden_objeto(objeto: str, texto: str) -> int:
+    """Cuántas palabras que identifican al contrato trae el soporte."""
+    palabras = _palabras_del_objeto(objeto)
+    if len(palabras) < _MINIMO_PALABRAS_OBJETO:
+        return 0
+    coinciden = sum(1 for p in palabras if p in texto)
+    return coinciden if coinciden >= max(_MINIMO_PALABRAS_OBJETO, len(palabras) * _FRACCION_PALABRAS_OBJETO) else 0
+
+
+def _objeto_en(objeto: str, texto: str) -> bool:
+    return _coinciden_objeto(objeto, texto) > 0
+
+
+def _nombre_parecido(palabras: set[str], texto: str) -> bool:
+    """El contratante aparece aunque el Formato 3 lo escriba con un error de
+    digitación ("VALLEDUAR" por "VALLEDUPAR")."""
+    if not palabras:
+        return True
+    del_texto = set(re.findall(r"[A-Z]{5,}", texto))
+    for p in palabras:
+        if p in del_texto:
+            return True
+        if any(abs(len(p) - len(q)) <= 1 and sum(1 for a, b in zip(p, q) if a != b) <= 1 and q[:4] == p[:4]
+               for q in del_texto):
+            return True
+    return False
+
+
+# El documento tiene que ser uno de los del pliego 3.5.6 (acta o
+# certificación), no el propio Formato 3 ni el RUP.
+_ES_ACTA_RE = re.compile(r"\bACTA\b|CERTIFIC|LIQUIDACION|RECIBO\s+(?:FINAL|DEFINITIVO)|TERMINACION|CONSTANCIA")
+_ES_FORMATO3_RE = re.compile(r"FORMATO\s*(?:N[O°º]\.?\s*)?3\b|CCE-EICP-FM-04|EXPERIENCIA\s*[-–]\s*DOCUMENTO\s+TIPO")
+
+
+def _puede_ser_acta(archivo: str, texto: str) -> bool:
+    inicio = texto[:1500]
+    return bool(_ES_ACTA_RE.search(inicio) or _ES_ACTA_RE.search(normalizar(archivo))) and not _ES_FORMATO3_RE.search(inicio)
+
+
+def _es_del_contrato(archivo: str, texto: str, numeros: list[str], palabras: set[str], objeto: str) -> bool:
+    """El documento habla de este contrato: cita su número junto al
+    contratante o, si el Formato 3 lo escribe distinto, describe el mismo
+    objeto (con casi todas las palabras que lo identifican)."""
+    if numeros and _cita_el_contrato(archivo, texto, numeros, palabras):
+        return True
+    coinciden = _coinciden_objeto(objeto, texto)
+    return bool(coinciden) and (coinciden >= 6 or _nombre_parecido(palabras, texto))
+
+
+def _palabras_contratante(contratante: str) -> set[str]:
+    return {p for p in re.findall(r"[A-Z]{5,}", normalizar(contratante))} - _PALABRAS_GENERICAS
+
+
+def soporte_del_contrato(pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str,
+                         objeto: str = "") -> str | None:
+    """Acta o certificación del contrato (3.5.6)."""
     numeros = numeros_del_contrato(numero_contrato)
-    if not numeros:
-        return None
-    palabras = {p for p in re.findall(r"[A-Z]{5,}", normalizar(contratante))} - _PALABRAS_GENERICAS
+    palabras = _palabras_contratante(contratante)
     for archivo in soportes_candidatos(pdfs):
-        if _cita_el_contrato(archivo, _texto_soporte(pdfs, textos, archivo), numeros, palabras):
+        texto = _texto_soporte(pdfs, textos, archivo)
+        if _puede_ser_acta(archivo, texto) and _es_del_contrato(archivo, texto, numeros, palabras, objeto):
             return archivo
     return None
 
 
 def longitud_del_contrato(
-    pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str,
+    pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str, objeto: str = "",
 ) -> tuple[float | None, str | None, str | None]:
     """(mayor longitud en km encontrada, archivo, cita si la leyó la IA local)
     en los soportes que citan el número del contrato. Primero las frases
     explícitas; si no hay, el modelo local con verificación de la cita.
     `textos` es la memoria de los textos ya leídos."""
     numeros = numeros_del_contrato(numero_contrato)
-    if not numeros:
+    palabras = _palabras_contratante(contratante)
+    if not numeros and not objeto:
         return None, None, None
-    palabras = {p for p in re.findall(r"[A-Z]{5,}", normalizar(contratante))} - _PALABRAS_GENERICAS
     mejor: tuple[float | None, str | None] = (None, None)
     citados: list[str] = []
     for archivo in soportes_candidatos(pdfs):
         texto = _texto_soporte(pdfs, textos, archivo)
         # El número del contrato junto a la palabra "contrato" (un 688 suelto
-        # puede ser un valor o una cantidad de otro contrato), o en la carpeta.
-        if not _cita_el_contrato(archivo, texto, numeros, palabras):
+        # puede ser un valor o una cantidad de otro contrato), en la carpeta, o
+        # el mismo objeto.
+        if not _es_del_contrato(archivo, texto, numeros, palabras, objeto):
             continue
         citados.append(archivo)
         longitudes = longitudes_en(texto)
@@ -227,7 +312,7 @@ def longitud_del_contrato(
             clave = f"{archivo}#completo"
             if clave not in textos:
                 try:
-                    textos[clave] = normalizar(extraer_texto(pdfs[archivo], max_paginas=PAGINAS_SOPORTE_DEL_CONTRATO))
+                    textos[clave] = normalizar(texto_completo(pdfs[archivo], max_paginas=PAGINAS_SOPORTE_DEL_CONTRATO))
                 except Exception:  # noqa: BLE001
                     textos[clave] = textos[archivo]
             longitudes = longitudes_en(textos[clave])
