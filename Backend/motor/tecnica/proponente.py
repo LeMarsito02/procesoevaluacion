@@ -12,7 +12,7 @@ from motor.evaluacion.proponente_plural import datos_formato2, integrantes_forma
 from motor.procesamiento.pdf_utils import buscar_pagina
 from motor.tecnica.experiencia import IntegranteTecnico, ResultadoLote, evaluar_experiencia
 from motor.tecnica.formato3 import Formato3, leer_excel, leer_pdf
-from motor.tecnica.longitud import area_del_contrato, longitud_del_contrato
+from motor.tecnica.longitud import area_del_contrato, longitud_del_contrato, soporte_del_contrato
 from motor.tecnica.puntaje import Factor, discapacidad, emprendimiento_mujeres, factor_calidad, industria_nacional, mipyme
 from motor.tecnica.parametros import ParametrosTecnicos
 from motor.tecnica.rup import Rup, leer_rups as leer_rups_del_texto, normalizar, texto_del_pdf
@@ -248,6 +248,7 @@ def evaluar_proponente_tecnico(
         lambda c: longitud_del_contrato(pdfs, textos, c.numero_contrato, c.contratante),
         verificador_de_socios(pdfs, integrantes, fecha_cierre),
         lambda c: area_del_contrato(pdfs, textos, c.numero_contrato, c.contratante),
+        lambda c: soporte_del_contrato(pdfs, textos, c.numero_contrato, c.contratante),
     )
     resultado.puntaje = aplicar_puntajes_del_pliego([
         *factor_calidad(pdfs, codigo_proceso),

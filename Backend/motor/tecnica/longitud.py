@@ -89,8 +89,14 @@ _PALABRAS_GENERICAS = {
 
 
 def soportes_candidatos(pdfs: dict[str, bytes]) -> list[str]:
-    candidatos = [a for a in pdfs if _PISTA_SOPORTE_RE.search(normalizar(a)) and not _NO_ES_SOPORTE_RE.search(normalizar(a))]
-    return candidatos or [a for a in pdfs if not _NO_ES_SOPORTE_RE.search(normalizar(a))]
+    """Documentos que pueden ser actas o certificaciones. Lo que no lo es se
+    reconoce por el nombre del archivo, no por la carpeta (las actas suelen
+    ir dentro de la carpeta "FORMATO 3")."""
+    def no_es(a: str) -> bool:
+        return bool(_NO_ES_SOPORTE_RE.search(normalizar(a.rsplit("/", 1)[-1])))
+
+    candidatos = [a for a in pdfs if _PISTA_SOPORTE_RE.search(normalizar(a)) and not no_es(a)]
+    return candidatos or [a for a in pdfs if not no_es(a)]
 
 
 _INSTRUCCION_IA = (
@@ -162,6 +168,37 @@ def longitud_con_ia(texto: str) -> tuple[float | None, str | None]:
     return km, " ".join(cita.split())[:240]
 
 
+def _texto_soporte(pdfs: dict[str, bytes], textos: dict[str, str], archivo: str) -> str:
+    if archivo not in textos:
+        try:
+            textos[archivo] = normalizar(extraer_texto(pdfs[archivo], max_paginas=PAGINAS_POR_SOPORTE))
+        except Exception:  # noqa: BLE001
+            textos[archivo] = ""
+    return textos[archivo]
+
+
+def _cita_el_contrato(archivo: str, texto: str, numeros: list[str], palabras: set[str]) -> bool:
+    """El soporte cita el número del contrato (junto a la palabra
+    "contrato", o en el nombre del archivo) y a su contratante."""
+    cita_numero = any(
+        re.search(rf"CONTRATO(?:[^\n]|\n(?!\s*\n)){{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
+        for n in numeros
+    )
+    return cita_numero and (not palabras or any(p in texto for p in palabras))
+
+
+def soporte_del_contrato(pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str) -> str | None:
+    """Primer soporte (acta, certificación) que cita el contrato (3.5.6)."""
+    numeros = numeros_del_contrato(numero_contrato)
+    if not numeros:
+        return None
+    palabras = {p for p in re.findall(r"[A-Z]{5,}", normalizar(contratante))} - _PALABRAS_GENERICAS
+    for archivo in soportes_candidatos(pdfs):
+        if _cita_el_contrato(archivo, _texto_soporte(pdfs, textos, archivo), numeros, palabras):
+            return archivo
+    return None
+
+
 def longitud_del_contrato(
     pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str,
 ) -> tuple[float | None, str | None, str | None]:
@@ -176,20 +213,10 @@ def longitud_del_contrato(
     mejor: tuple[float | None, str | None] = (None, None)
     citados: list[str] = []
     for archivo in soportes_candidatos(pdfs):
-        if archivo not in textos:
-            try:
-                textos[archivo] = normalizar(extraer_texto(pdfs[archivo], max_paginas=PAGINAS_POR_SOPORTE))
-            except Exception:  # noqa: BLE001
-                textos[archivo] = ""
-        texto = textos[archivo]
+        texto = _texto_soporte(pdfs, textos, archivo)
         # El número del contrato junto a la palabra "contrato" (un 688 suelto
         # puede ser un valor o una cantidad de otro contrato), o en la carpeta.
-        cita_numero = any(
-            re.search(rf"CONTRATO(?:[^\n]|\n(?!\s*\n)){{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
-            for n in numeros
-        )
-        cita_contratante = not palabras or any(p in texto for p in palabras)
-        if not (cita_numero and cita_contratante):
+        if not _cita_el_contrato(archivo, texto, numeros, palabras):
             continue
         citados.append(archivo)
         longitudes = longitudes_en(texto)

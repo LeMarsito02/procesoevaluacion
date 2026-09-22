@@ -124,6 +124,7 @@ def _detalle_lote(lote: ResultadoLote, resultado: ResultadoTecnico) -> dict:
                 "cita_longitud": c.cita_longitud,
                 "area_m2": c.area_m2,
                 "soporte_area": c.soporte_area,
+                "soporte": c.soporte,
                 "problemas": c.problemas,
             }
             for c in lote.contratos

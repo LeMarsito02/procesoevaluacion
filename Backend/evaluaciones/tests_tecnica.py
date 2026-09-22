@@ -449,3 +449,15 @@ class AnaliticaTests(SimpleTestCase):
         self.assertEqual(r["proponentes_resueltos_solos"], 1)
         self.assertEqual(r["proponentes_resueltos_solos_mal"], 1)
         self.assertEqual(r["segundos_por_proponente"], 20)
+
+
+class SoporteDelContratoTests(SimpleTestCase):
+    def test_contrato_sin_acta_ni_certificacion_va_a_revision(self):
+        cierre = date(2026, 8, 3)
+        integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0, _rup("VIAS ALFA S.A.S.", _exp("12", 1600)))
+        formato3 = Formato3("f3", [_fila(1, "12", "VIAS ALFA")])
+        con, _ = evaluar_experiencia(formato3, [integrante], _parametros(), cierre, False, buscar_soporte=lambda c: "acta.pdf")
+        sin, _ = evaluar_experiencia(formato3, [integrante], _parametros(), cierre, False, buscar_soporte=lambda c: None)
+        self.assertTrue(con.cumple, con.motivos)
+        self.assertFalse(sin.cumple)
+        self.assertTrue(any("acta o certificación" in m for m in sin.motivos))

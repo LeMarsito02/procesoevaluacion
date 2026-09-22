@@ -64,6 +64,9 @@ class ContratoEvaluado:
     # Cita del soporte cuando la longitud la leyó el modelo local.
     cita_longitud: str | None = None
     longitud_buscada: bool = False
+    # Acta o certificación que cita el contrato (3.5.6).
+    soporte: str | None = None
+    soporte_buscado: bool = False
     # Área intervenida (m²) cuando el soporte no trae la longitud.
     area_m2: float | None = None
     soporte_area: str | None = None
@@ -260,12 +263,14 @@ BuscarLongitud = Callable[[ContratoEvaluado], tuple[float | None, str | None, st
 BuscarArea = Callable[[ContratoEvaluado], tuple[float | None, str | None, str | None]]
 # Verifica la experiencia de socios de un integrante (3.5.2 E): (vale, explicación).
 VerificarSocio = Callable[[str], tuple[bool | None, str]]
+BuscarSoporte = Callable[[ContratoEvaluado], str | None]
 
 
 def evaluar_lote(
     lote: LoteTecnico, contratos: list[ContratoEvaluado], integrantes: list[IntegranteTecnico],
     parametros: ParametrosTecnicos, plural: bool, buscar_longitud: BuscarLongitud | None = None,
     verificar_socio: VerificarSocio | None = None, buscar_area: BuscarArea | None = None,
+    buscar_soporte: BuscarSoporte | None = None,
 ) -> ResultadoLote:
     resultado = ResultadoLote(lote=lote.nombre, longitud_minima_km=lote.longitud_minima_km)
     del_lote = [c for c in contratos if lote.nombre in c.lotes]
@@ -327,11 +332,25 @@ def evaluar_lote(
         resultado.longitud = _longitud_del_lote(lote, validos, resultado, buscar_longitud, buscar_area)
     if plural:
         resultado.condiciones_plural = _condiciones_plural(resultado, validos, integrantes, parametros)
+    # Cada contrato que cuenta necesita su acta o certificación: el evaluador
+    # verifica el objeto con ella y rechaza el que solo está en el RUP.
+    sin_soporte = []
+    if buscar_soporte is not None:
+        for c in validos:
+            if not c.soporte_buscado:
+                c.soporte, c.soporte_buscado = buscar_soporte(c), True
+            if c.soporte is None:
+                sin_soporte.append(c)
+                resultado.motivos.append(
+                    f"contrato {c.orden}: no se encontró su acta o certificación entre los documentos de la oferta (3.5.6); "
+                    "verifica que el proponente la haya aportado"
+                )
     exigencias = [cumple_valor, resultado.un_contrato_70 is not False, resultado.condiciones_plural is not False]
     dudas = [
         any(objeto[id(c)] is None or (c.de_un_socio and not socio_ok.get(id(c))) for c in validos),
         lote.longitud_minima_km is not None and resultado.longitud is not True,
         plural and resultado.condiciones_plural is None,
+        bool(sin_soporte),
     ]
     resultado.cumple = all(exigencias) and not any(dudas)
     return resultado
@@ -422,6 +441,7 @@ def evaluar_experiencia(
     formato3: Formato3 | None, integrantes: list[IntegranteTecnico], parametros: ParametrosTecnicos,
     fecha_cierre: date, plural: bool, buscar_longitud: BuscarLongitud | None = None,
     verificar_socio: VerificarSocio | None = None, buscar_area: BuscarArea | None = None,
+    buscar_soporte: BuscarSoporte | None = None,
 ) -> list[ResultadoLote]:
     if formato3 is None:
         return [
@@ -430,6 +450,6 @@ def evaluar_experiencia(
         ]
     contratos = [cruzar_contrato(f, integrantes, parametros, parametros.lotes, fecha_cierre) for f in formato3.contratos]
     return [
-        evaluar_lote(l, contratos, integrantes, parametros, plural, buscar_longitud, verificar_socio, buscar_area)
+        evaluar_lote(l, contratos, integrantes, parametros, plural, buscar_longitud, verificar_socio, buscar_area, buscar_soporte)
         for l in parametros.lotes
     ]

@@ -180,7 +180,7 @@ _SECCION_SCE_RE = re.compile(
 _FIN_SCE_RE = re.compile(r"EN\s+CONSTANCIA|NOTA\s*1\s*:|FIRMA\s+REPRESENTANTE|FORMATO\s*(?:N[O°º]\.?\s*)?5\s*(?:\.\s*[124]|-?\s*[ABD])\b")
 # La fila de total del listado: "SUMATORIA COLUMNA (F) $2.935.598.357", "TOTAL $ 4.412.531.329,82".
 _TOTAL_SCE_RE = re.compile(
-    r"(?:SUMATORIA\s+(?:DE\s+LA\s+)?COLUMNA\s*\(?\s*F\s*\)?\s*:?\s*\$?"
+    r"(?:SUMATORIA\s+(?:DE\s+LA\s+)?COLUMNA\s*\(?\s*(?:F|\d{1,2})\s*\)?\s*[-:]?\s*\$?"
     r"|(?<!VALOR\s)(?<!VALOR\s\s)\bTOTAL(?:\s+(?:SCE|SALDOS?|GENERAL)[A-Z\s()]{0,40}?)?\s*:?\s*\$"
     r"|(?<!\()\bSCE\s*:?\s*\$"
     r"|VALOR\s+TOTAL\s+(?:DE\s+LOS\s+)?CONTRATOS\s+EN\s+EJECUCION[^$\d]{0,40}\$"
@@ -338,12 +338,14 @@ def _bloques_sce_hoja(contenido: bytes) -> list[tuple[str, float | None]]:
         while i < len(filas):
             textos = [normalizar(str(c or "")) for c in filas[i]]
             columna = next((j for j, t in enumerate(textos)
-                            if re.search(r"SALDO\s+DEL\s+CONTRATO\s+EN\s+EJECUCION", t) and "DIARIO" not in t), None)
+                            # Celda de encabezado, no una nota que la nombra.
+                            if re.search(r"SALDO\s+DEL\s+CONTRATO\s+EN\s+EJECUCION", t) and "DIARIO" not in t
+                            and len(t) < 160 and not t.lstrip().startswith("NOTA")), None)
             if columna is None:
                 contexto.append(" ".join(t for t in textos if t))
                 i += 1
                 continue
-            suma, n, total, valido = 0.0, 0, None, True
+            suma, n, total, valido, con_valor = 0.0, 0, None, True, False
             i += 1
             while i < len(filas):
                 fila, cruda = filas[i], crudas[i] if i < len(crudas) else ()
@@ -364,8 +366,13 @@ def _bloques_sce_hoja(contenido: bytes) -> list[tuple[str, float | None]]:
                         valido = False
                     suma += float(valor)
                     n += 1
+                if any(isinstance(c, (int, float)) and not isinstance(c, bool) and c >= 1_000_000
+                       for j, c in enumerate(fila) if j != columna):
+                    con_valor = True  # la fila trae un contrato (su valor en pesos)
                 i += 1
             dato = max(suma, total or 0.0) if valido and (n or total is not None) else None
+            if dato == 0 and con_valor:
+                dato = None  # contratos con valor y saldo cero: fórmulas sin calcular o mal leídas
             bloques.append((" ".join(contexto[-15:]), dato))
             contexto = []
     return bloques

@@ -477,7 +477,14 @@ def parametros_tecnicos_de(proceso) -> dict | None:
     """Parámetros de la evaluación técnica leídos del pliego del proceso. Se
     calculan una vez y quedan guardados; None si el proceso no tiene el
     pliego o falta el salario mínimo del año del cierre."""
-    if proceso.parametros_tecnicos:
+    import dataclasses
+
+    from motor.tecnica.parametros import ParametrosTecnicos
+
+    campos = {f.name for f in dataclasses.fields(ParametrosTecnicos)}
+    # Guardados con una versión anterior del motor (p. ej. sin los puntos
+    # que da el pliego a cada factor): se vuelven a leer del pliego.
+    if proceso.parametros_tecnicos and campos <= set(proceso.parametros_tecnicos):
         return proceso.parametros_tecnicos
     analisis = proceso.analisis_pliego
     salario = salario_minimo(proceso.fecha_cierre.year)
