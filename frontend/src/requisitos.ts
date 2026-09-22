@@ -6,7 +6,7 @@
  * `establecerCatalogo`. Los valores de abajo son la base del sistema (jurídica
  * de referencia, sin RUT) y sirven mientras no haya otro. */
 
-export type GrupoRequisito = 'oferta' | 'camara' | 'antecedentes' | 'adicionales'
+export type GrupoRequisito = 'oferta' | 'camara' | 'antecedentes' | 'experiencia' | 'puntaje' | 'adicionales'
 
 export interface InfoRequisito {
   numero: number
@@ -24,10 +24,12 @@ export const GRUPOS: Record<GrupoRequisito, string> = {
   oferta: 'Documentos de la oferta',
   camara: 'Cámara de Comercio',
   antecedentes: 'Antecedentes',
+  experiencia: 'Experiencia habilitante',
+  puntaje: 'Puntaje',
   adicionales: 'Requisitos adicionales',
 }
 
-export const ORDEN_GRUPOS: GrupoRequisito[] = ['oferta', 'camara', 'antecedentes', 'adicionales']
+export const ORDEN_GRUPOS: GrupoRequisito[] = ['oferta', 'camara', 'antecedentes', 'experiencia', 'puntaje', 'adicionales']
 
 export const REQUISITOS: InfoRequisito[] = [
   {

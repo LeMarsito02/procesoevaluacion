@@ -218,3 +218,58 @@ def leer_cedula(
     que nadie la confirme)."""
     lectura = leer_cedula_detallado(contenido, cedula, max_paginas, paginas)
     return lectura.fecha if lectura.confirmada else None
+
+
+INSTRUCCION_FIRMA = (
+    "Mira la parte de abajo de este formulario escaneado, donde va la firma. ¿Hay una firma manuscrita (trazo a mano, "
+    "con tinta) sobre la línea o junto al nombre de quien firma? Un nombre escrito a máquina no es una firma. "
+    'Responde SOLO JSON: {"firma_manuscrita": true o false}'
+)
+
+
+def firma_manuscrita(contenido: bytes, max_paginas: int = 2) -> bool | None:
+    """En un formulario escaneado (la página es una sola imagen), ¿hay una
+    firma a mano en la zona de la firma? Se mira la mitad de abajo de cada
+    página. None si el modelo no está o no respondió. Cada respuesta queda en
+    caché por página (en una GPU pequeña tarda casi un minuto)."""
+    import hashlib
+
+    from motor.procesamiento.pdf_utils import OCR_CACHE_DIR, abrir_pdf
+
+    if not HABILITADO:
+        return None
+    huella = hashlib.sha256(contenido).hexdigest()[:32]
+    vistas: list[bool] = []
+    with abrir_pdf(contenido) as pdf:
+        for page in pdf.pages[:max_paginas]:
+            cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}_firma_{MODELO.replace(':', '_')}.json"
+            if cache.exists():
+                respuesta = json.loads(cache.read_text())
+            else:
+                try:
+                    imagen = page.to_image(resolution=150).original.convert("RGB")
+                    imagen = imagen.crop((0, int(imagen.height * 0.45), imagen.width, imagen.height))
+                    imagen.thumbnail((1000, 1000))
+                    buffer = io.BytesIO()
+                    imagen.save(buffer, format="JPEG", quality=85)
+                    respuesta = requests.post(
+                        f"{URL}/api/chat", timeout=TIEMPO_MAXIMO,
+                        json={"model": MODELO, "stream": False, "format": "json", "options": {"temperature": 0},
+                              "messages": [{"role": "user", "content": INSTRUCCION_FIRMA,
+                                            "images": [base64.b64encode(buffer.getvalue()).decode()]}]},
+                    )
+                    respuesta.raise_for_status()
+                    encontrado = re.search(r"\{.*\}", respuesta.json()["message"]["content"], re.S)
+                    respuesta = json.loads(encontrado.group(0)) if encontrado else {}
+                except Exception:  # noqa: BLE001
+                    return None
+                finally:
+                    page.flush_cache()
+                OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                cache.write_text(json.dumps(respuesta))
+            valor = respuesta.get("firma_manuscrita")
+            if valor is True:
+                return True
+            if valor is False:
+                vistas.append(False)
+    return False if vistas else None

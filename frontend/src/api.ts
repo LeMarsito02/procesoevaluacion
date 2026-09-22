@@ -162,6 +162,45 @@ export interface ResultadoRequisito {
   archivos_disponibles: string[]
   /** A quién se le exigió el certificado en este requisito y cómo le fue. */
   personas_antecedente: PersonaAntecedente[]
+  /** Evaluación técnica: contratos del lote o puntaje del factor. */
+  detalle?: DetalleTecnico | null
+}
+
+export interface ContratoTecnico {
+  orden: number
+  consecutivos: string[]
+  contratante: string
+  numero_contrato: string
+  objeto: string
+  valor_smmlv: number | null
+  participacion: number | null
+  valor_aportado: number | null
+  aportes: Record<string, number>
+  unspsc: boolean | null
+  de_un_socio: boolean
+  longitud_km: number | null
+  soporte_longitud: string | null
+  area_m2?: number | null
+  soporte_area?: string | null
+  problemas: string[]
+}
+
+export interface DetalleTecnico {
+  lote?: string
+  valor_a_certificar?: number | null
+  factor?: number | null
+  valor_certificado?: number
+  un_contrato_70?: boolean | null
+  longitud?: boolean | null
+  longitud_minima_km?: number | null
+  condiciones_plural?: boolean | null
+  aporte_por_integrante?: Record<string, number>
+  contratos?: ContratoTecnico[]
+  integrantes?: { nombre: string; nit: string | null; participacion: number | null; rup: string | null; tamano: string | null }[]
+  formato3?: string | null
+  factor_clave?: string
+  puntaje_maximo?: number
+  puntaje?: number | null
 }
 
 

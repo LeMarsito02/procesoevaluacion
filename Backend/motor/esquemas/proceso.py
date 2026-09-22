@@ -72,6 +72,9 @@ class ProcesoDocumentoBase(BaseModel):
     # Definición de evaluación de la entidad (motor.criterios.DefinicionEvaluacion
     # serializada). None = evaluación jurídica base del sistema.
     criterios: dict | None = Field(default=None, exclude=True)
+    # Parámetros de la evaluación técnica leídos del pliego
+    # (motor.tecnica.evaluador.parametros_a_dict). Solo en evaluaciones técnicas.
+    parametros_tecnicos: dict | None = Field(default=None, exclude=True)
 
 
 class AnalisisResponse(BaseModel):
@@ -156,6 +159,8 @@ class ResultadoRequisito(BaseModel):
     )
     copnia_fecha_expedicion: date | None = Field(default=None, description="Fecha de expedición del COPNIA")
 
+    # Desglose de la evaluación técnica (contratos de cada lote, puntaje).
+    detalle: dict | None = None
     error: str | None = Field(default=None, description="Error técnico (descarga, zip corrupto, archivo no encontrado)")
     archivos_disponibles: list[str] = Field(
         default_factory=list,

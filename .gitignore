@@ -31,3 +31,6 @@ Backend/almacenamiento/
 PRUEBASMIEVALUADOR/
 # Archivos locales de pruebas de la API (pueden llevar tokens)
 Backend/env/
+
+# Informe técnico real de referencia (material de prueba, no se versiona)
+EVALUACIONTECNICA/

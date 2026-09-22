@@ -25,6 +25,7 @@ from evaluaciones.servicios import (
     avances,
     definicion_de,
     guardar_resultados,
+    parametros_tecnicos_de,
     proponente_motor,
     reclamar,
     recuperar_huerfanos,
@@ -86,6 +87,8 @@ async def _atender(trabajo: Trabajo) -> None:
     documento = ProcesoDocumentoBase.model_validate(trabajo.evaluacion.proceso.documento_base)
     # Cómo evalúa la entidad (versión guardada en la evaluación).
     documento.criterios = (await sync_to_async(definicion_de)(trabajo.evaluacion)).model_dump(mode="json")
+    if trabajo.evaluacion.tipo == "tecnica":
+        documento.parametros_tecnicos = await sync_to_async(parametros_tecnicos_de)(trabajo.evaluacion.proceso)
     inicio = timezone.now()
     try:
         proponente = await sync_to_async(proponente_motor)(trabajo.proponente, trabajo.evaluacion)

@@ -1,0 +1,223 @@
+"""Longitud intervenida de un contrato, leída en sus soportes (actas de
+liquidación, de terminación o de recibo, certificaciones: pliego 3.5.6).
+
+El RUP no trae longitudes: el pliego las pide en los documentos del
+contrato (3.5.5 D). Primero se buscan frases explícitas ("Longitud
+Intervenida: 2346,73 ML", "se pavimentaron 2,3 km de vía"); una cantidad de
+la tabla de ítems de obra (preparación de la superficie, 4.623 ML) no es la
+longitud de la vía. Si no hay, el modelo local lee el soporte y su respuesta
+solo se acepta con una cita copiada tal cual del documento que trae la cifra
+y la unidad. Lo que no se confirme va a revisión, nunca a "no cumple".
+"""
+from __future__ import annotations
+
+import re
+
+from motor.llm.cliente import cita_literal, consultar_json
+from motor.procesamiento.pdf_utils import extraer_texto
+from motor.tecnica.rup import normalizar, numero
+
+PAGINAS_POR_SOPORTE = 15
+_UNIDAD = r"(KMS?|KILOMETROS?|ML|MTS?|METROS?(?:\s+LINEALES)?)\b"
+_VERBO = r"(?:INTERVEN|EJECUT|CONSTRU|PAVIMENT|MEJOR|REHABILIT|RECONSTRU|REPAVIMENT|ATENDID)\w*"
+_LONGITUD_RE = re.compile(
+    rf"LONGITUD(?:ES)?[^\n\d]{{0,60}}?{_VERBO}[^\n\d]{{0,40}}?(\d[\d.,]*)\s*{_UNIDAD}"
+    rf"|{_VERBO}[^\n\d]{{0,15}}(?:UNA\s+)?LONGITUD[^\n\d]{{0,30}}?(\d[\d.,]*)\s*{_UNIDAD}"
+    rf"|{_VERBO}[^\n\d]{{0,30}}?(\d[\d.,]*)\s*(KMS?|KILOMETROS?|METROS\s+LINEALES)\b"
+)
+# Área intervenida: no reemplaza la longitud (el pliego pide longitud, 3.5.5 D;
+# el evaluador técnico la pide como aclaración), pero se reporta.
+_AREA_RE = re.compile(
+    rf"AREA(?:S)?\s+(?:TOTAL\s+)?{_VERBO}[^\n\d]{{0,40}}?(\d[\d.,]*)\s*(M2|M²|MTS?2|METROS\s+CUADRADOS)"
+    rf"|(\d[\d.,]*)\s*(M2|M²|METROS\s+CUADRADOS)\s+(?:DE\s+)?(?:VIA\s+|PAVIMENTO\s+|CALZADA\s+)?{_VERBO}"
+    rf"|{_VERBO}[^\n\d]{{0,30}}?(\d[\d.,]*)\s*(M2|M²|METROS\s+CUADRADOS)\b"
+)
+_PISTA_SOPORTE_RE = re.compile(r"EXPERIENCIA|CONTRATO|CERTIFIC|ACTA|3\.5|TECNIC|HABILITANTE|LIQUIDACION|TERMINACION|RECIBO")
+_NO_ES_SOPORTE_RE = re.compile(r"\bRUP\b|REGISTRO UNICO|FORMATO\s*[1-9]\b|FORMA\s*\d|POLIZA|CEDULA|ANTECEDENTE|FINANCIER|RESIDUAL")
+
+
+def _km(valor: str, unidad: str) -> float | None:
+    v = numero(valor)
+    if v is None:
+        return None
+    return v if unidad.startswith("K") else v / 1000
+
+
+def longitudes_en(texto: str) -> list[float]:
+    """Longitudes en km declaradas explícitamente en el texto."""
+    encontradas = []
+    for m in _LONGITUD_RE.finditer(normalizar(texto)):
+        grupos = [g for g in m.groups() if g is not None]
+        if len(grupos) >= 2 and (km := _km(grupos[0], grupos[1])) is not None and 0.01 <= km <= 500:
+            encontradas.append(km)
+    return encontradas
+
+
+def areas_en(texto: str) -> list[float]:
+    """Áreas intervenidas (m²) declaradas explícitamente."""
+    encontradas = []
+    for m in _AREA_RE.finditer(normalizar(texto)):
+        valor = numero(next((g for g in m.groups()[::2] if g), ""))
+        if valor is not None and valor >= 10:
+            encontradas.append(valor)
+    return encontradas
+
+
+def numeros_del_contrato(numero_contrato: str) -> list[str]:
+    """Los números que identifican el contrato en sus soportes ("278 DE 2019"
+    -> ["278"]; "ICCU-CTO-688 DE 2023" -> ["688"]). Los años solo si no hay
+    otro número."""
+    grupos = [g.lstrip("0") for g in re.findall(r"\d+", numero_contrato) if len(g.lstrip("0")) >= 2]
+    no_anos = [g for g in grupos if not (len(g) == 4 and 1990 <= int(g) <= 2035)]
+    return no_anos or grupos
+
+
+_PALABRAS_GENERICAS = {
+    "MUNICIPIO", "DEPARTAMENTO", "ALCALDIA", "GOBERNACION", "INSTITUTO", "INFRAESTRUCTURA", "NACIONAL", "DESARROLLO",
+    "FONDO", "LOCAL", "SECRETARIA", "EMPRESA", "AGENCIA", "CONCESIONES", "PUBLICAS", "OBRAS", "DISTRITAL", "MUNICIPAL",
+    "DEPARTAMENTAL", "COLOMBIA", "REPUBLICA", "CONSORCIO", "UNION", "TEMPORAL",
+}
+
+
+def soportes_candidatos(pdfs: dict[str, bytes]) -> list[str]:
+    candidatos = [a for a in pdfs if _PISTA_SOPORTE_RE.search(normalizar(a)) and not _NO_ES_SOPORTE_RE.search(normalizar(a))]
+    return candidatos or [a for a in pdfs if not _NO_ES_SOPORTE_RE.search(normalizar(a))]
+
+
+_INSTRUCCION_IA = (
+    "Este texto es de los soportes de un contrato de obra vial (acta de liquidación, de terminación, de recibo o "
+    "certificación). Di cuál es la LONGITUD DE VÍA INTERVENIDA en el contrato (construida, mejorada, pavimentada, "
+    "rehabilitada o mantenida). No uses cantidades de ítems de obra (m2, m3, metros de tubería, cunetas, bordillos, "
+    "demarcación, señalización) ni la longitud total de una vía de la que solo se intervino una parte. Si el texto no "
+    "lo dice claramente, responde null. Un área en metros cuadrados NO es una longitud: si el texto solo trae el área "
+    "intervenida, ponla aparte. Responde JSON: "
+    '{"longitud": número o null, "unidad": "km" o "m", "cita": "frase copiada tal cual del texto donde aparece la longitud", '
+    '"area_m2": número o null, "cita_area": "frase copiada tal cual donde aparece el área intervenida"}'
+)
+_PISTA_LONGITUD_RE = re.compile(r"LONGITUD|\bKMS?\b|KILOMETRO|\bML\b|METROS\s+LINEALES|K\s?\d+\s?\+\s?\d{3}|PR\s?\d+\s?\+")
+
+
+def _fragmentos(texto: str, maximo: int = 6000) -> str:
+    """Lo que rodea las menciones de longitud (el modelo local tiene poco contexto)."""
+    trozos = []
+    for m in _PISTA_LONGITUD_RE.finditer(texto):
+        trozos.append(texto[max(0, m.start() - 300):m.end() + 300])
+        if sum(len(t) for t in trozos) > maximo:
+            break
+    return "\n...\n".join(trozos)
+
+
+def area_con_ia(texto: str) -> tuple[float | None, str | None]:
+    """(m², cita) del área intervenida que leyó el modelo local, con la misma
+    verificación de la cita que la longitud."""
+    fragmento = _fragmentos(texto)
+    respuesta = consultar_json(_INSTRUCCION_IA, fragmento) if fragmento else None
+    if not isinstance(respuesta, dict) or respuesta.get("area_m2") in (None, "", 0):
+        return None, None
+    cita = str(respuesta.get("cita_area") or "")
+    try:
+        valor = float(str(respuesta["area_m2"]).replace(",", "."))
+    except ValueError:
+        return None, None
+    cifras = [numero(c) for c in re.findall(r"\d[\d.,]*", normalizar(cita))]
+    if not (cita_literal(cita, texto, minimo_palabras=2) and any(c is not None and abs(c - valor) < 1e-6 for c in cifras)
+            and re.search(r"M2|M²|METROS\s+CUADRADOS|AREA", normalizar(cita))):
+        return None, None
+    return valor, " ".join(cita.split())[:240]
+
+
+def longitud_con_ia(texto: str) -> tuple[float | None, str | None]:
+    """(km, cita) que lee el modelo local. Se acepta solo si la cita está tal
+    cual en el documento y trae la cifra y la unidad."""
+    fragmento = _fragmentos(texto)
+    if not fragmento:
+        return None, None
+    respuesta = consultar_json(_INSTRUCCION_IA, fragmento)
+    if not isinstance(respuesta, dict) or respuesta.get("longitud") in (None, "", 0):
+        return None, None
+    cita = str(respuesta.get("cita") or "")
+    try:
+        valor = float(str(respuesta["longitud"]).replace(",", "."))
+    except ValueError:
+        return None, None
+    if not cita_literal(cita, texto, minimo_palabras=2):
+        return None, None
+    cita_norm = normalizar(cita)
+    cifras = [numero(c) for c in re.findall(r"\d[\d.,]*", cita_norm)]
+    unidad = str(respuesta.get("unidad") or "").lower()
+    km = valor if unidad.startswith("k") else valor / 1000
+    en_cita = any(c is not None and (abs(c - valor) < 1e-6 or abs(c / 1000 - km) < 1e-6 or abs(c - km) < 1e-6) for c in cifras)
+    unidad_en_cita = bool(re.search(r"\bKMS?\b|KILOMETRO|\bML\b|\bMTS?\b|METROS?", cita_norm))
+    if not (en_cita and unidad_en_cita and 0.01 <= km <= 500):
+        return None, None
+    return km, " ".join(cita.split())[:240]
+
+
+def longitud_del_contrato(
+    pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str,
+) -> tuple[float | None, str | None, str | None]:
+    """(mayor longitud en km encontrada, archivo, cita si la leyó la IA local)
+    en los soportes que citan el número del contrato. Primero las frases
+    explícitas; si no hay, el modelo local con verificación de la cita.
+    `textos` es la memoria de los textos ya leídos."""
+    numeros = numeros_del_contrato(numero_contrato)
+    if not numeros:
+        return None, None, None
+    palabras = {p for p in re.findall(r"[A-Z]{5,}", normalizar(contratante))} - _PALABRAS_GENERICAS
+    mejor: tuple[float | None, str | None] = (None, None)
+    citados: list[str] = []
+    for archivo in soportes_candidatos(pdfs):
+        if archivo not in textos:
+            try:
+                textos[archivo] = normalizar(extraer_texto(pdfs[archivo], max_paginas=PAGINAS_POR_SOPORTE))
+            except Exception:  # noqa: BLE001
+                textos[archivo] = ""
+        texto = textos[archivo]
+        # El número del contrato junto a la palabra "contrato" (un 688 suelto
+        # puede ser un valor o una cantidad de otro contrato), o en la carpeta.
+        cita_numero = any(
+            re.search(rf"CONTRATO[^\n]{{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
+            for n in numeros
+        )
+        cita_contratante = not palabras or any(p in texto for p in palabras)
+        if not (cita_numero and cita_contratante):
+            continue
+        citados.append(archivo)
+        longitudes = longitudes_en(texto)
+        if longitudes and (mejor[0] is None or max(longitudes) > mejor[0]):
+            mejor = (max(longitudes), archivo)
+    if mejor[0] is not None:
+        return mejor[0], mejor[1], None
+    # Los soportes con más menciones de longitud primero; como mucho tres.
+    for archivo in sorted(citados, key=lambda a: -len(_PISTA_LONGITUD_RE.findall(textos[a])))[:3]:
+        km, cita = longitud_con_ia(textos[archivo])
+        if km is not None:
+            return km, archivo, cita
+    return None, None, None
+
+
+def area_del_contrato(
+    pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str,
+) -> tuple[float | None, str | None, str | None]:
+    """(m², archivo, cita) del área intervenida en los soportes del contrato,
+    cuando no traen la longitud: el evaluador lo reporta y pide aclaración.
+    Usa los textos que ya leyó `longitud_del_contrato`."""
+    numeros = numeros_del_contrato(numero_contrato)
+    palabras = {p for p in re.findall(r"[A-Z]{5,}", normalizar(contratante))} - _PALABRAS_GENERICAS
+    citados = []
+    for archivo, texto in textos.items():
+        if archivo not in pdfs:
+            continue
+        cita_numero = any(
+            re.search(rf"CONTRATO[^\n]{{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
+            for n in numeros
+        )
+        if cita_numero and (not palabras or any(p in texto for p in palabras)):
+            citados.append(archivo)
+            if areas := areas_en(texto):
+                return max(areas), archivo, None
+    for archivo in citados[:3]:
+        m2, cita = area_con_ia(textos[archivo])
+        if m2 is not None:
+            return m2, archivo, cita
+    return None, None, None

@@ -37,8 +37,9 @@ TIPOS: dict[str, TipoEvaluacion] = {
     TipoArea.TECNICA: TipoEvaluacion(
         clave=TipoArea.TECNICA,
         nombre="Técnica",
-        descripcion="Experiencia, personal clave y capacidad técnica.",
-        disponible=False,
+        descripcion="Experiencia habilitante por lote (Formato 3 y RUP) y puntaje: factor de calidad, industria nacional, "
+        "discapacidad, emprendimientos de mujeres y MIPYME.",
+        disponible=True,
         plantilla=None,
     ),
     TipoArea.FINANCIERA: TipoEvaluacion(

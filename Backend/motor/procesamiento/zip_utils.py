@@ -19,7 +19,7 @@ MAX_PROFUNDIDAD = 6
 _SIETE_ZIP = shutil.which("7z") or shutil.which("7za")
 
 
-def _extraer_rar(contenido: bytes, _profundidad: int, _ruta: str) -> dict[str, bytes]:
+def _extraer_rar(contenido: bytes, _profundidad: int, _ruta: str, extensiones: tuple[str, ...] = (".pdf",)) -> dict[str, bytes]:
     if not _SIETE_ZIP:
         return {}
 
@@ -52,12 +52,12 @@ def _extraer_rar(contenido: bytes, _profundidad: int, _ruta: str) -> dict[str, b
             except OSError:
                 continue
 
-            if lower.endswith(".pdf"):
+            if lower.endswith(extensiones):
                 pdfs[ruta_completa] = data
             elif lower.endswith(".zip"):
-                pdfs.update(extraer_pdfs(data, _profundidad + 1, ruta_completa))
+                pdfs.update(_extraer_pdfs(data, _profundidad + 1, ruta_completa, extensiones))
             elif lower.endswith(".rar"):
-                pdfs.update(_extraer_rar(data, _profundidad + 1, ruta_completa))
+                pdfs.update(_extraer_rar(data, _profundidad + 1, ruta_completa, extensiones))
 
     return pdfs
 
@@ -107,7 +107,9 @@ def extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> di
     return pdfs
 
 
-def _extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> dict[str, bytes]:
+def _extraer_pdfs(
+    zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "", extensiones: tuple[str, ...] = (".pdf",)
+) -> dict[str, bytes]:
     """Extrae recursivamente todos los PDF de un zip, incluyendo zips y rars
     anidados dentro de él (a cualquier profundidad, mezclados). El resultado
     del nivel superior queda deduplicado por contenido (ver
@@ -129,20 +131,26 @@ def _extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> d
                     continue
 
                 lower = nombre.lower()
-                if lower.endswith(".pdf"):
+                if lower.endswith(extensiones):
                     pdfs[ruta_completa] = contenido
                 elif lower.endswith(".zip"):
-                    pdfs.update(_extraer_pdfs(contenido, _profundidad + 1, ruta_completa))
+                    pdfs.update(_extraer_pdfs(contenido, _profundidad + 1, ruta_completa, extensiones))
                 elif lower.endswith(".rar"):
-                    pdfs.update(_extraer_rar(contenido, _profundidad + 1, ruta_completa))
+                    pdfs.update(_extraer_rar(contenido, _profundidad + 1, ruta_completa, extensiones))
     except zipfile.BadZipFile:
         # El nivel superior también podría venir como .rar en vez de .zip.
-        pdfs.update(_extraer_rar(zip_bytes, _profundidad, _ruta))
+        pdfs.update(_extraer_rar(zip_bytes, _profundidad, _ruta, extensiones))
 
     if _profundidad == 0:
         pdfs = _deduplicar_por_contenido(pdfs)
 
     return pdfs
+
+
+def extraer_hojas_de_calculo(zip_bytes: bytes) -> dict[str, bytes]:
+    """Los Excel de la oferta (el Formato 3 – Experiencia se pide
+    "preferiblemente en Excel"), a cualquier profundidad de zips y rars."""
+    return _deduplicar_por_contenido(_extraer_pdfs(zip_bytes, 1, "", (".xlsx", ".xlsm")))
 
 
 PREFIJO_APORTADOS = "aportados/"

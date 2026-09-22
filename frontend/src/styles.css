@@ -599,3 +599,17 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 
 /* reCAPTCHA protege solo la pantalla de acceso: dentro de la app no se muestra. */
 body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
+
+/* Evaluación técnica: desglose de la experiencia de un lote, en fichas (sin tabla ancha en el panel). */
+.detalle-tecnico { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.detalle-tecnico-resumen { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); }
+.detalle-tecnico-integrantes { margin: 0; padding-left: 18px; color: var(--ink-2); display: flex; flex-direction: column; gap: 2px; }
+.contrato-ficha { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--surface); }
+.contrato-ficha[data-problema='true'] { border-color: #f1d9ad; background: var(--warn-soft); }
+.contrato-ficha-titulo { font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+.contrato-ficha-datos { display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.contrato-ficha-problema { color: #7a1a12; }
+.marca-tecnica { font-weight: 600; }
+.marca-tecnica[data-tono='ok'] { color: var(--ok, #1e7b3a); }
+.marca-tecnica[data-tono='bad'] { color: #b42318; }
+.marca-tecnica[data-tono='warn'] { color: #8a5a00; }

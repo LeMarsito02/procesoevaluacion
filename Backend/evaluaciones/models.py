@@ -29,6 +29,10 @@ class Proceso(models.Model):
         "AnalisisPliego", on_delete=models.PROTECT, null=True, blank=True, related_name="procesos"
     )
     ajustes_pliego = models.JSONField(default=list, blank=True)
+    # Parámetros de la evaluación técnica leídos del pliego (presupuesto de
+    # cada lote, experiencia exigida, códigos UNSPSC, tabla de valor mínimo):
+    # motor.tecnica.evaluador.parametros_a_dict. Se calculan la primera vez.
+    parametros_tecnicos = models.JSONField(null=True, blank=True)
     # Retención: fecha en que se borraron las copias de los documentos de los
     # proponentes (se conservan resultados, decisiones e informes).
     documentos_eliminados_en = models.DateTimeField(null=True, blank=True)

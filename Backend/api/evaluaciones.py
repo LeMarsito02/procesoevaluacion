@@ -374,10 +374,13 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
     ajustes: list[dict] = []
     if datos.analisis_pliego_id is not None:
         analisis = get_object_or_404(AnalisisPliego.objects.filter(entidad=entidad), pk=datos.analisis_pliego_id)
-        try:
-            ajustes = pliego_servicio.decidir(analisis, datos.decisiones_pliego, usuario)
-        except ValueError as exc:
-            raise HttpError(400, str(exc)) from exc
+        # Los hallazgos del análisis son de la evaluación jurídica; la técnica
+        # solo usa el pliego para leer sus parámetros (lotes, experiencia).
+        if TipoArea.JURIDICA in tipos:
+            try:
+                ajustes = pliego_servicio.decidir(analisis, datos.decisiones_pliego, usuario)
+            except ValueError as exc:
+                raise HttpError(400, str(exc)) from exc
 
     gestiona = usuario.es_superadmin or usuario.rol in (Rol.ADMIN_ENTIDAD, Rol.JEFE_AREA)
     responsables: dict[str, Usuario | None] = {}

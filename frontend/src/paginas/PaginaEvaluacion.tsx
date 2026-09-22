@@ -471,6 +471,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           }
           onSiguientePendiente={siguientePendiente(panel.hoja) ? () => irSiguientePendiente(panel.hoja) : null}
           extra={
+            resumen.tipo === 'juridica' && (
             <AntecedentesProponente
               key={panelProponente.id}
               evaluacionId={id}
@@ -487,6 +488,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
               marca={resultados[panelProponente.hoja]}
               foco={panel.persona && panel.requisito ? { persona: panel.persona, requisito: panel.requisito } : null}
             />
+            )
           }
         />
       )}

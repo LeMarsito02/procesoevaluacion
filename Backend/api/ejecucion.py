@@ -35,7 +35,7 @@ async def evaluar_todos_en_proceso(proponente: Proponente, proceso: ProcesoDocum
                 requisito=numero,
                 error=mensaje,
             )
-            for numero in EVALUADORES_POR_REQUISITO
+            for numero in ([r["numero"] for r in (proceso.criterios or {}).get("requisitos", [])] or EVALUADORES_POR_REQUISITO)
         ]
 
     def errores(resultados: list[ResultadoRequisito]) -> int:

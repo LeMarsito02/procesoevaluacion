@@ -251,6 +251,8 @@ GRUPOS: dict[str, str] = {
     "camara": "Cámara de Comercio",
     "antecedentes": "Antecedentes",
     "adicionales": "Requisitos adicionales",
+    "experiencia": "Experiencia habilitante",
+    "puntaje": "Puntaje",
 }
 
 
@@ -330,6 +332,33 @@ VERIFICACIONES: dict[str, Verificacion] = {
         Verificacion("juridica.identidad", "juridica", 20, "Doc. identidad", "Documento de identidad del representante legal",
                      "Copia de la cédula del representante legal (y del suplente, si el parámetro lo pide).",
                      "oferta", base=False),
+        # --- Evaluación técnica (motor/tecnica). La experiencia se evalúa por
+        # lote: al evaluar un proceso se crea un requisito por cada lote del pliego.
+        Verificacion("tecnica.experiencia", "tecnica", 101, "Experiencia", "Experiencia habilitante",
+                     "Contratos del Formato 3 verificados en el RUP: valor mínimo a certificar según el número de "
+                     "contratos, un contrato por el porcentaje del presupuesto, longitud si el lote la exige y "
+                     "porcentajes de los integrantes (pliego 3.5).",
+                     "experiencia", ("formato 3", "experiencia", "rup", "certificac", "acta")),
+        Verificacion("tecnica.gerencia_proyectos", "tecnica", 121, "Gerencia", "Programa de gerencia de proyectos (Formato 7A)",
+                     "Formato 7A firmado bajo juramento para este proceso.", "puntaje", ("formato 7", "calidad", "gerencia")),
+        Verificacion("tecnica.plan_calidad", "tecnica", 122, "Plan calidad", "Plan de calidad (Formato 7C)",
+                     "Formato 7C firmado para este proceso.", "puntaje", ("formato 7", "calidad")),
+        Verificacion("tecnica.criterios_ambientales", "tecnica", 123, "Ambiental", "Criterios ambientales y sociales (Formato 14)",
+                     "Formato 14 firmado bajo juramento para este proceso.", "puntaje", ("formato 14", "ambiental")),
+        Verificacion("tecnica.industria_nacional", "tecnica", 124, "Ind. nacional", "Apoyo a la industria nacional (Formato 9A)",
+                     "Formato 9A firmado y certificado de existencia o cédula de cada integrante.",
+                     "puntaje", ("formato 9", "industria", "existencia")),
+        Verificacion("tecnica.discapacidad", "tecnica", 125, "Discapacidad", "Vinculación de personas con discapacidad (Formato 8)",
+                     "Formato 8 y certificado del Ministerio de Trabajo vigente con el mínimo según la planta.",
+                     "puntaje", ("formato 8", "discapacidad", "ministerio")),
+        Verificacion("tecnica.mujeres", "tecnica", 126, "Mujeres", "Emprendimientos y empresas de mujeres (Formato 12)",
+                     "Formato 12 con sus soportes según la opción que acredite.", "puntaje", ("formato 12", "mujer", "emprendimiento")),
+        Verificacion("tecnica.mipyme", "tecnica", 127, "MIPYME", "MIPYME domiciliada en Colombia",
+                     "RUP de un integrante con al menos 10 % de participación clasificado como micro, pequeña o mediana.",
+                     "puntaje", ("rup", "mipyme")),
+        Verificacion("tecnica.obras_inconclusas", "tecnica", 130, "Obras inconclusas", "Obras civiles inconclusas",
+                     "Consulta del Registro Nacional de Obras Civiles Inconclusas: una anotación vigente descuenta un punto.",
+                     "puntaje"),
     )
 }
 
@@ -394,6 +423,8 @@ class RequisitoDefinicion(BaseModel):
     verifica: str = ""
     # Fila del Excel donde va este requisito (si no, se usa el mapeo de la plantilla).
     fila_excel: int | None = Field(None, ge=1, le=10000)
+    # Evaluación técnica: lote al que corresponde (0 = primero del pliego).
+    lote: int | None = Field(None, ge=0, le=50)
     config: ConfigPersonalizado | None = None
 
     @model_validator(mode="after")
@@ -444,10 +475,28 @@ class DefinicionEvaluacion(BaseModel):
         return self
 
 
+def expandir_lotes(definicion: DefinicionEvaluacion, lotes: list[str]) -> DefinicionEvaluacion:
+    """Evaluación técnica: el requisito de experiencia se vuelve uno por lote
+    del pliego (101, 102, …), con el nombre de cada lote."""
+    requisitos: list[RequisitoDefinicion] = []
+    for r in definicion.requisitos:
+        if r.verificacion != "tecnica.experiencia" or r.lote is not None:
+            requisitos.append(r)
+            continue
+        for i, nombre in enumerate(lotes or ["Lote único"]):
+            requisitos.append(r.model_copy(update={
+                "numero": r.numero + i,
+                "lote": i,
+                "titulo": f"{r.titulo} — {nombre.title()}" if len(lotes) > 1 else r.titulo,
+                "corto": f"Exp. {nombre.split()[-1]}" if len(lotes) > 1 else r.corto,
+            }))
+    return definicion.model_copy(update={"requisitos": requisitos})
+
+
 def definicion_sistema(tipo: str) -> DefinicionEvaluacion:
     """Definición base del sistema: la evaluación jurídica de referencia, con la
     numeración de la plantilla de Excel de ejemplo."""
-    if tipo != "juridica":
+    if tipo not in ("juridica", "tecnica"):
         return DefinicionEvaluacion()
     requisitos = [
         RequisitoDefinicion(
@@ -459,6 +508,6 @@ def definicion_sistema(tipo: str) -> DefinicionEvaluacion:
             verifica=v.verifica,
         )
         for v in VERIFICACIONES.values()
-        if v.tipo == "juridica" and v.base
+        if v.tipo == tipo and v.base
     ]
     return DefinicionEvaluacion(parametros={}, requisitos=requisitos)

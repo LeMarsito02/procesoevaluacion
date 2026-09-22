@@ -78,6 +78,9 @@ def liberar_memoria_proponente() -> None:
     pesados murieron por superar el tope de memoria del worker)."""
     zip_utils._ULTIMO_ZIP = None
     drive._ULTIMO_ZIP_LEIDO = None
+    from motor.tecnica import evaluador as tecnico
+
+    tecnico._ULTIMO = None
     pdf_utils.limpiar_memoria_texto()
     gc.collect()
 
@@ -148,11 +151,26 @@ def evaluar_requisito(
             cumple=False,
             motivo=f"Verificación manual que exige el pliego: {req.verifica}",
         )
+    if req.verificacion.startswith("tecnica."):
+        return _evaluar_tecnico(proponente, proceso, req)
     interno = criterios.VERIFICACIONES[req.verificacion].numero_interno
     evaluador = EVALUADORES_POR_REQUISITO.get(interno) or EVALUADORES_DEL_PLIEGO[interno]
     resultado = evaluador(proponente, proceso)
     # Los resultados cacheados son objetos compartidos: se copia antes de renumerar.
     return resultado.model_copy(update={"requisito": req.numero})
+
+
+def _evaluar_tecnico(
+    proponente: Proponente, proceso: ProcesoDocumentoBase, req: criterios.RequisitoDefinicion
+) -> ResultadoRequisito:
+    from motor.tecnica import evaluador as tecnico
+
+    clave = req.verificacion.removeprefix("tecnica.")
+    if clave == "experiencia":
+        return tecnico.evaluar_experiencia_lote(proponente, proceso, req.lote or 0, req.numero)
+    if clave == "obras_inconclusas":
+        return tecnico.evaluar_obras_inconclusas(proponente, proceso, req.numero)
+    return tecnico.evaluar_factor(proponente, proceso, clave, req.numero)
 
 
 def probar_requisito(

@@ -393,12 +393,41 @@ def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
         definicion = aplicar_ajustes(
             definicion, evaluacion.proceso.ajustes_pliego, revalidar=evaluacion.estado != EstadoEvaluacion.APROBADA
         )
+    if evaluacion.tipo == "tecnica":
+        parametros = parametros_tecnicos_de(evaluacion.proceso) or {}
+        definicion = criterios.expandir_lotes(definicion, [l["nombre"] for l in parametros.get("lotes", [])])
     # El salario mínimo del año del cierre, salvo que la entidad fije otro.
     if not definicion.parametros.get("smmlv"):
         salario = salario_minimo(evaluacion.proceso.fecha_cierre.year)
         if salario:
             definicion = definicion.model_copy(update={"parametros": {**definicion.parametros, "smmlv": salario}})
     return definicion
+
+
+def parametros_tecnicos_de(proceso) -> dict | None:
+    """Parámetros de la evaluación técnica leídos del pliego del proceso. Se
+    calculan una vez y quedan guardados; None si el proceso no tiene el
+    pliego o falta el salario mínimo del año del cierre."""
+    if proceso.parametros_tecnicos:
+        return proceso.parametros_tecnicos
+    analisis = proceso.analisis_pliego
+    salario = salario_minimo(proceso.fecha_cierre.year)
+    if analisis is None or not analisis.archivo or not salario:
+        return None
+    from motor.esquemas.proceso import ProcesoDocumentoBase
+    from motor.tecnica.evaluador import parametros_a_dict
+    from motor.tecnica.parametros import leer_parametros
+
+    try:
+        with analisis.archivo.open("rb") as f:
+            contenido = f.read()
+    except OSError:
+        return None
+    base = ProcesoDocumentoBase.model_validate(proceso.documento_base)
+    parametros = parametros_a_dict(leer_parametros(contenido, [(l.numero, l.valor_presupuesto) for l in base.lotes], salario))
+    type(proceso).objects.filter(pk=proceso.pk).update(parametros_tecnicos=parametros)
+    proceso.parametros_tecnicos = parametros
+    return parametros
 
 
 def salario_minimo(ano: int) -> int | None:
@@ -490,6 +519,8 @@ def generar_informe_excel(evaluacion: Evaluacion) -> tuple[bytes, str]:
     from motor.excel.filler import fill_template
 
     elegida = plantilla_para_informe(evaluacion.entidad_id, evaluacion.tipo)
+    if elegida is None and evaluacion.tipo == "tecnica":
+        return generar_informe_tecnico(evaluacion)
     if elegida is None:
         raise SinPlantillaInforme()
     plantilla, mapeo = elegida
@@ -509,6 +540,34 @@ def generar_informe_excel(evaluacion: Evaluacion) -> tuple[bytes, str]:
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
     # Mismo nombre que usa la plantilla oficial ("INFORME EVALUACION JURIDICA …"), sin tildes.
     return contenido, f"INFORME EVALUACION {evaluacion.tipo.upper()} {proceso.codigo}{borrador}.xlsx"
+
+
+def generar_informe_tecnico(evaluacion: Evaluacion) -> tuple[bytes, str]:
+    """Consolidado técnico por lote (sin plantilla de la entidad)."""
+    from motor.tecnica.informe import ResultadoInforme, generar_informe
+
+    proceso = evaluacion.proceso
+    definicion = definicion_de(evaluacion)
+    revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion)}
+    hojas = {p.id: p.hoja for p in proceso.proponentes.all()}
+    resultados = {}
+    for r in Resultado.objects.filter(evaluacion=evaluacion):
+        revision = revisiones.get((r.proponente_id, r.requisito))
+        resultados[(hojas[r.proponente_id], r.requisito)] = ResultadoInforme(aplicar_revision(r.datos, revision), revision is not None)
+    experiencia = [r for r in definicion.requisitos if r.verificacion == "tecnica.experiencia"]
+    lotes = [(r.lote or 0, r.titulo.split("—")[-1].strip() if "—" in r.titulo else "Lote único") for r in experiencia]
+    contenido = generar_informe(
+        proceso.codigo,
+        proceso.objeto,
+        lotes,
+        [(p.hoja, p.nombre_proponente) for p in proceso.proponentes.order_by("numero_orden")],
+        resultados,
+        {r.lote or 0: r.numero for r in experiencia},
+        borrador=evaluacion.estado != EstadoEvaluacion.APROBADA,
+        titulos={r.numero: r.titulo for r in definicion.requisitos},
+    )
+    borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
+    return contenido, f"INFORME EVALUACION TECNICA {proceso.codigo}{borrador}.xlsx"
 
 
 def eliminar_proceso(proceso) -> dict[str, int]:
