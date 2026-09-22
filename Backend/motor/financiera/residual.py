@@ -135,22 +135,24 @@ class ResidualIntegrante:
     uso_ia: bool = False
 
 
-def _texto_formato(contenido: bytes, paginas: int = 25) -> str:
-    """Texto del formato; las páginas escaneadas, con OCR fila por fila (la
-    tabla de contratos queda renglón por renglón)."""
-    from motor.procesamiento.pdf_utils import texto_completo
+def _texto_formato(contenido: bytes, paginas: int = 25, tablas: bool = False) -> str:
+    """Texto del formato. La lectura normal primero; la de tablas (OCR fila
+    por fila) solo cuando la normal no dejó leer el listado, porque hacerlo
+    con todos los documentos de una oferta cuesta el doble de tiempo."""
+    from motor.procesamiento.pdf_utils import extraer_texto, texto_completo
 
-    return texto_completo(contenido, max_paginas=paginas)
+    leer = texto_completo if tablas else extraer_texto
+    return leer(contenido, max_paginas=paginas)
 
 
-def _textos_formato5(pdfs: dict[str, bytes], excels: dict[str, bytes]) -> dict[str, str]:
+def _textos_formato5(pdfs: dict[str, bytes], excels: dict[str, bytes], tablas: bool = False) -> dict[str, str]:
     textos = {}
     for archivo, contenido in pdfs.items():
         # "Formato 5 - Capacidad residual", "OBRAS SAS 5C.pdf", "FORMA 5.3".
         if not re.search(r"RESIDUAL|FORMA(?:TO)?\s*5|CAPACIDAD|\b5\s*[A-D]\b|\b5\.[1-4]\b|\bK\b", normalizar(archivo)):
             continue
         try:
-            texto = normalizar(" ".join(_texto_formato(contenido).split()))
+            texto = normalizar(" ".join(_texto_formato(contenido, tablas=tablas).split()))
         except Exception:  # noqa: BLE001
             continue
         if _FORMATO5_RE.search(texto):
@@ -486,6 +488,16 @@ def _es_su_listado(integrante: IntegranteTecnico, tramo: str, del_archivo: bool,
     return del_archivo and not nombra
 
 
+def _tramos_sce_de(pdfs: dict[str, bytes], excels: dict[str, bytes], integrante: IntegranteTecnico,
+                   integrantes: list[IntegranteTecnico], memoria: dict[str, str]) -> list[str]:
+    """Listados del integrante releyendo los formatos fila por fila (solo se
+    hace cuando la lectura normal no dejó ningún saldo)."""
+    if not memoria:
+        memoria.update(_textos_formato5(pdfs, excels, tablas=True))
+    return [tramo for a, t in memoria.items() if a in pdfs for tramo in _tramos_sce(t)
+            if _es_su_listado(integrante, tramo, True, integrantes)]
+
+
 def residual_del_proponente(
     pdfs: dict[str, bytes], excels: dict[str, bytes], integrantes: list[IntegranteTecnico],
     lotes: list[LoteFinanciero], smmlv: float, plural: bool, estados: dict[str, str] | None = None,
@@ -498,9 +510,13 @@ def residual_del_proponente(
         return Revision(False, ["no se pudo calcular la capacidad residual del proceso (presupuesto, plazo o anticipo del lote)"])
     textos = _textos_formato5(pdfs, excels)
     if not textos:
+        # Escaneado: se vuelve a leer fila por fila antes de darlo por perdido.
+        textos = _textos_formato5(pdfs, excels, tablas=True)
+    if not textos:
         return Revision(False, ["no se encontró el Formato 5 – Capacidad residual"])
     resultados: list[ResidualIntegrante] = []
     bloques_hoja = [b for contenido in excels.values() for b in _bloques_sce_hoja(contenido)]
+    textos_tablas: dict[str, str] = {}
     bloques_pdf = []
     for archivo in textos:
         if archivo in pdfs and "EJECUCION" in textos[archivo]:
@@ -567,6 +583,10 @@ def residual_del_proponente(
                    if _es_su_listado(integrante, contexto, False, integrantes)]
         # El PDF firmado y su copia en Excel son el mismo listado: vale el
         # mayor de los que se pudieron leer (lo prudente).
+        if not any(v is not None for v, _ in saldos):
+            # Con la lectura normal no apareció: se reintenta fila por fila.
+            for tramo in _tramos_sce_de(pdfs, excels, integrante, integrantes, textos_tablas):
+                saldos.append(_sce(tramo))
         leidos = [(v, ia) for v, ia in saldos if v is not None]
         if len(leidos) < len(saldos) and not de_pdf:
             leidos = []  # un listado en Excel ilegible: no se sabe si es el único

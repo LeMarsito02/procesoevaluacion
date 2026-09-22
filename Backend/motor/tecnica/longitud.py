@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 from motor.llm.cliente import cita_literal, consultar_json
-from motor.procesamiento.pdf_utils import texto_completo
+from motor.procesamiento.pdf_utils import extraer_texto, texto_completo
 from motor.tecnica.rup import normalizar, numero
 
 PAGINAS_POR_SOPORTE = 15
@@ -172,15 +172,19 @@ def longitud_con_ia(texto: str) -> tuple[float | None, str | None]:
     return km, " ".join(cita.split())[:240]
 
 
-def _texto_soporte(pdfs: dict[str, bytes], textos: dict[str, str], archivo: str) -> str:
-    """Texto del soporte; las páginas escaneadas, fila por fila (las actas
-    traen la relación de longitudes en tablas)."""
-    if archivo not in textos:
+def _texto_soporte(pdfs: dict[str, bytes], textos: dict[str, str], archivo: str, tablas: bool = False,
+                   paginas: int = PAGINAS_POR_SOPORTE) -> str:
+    """Texto del soporte. La lectura normal primero; la de tablas (OCR fila
+    por fila) solo cuando hace falta, porque es la cara: leer así todos los
+    documentos de una oferta triplica el tiempo."""
+    clave = f"{archivo}#tablas{paginas}" if tablas else f"{archivo}#{paginas}"
+    if clave not in textos:
+        leer = texto_completo if tablas else extraer_texto
         try:
-            textos[archivo] = normalizar(texto_completo(pdfs[archivo], max_paginas=PAGINAS_POR_SOPORTE))
+            textos[clave] = normalizar(leer(pdfs[archivo], max_paginas=paginas))
         except Exception:  # noqa: BLE001
-            textos[archivo] = ""
-    return textos[archivo]
+            textos[clave] = ""
+    return textos[clave]
 
 
 def _cita_el_contrato(archivo: str, texto: str, numeros: list[str], palabras: set[str]) -> bool:
@@ -252,9 +256,18 @@ _ES_ACTA_RE = re.compile(r"\bACTA\b|CERTIFIC|LIQUIDACION|RECIBO\s+(?:FINAL|DEFIN
 _ES_FORMATO3_RE = re.compile(r"FORMATO\s*(?:N[O°º]\.?\s*)?3\b|CCE-EICP-FM-04|EXPERIENCIA\s*[-–]\s*DOCUMENTO\s+TIPO")
 
 
+# En un PDF que junta varios documentos, el acta puede empezar en la mitad.
+_ES_ACTA_ADENTRO_RE = re.compile(
+    r"ACTA\s+DE\s+(?:RECIBO|ENTREGA|LIQUIDACION|TERMINACION|FINALIZACION)|SE\s+CERTIFICA\b|CERTIFICA\s+QUE\b"
+    r"|CERTIFICACION\s+DE\s+(?:EXPERIENCIA|CONTRATO)"
+)
+
+
 def _puede_ser_acta(archivo: str, texto: str) -> bool:
     inicio = texto[:1500]
-    return bool(_ES_ACTA_RE.search(inicio) or _ES_ACTA_RE.search(normalizar(archivo))) and not _ES_FORMATO3_RE.search(inicio)
+    if _ES_FORMATO3_RE.search(inicio):
+        return False
+    return bool(_ES_ACTA_RE.search(inicio) or _ES_ACTA_RE.search(normalizar(archivo)) or _ES_ACTA_ADENTRO_RE.search(texto))
 
 
 def _es_del_contrato(archivo: str, texto: str, numeros: list[str], palabras: set[str], objeto: str) -> bool:
@@ -276,10 +289,12 @@ def soporte_del_contrato(pdfs: dict[str, bytes], textos: dict[str, str], numero_
     """Acta o certificación del contrato (3.5.6)."""
     numeros = numeros_del_contrato(numero_contrato)
     palabras = _palabras_contratante(contratante)
-    for archivo in soportes_candidatos(pdfs):
-        texto = _texto_soporte(pdfs, textos, archivo)
-        if _puede_ser_acta(archivo, texto) and _es_del_contrato(archivo, texto, numeros, palabras, objeto):
-            return archivo
+    candidatos = soportes_candidatos(pdfs)
+    for tablas in (False, True):  # la lectura cara solo si con la normal no aparece
+        for archivo in candidatos:
+            texto = _texto_soporte(pdfs, textos, archivo, tablas=tablas)
+            if _puede_ser_acta(archivo, texto) and _es_del_contrato(archivo, texto, numeros, palabras, objeto):
+                return archivo
     return None
 
 
@@ -296,60 +311,61 @@ def longitud_del_contrato(
         return None, None, None
     mejor: tuple[float | None, str | None] = (None, None)
     citados: list[str] = []
-    for archivo in soportes_candidatos(pdfs):
-        texto = _texto_soporte(pdfs, textos, archivo)
-        # El número del contrato junto a la palabra "contrato" (un 688 suelto
-        # puede ser un valor o una cantidad de otro contrato), en la carpeta, o
-        # el mismo objeto.
-        if not _es_del_contrato(archivo, texto, numeros, palabras, objeto):
-            continue
-        citados.append(archivo)
-        longitudes = longitudes_en(texto)
-        if longitudes and (mejor[0] is None or max(longitudes) > mejor[0]):
-            mejor = (max(longitudes), archivo)
+    candidatos = soportes_candidatos(pdfs)
+    # Tres pasadas, de la lectura barata a la cara: normal, normal + tablas, y
+    # el documento completo (hasta 40 páginas) de los soportes del contrato.
+    for tablas in (False, True):
+        for archivo in candidatos:
+            texto = _texto_soporte(pdfs, textos, archivo, tablas=tablas)
+            if not _es_del_contrato(archivo, texto, numeros, palabras, objeto):
+                continue
+            if archivo not in citados:
+                citados.append(archivo)
+            longitudes = longitudes_en(texto)
+            if longitudes and (mejor[0] is None or max(longitudes) > mejor[0]):
+                mejor = (max(longitudes), archivo)
+        if mejor[0] is not None:
+            break
     if mejor[0] is None:
         for archivo in citados:
-            clave = f"{archivo}#completo"
-            if clave not in textos:
-                try:
-                    textos[clave] = normalizar(texto_completo(pdfs[archivo], max_paginas=PAGINAS_SOPORTE_DEL_CONTRATO))
-                except Exception:  # noqa: BLE001
-                    textos[clave] = textos[archivo]
-            longitudes = longitudes_en(textos[clave])
+            texto = _texto_soporte(pdfs, textos, archivo, tablas=True, paginas=PAGINAS_SOPORTE_DEL_CONTRATO)
+            longitudes = longitudes_en(texto)
             if longitudes and (mejor[0] is None or max(longitudes) > mejor[0]):
                 mejor = (max(longitudes), archivo)
     if mejor[0] is not None:
         return mejor[0], mejor[1], None
     # Los soportes con más menciones de longitud primero; como mucho tres.
-    for archivo in sorted(citados, key=lambda a: -len(_PISTA_LONGITUD_RE.findall(textos[a])))[:3]:
-        km, cita = longitud_con_ia(textos.get(f"{archivo}#completo", textos[archivo]))
+    def _texto_largo(archivo: str) -> str:
+        return _texto_soporte(pdfs, textos, archivo, tablas=True, paginas=PAGINAS_SOPORTE_DEL_CONTRATO)
+
+    for archivo in sorted(citados, key=lambda a: -len(_PISTA_LONGITUD_RE.findall(_texto_largo(a))))[:3]:
+        km, cita = longitud_con_ia(_texto_largo(archivo))
         if km is not None:
             return km, archivo, cita
     return None, None, None
 
 
 def area_del_contrato(
-    pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str,
+    pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str, objeto: str = "",
 ) -> tuple[float | None, str | None, str | None]:
     """(m², archivo, cita) del área intervenida en los soportes del contrato,
     cuando no traen la longitud: el evaluador lo reporta y pide aclaración.
-    Usa los textos que ya leyó `longitud_del_contrato`."""
+    Usa los textos que ya leyó `longitud_del_contrato`, sin abrir de nuevo
+    ningún PDF."""
     numeros = numeros_del_contrato(numero_contrato)
-    palabras = {p for p in re.findall(r"[A-Z]{5,}", normalizar(contratante))} - _PALABRAS_GENERICAS
-    citados = []
-    for archivo, texto in textos.items():
-        if archivo not in pdfs:
+    palabras = _palabras_contratante(contratante)
+    citados: list[tuple[str, str]] = []
+    for clave, texto in textos.items():
+        archivo = clave.split("#")[0]
+        if archivo not in pdfs or not _es_del_contrato(archivo, texto, numeros, palabras, objeto):
             continue
-        cita_numero = any(
-            re.search(rf"CONTRATO(?:[^\n]|\n(?!\s*\n)){{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
-            for n in numeros
-        )
-        if cita_numero and (not palabras or any(p in texto for p in palabras)):
-            citados.append(archivo)
-            if areas := areas_en(texto):
-                return max(areas), archivo, None
-    for archivo in citados[:3]:
-        m2, cita = area_con_ia(textos[archivo])
+        citados.append((archivo, texto))
+        if areas := areas_en(texto):
+            return max(areas), archivo, None
+    for archivo, texto in citados[:3]:
+        m2, cita = area_con_ia(texto)
         if m2 is not None:
             return m2, archivo, cita
     return None, None, None
+
+
