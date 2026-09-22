@@ -613,3 +613,54 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
 .marca-tecnica[data-tono='ok'] { color: var(--ok, #1e7b3a); }
 .marca-tecnica[data-tono='bad'] { color: #b42318; }
 .marca-tecnica[data-tono='warn'] { color: #8a5a00; }
+
+/* Tablero de rendimiento (comercial). Se exporta a PDF con la impresión del navegador. */
+.rendimiento .rend-seccion h2 { font-size: 17px; margin-bottom: 8px; }
+.rend-hero { display: flex; align-items: center; gap: 24px; padding: 24px 28px; }
+.rend-hero-cifra { font-size: 64px; font-weight: 700; line-height: 1; color: var(--ink); font-variant-numeric: proportional-nums; }
+.rend-hero-texto { display: flex; flex-direction: column; gap: 6px; font-size: 18px; color: var(--ink); }
+.rend-hero-texto span { font-size: 14px; color: var(--ink-2); }
+.rend-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 14px; margin: 18px 0 10px; }
+.rend-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+.rend-tile-etiqueta { font-size: 13px; color: var(--ink-3); }
+.rend-tile-valor { font-size: 28px; font-weight: 600; color: var(--ink); margin: 4px 0 2px; }
+.rend-tile-detalle { font-size: 12.5px; color: var(--ink-3); }
+.rend-minutos { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }
+.rend-tabla-envoltura { overflow-x: auto; }
+.rend-tabla { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.rend-tabla th { text-align: left; font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; }
+.rend-tabla td { border-bottom: 1px solid var(--line); padding: 8px 10px; color: var(--ink); vertical-align: top; }
+.rend-tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rend-seccion-cabeza { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.segmentado { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 999px; padding: 2px; }
+.segmentado button { border: 0; background: transparent; padding: 5px 14px; border-radius: 999px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.segmentado button[aria-selected='true'] { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+.rend-barras { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.rend-barra { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 48px; align-items: center; gap: 10px; font-size: 13px; padding: 2px 0; }
+.rend-barra:hover .rend-barra-nombre { color: var(--ink); }
+.rend-barra-nombre { color: var(--ink-2); overflow-wrap: anywhere; }
+.rend-barra-pista { height: 14px; background: var(--brand-soft); border-radius: 0 4px 4px 0; overflow: hidden; }
+.rend-barra-relleno { display: block; height: 100%; background: var(--brand); border-radius: 0 4px 4px 0; }
+.rend-barra-valor { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+.rend-metodo ul { margin: 0 0 10px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; color: var(--ink-2); }
+@media (max-width: 640px) {
+  .rend-hero { flex-direction: column; align-items: flex-start; }
+  .rend-barra { grid-template-columns: 1fr 48px; }
+  .rend-barra-pista { grid-column: 1 / -1; grid-row: 2; }
+}
+@media print {
+  .topbar, .no-imprimir, .grecaptcha-badge { display: none !important; }
+  body, .page { background: #fff !important; }
+  @page { margin: 14mm; }
+  .rendimiento .card, .rend-tile { box-shadow: none; }
+  .rend-hero, .rend-tile, .rend-barra, .rend-tabla tr { break-inside: avoid; }
+  .rend-seccion h2 { break-after: avoid; }
+  .rend-tabla-envoltura { overflow: visible; }
+  .rend-tabla { font-size: 10.5px; table-layout: auto; }
+  .rend-tabla th, .rend-tabla td { padding: 5px 6px; }
+  .rend-tabla td:first-child { min-width: 170px; }
+  .rend-tiles { grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .rend-tile { padding: 10px 12px; }
+  .rend-tile-valor { font-size: 22px; }
+  .rend-barra-relleno, .rend-barra-pista { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

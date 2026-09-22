@@ -20,13 +20,15 @@ from motor.esquemas.proceso import ResultadoRequisito
 PENDIENTE = "PENDIENTE"
 # Columnas de puntaje: (título, números internos que suman en la columna).
 COLUMNAS_PUNTAJE: list[tuple[str, tuple[int, ...]]] = [
-    ("FACTOR DE CALIDAD", (121, 122, 123)),
+    ("FACTOR DE CALIDAD", (121, 122, 123, 128)),
     ("APOYO A LA INDUSTRIA NACIONAL", (124,)),
     ("PERSONAL CON DISCAPACIDAD", (125,)),
     ("E y E DE MUJERES", (126,)),
     ("MIPYME", (127,)),
 ]
 OBRAS_INCONCLUSAS = 130
+# Factores que solo existen si el pliego les da puntos: sin resultado cuentan 0.
+OPCIONALES = {128}
 
 _BORDE = Border(*(Side(style="thin", color="999999"),) * 4)
 _ENCABEZADO = PatternFill("solid", fgColor="1F3864")
@@ -114,7 +116,10 @@ def generar_informe(
             experiencia = _experiencia(resultados.get((hoja, numero_por_lote.get(indice, -1))))
             puntos = []
             for _, numeros in COLUMNAS_PUNTAJE:
-                partes = [_puntos(resultados.get((hoja, n))) for n in numeros]
+                partes = [
+                    0.0 if n in OPCIONALES and (hoja, n) not in resultados else _puntos(resultados.get((hoja, n)))
+                    for n in numeros
+                ]
                 puntos.append(PENDIENTE if PENDIENTE in partes else sum(partes))
             reduccion = _reduccion(resultados.get((hoja, OBRAS_INCONCLUSAS)))
             numericos = [p for p in (*puntos, reduccion) if p != PENDIENTE]

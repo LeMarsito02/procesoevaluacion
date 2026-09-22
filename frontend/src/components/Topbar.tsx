@@ -57,6 +57,7 @@ function Navegacion() {
     { ruta: '/fila', nombre: 'Fila', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad' },
     { ruta: '/equipo', nombre: 'Equipo', visible: puedeGestionarEquipo(u) },
     { ruta: '/entidades', nombre: 'Entidades', visible: u.rol === 'superadmin' },
+    { ruta: '/rendimiento', nombre: 'Rendimiento', visible: u.rol === 'superadmin' },
   ]
   return (
     <nav className="nav-principal" aria-label="Secciones">

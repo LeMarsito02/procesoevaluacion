@@ -207,6 +207,26 @@ def integrantes_del_proponente(
     return integrantes, avisos
 
 
+def aplicar_puntajes_del_pliego(factores: list[Factor], puntajes: dict[str, float | None]) -> list[Factor]:
+    """El puntaje de cada factor sale del pliego (capítulo IV). "NO APLICA":
+    no se evalúa. Si no se pudo leer, se deja a revisión con el valor del
+    documento tipo como referencia."""
+    for f in factores:
+        if f.clave in puntajes and puntajes[f.clave] is None:
+            f.puntaje_maximo, f.puntaje, f.no_aplica = 0, 0, True
+            f.motivos = ["N.A. — el pliego dice que este factor NO APLICA"]
+        elif f.clave in puntajes:
+            f.puntaje_maximo = float(puntajes[f.clave])
+            if f.puntaje is not None:
+                f.puntaje = f.puntaje_maximo
+        elif f.clave != "maquinaria":
+            f.motivos.append(
+                f"no se leyó en el pliego cuántos puntos da este factor; el documento tipo da {f.puntaje_maximo:g}: verifícalo"
+            )
+            f.puntaje = None
+    return factores
+
+
 def evaluar_proponente_tecnico(
     pdfs: dict[str, bytes], excels: dict[str, bytes], nombre_proponente: str, parametros: ParametrosTecnicos,
     fecha_cierre: date, codigo_proceso: str | None = None,
@@ -227,13 +247,15 @@ def evaluar_proponente_tecnico(
         verificador_de_socios(pdfs, integrantes, fecha_cierre),
         lambda c: area_del_contrato(pdfs, textos, c.numero_contrato, c.contratante),
     )
-    resultado.puntaje = [
+    resultado.puntaje = aplicar_puntajes_del_pliego([
         *factor_calidad(pdfs, codigo_proceso),
         industria_nacional(pdfs, integrantes, codigo_proceso),
         discapacidad(pdfs, integrantes, resultado.lotes, plural, fecha_cierre),
         emprendimiento_mujeres(pdfs, integrantes, plural, fecha_cierre),
         mipyme(integrantes, plural),
-    ]
+        Factor("maquinaria", "4.2.2 Disponibilidad y condiciones funcionales de la maquinaria de obra", 0,
+               motivos=["el programa no verifica este factor: revísalo a mano con lo que pide el pliego"]),
+    ], parametros.puntajes)
     for lote in resultado.lotes:
         for aviso in avisos:
             lote.motivos.append(aviso)

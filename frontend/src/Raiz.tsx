@@ -10,6 +10,7 @@ import PaginaEntrar from './paginas/PaginaEntrar'
 import PaginaEquipo from './paginas/PaginaEquipo'
 import PaginaEvaluacion from './paginas/PaginaEvaluacion'
 import PaginaFila from './paginas/PaginaFila'
+import PaginaRendimiento from './paginas/PaginaRendimiento'
 import PaginaInicio from './paginas/PaginaInicio'
 import PaginaNuevoProceso from './paginas/PaginaNuevoProceso'
 import PaginaProcesos from './paginas/PaginaProcesos'
@@ -129,6 +130,7 @@ export default function Raiz() {
   else if (ruta === '/fila' && (usuario.rol === 'superadmin' || usuario.rol === 'admin_entidad')) pagina = <PaginaFila />
   else if (ruta === '/equipo' && puedeGestionarEquipo(usuario)) pagina = <PaginaEquipo />
   else if (ruta === '/entidades' && usuario.rol === 'superadmin') pagina = <PaginaEntidades />
+  else if (ruta === '/rendimiento' && usuario.rol === 'superadmin') pagina = <PaginaRendimiento />
   else if (ruta === '/cuenta') pagina = <PaginaCuenta />
   else pagina = <PaginaInicio />
 

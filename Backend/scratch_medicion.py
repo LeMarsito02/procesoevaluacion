@@ -47,21 +47,34 @@ def _cargar(path, defecto):
 
 
 def sesion_medicion() -> requests.Session:
-    """Inicia sesión con la cuenta de medición (MEDICION_EMAIL / MEDICION_CLAVE en .env)."""
+    """Sesión con la cuenta de medición (MEDICION_EMAIL en .env). El login
+    pide reCAPTCHA, así que se crea la sesión directo en la base local (solo
+    sirve en desarrollo, con acceso a la base)."""
     import os
+    import sys
 
     from dotenv import load_dotenv
 
     load_dotenv(".env")
+    sys.path.insert(0, os.getcwd())
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    import django
+
+    django.setup()
+    from django.conf import settings
+    from django.test import Client
+
+    from cuentas.models import Usuario
+
+    cliente = Client()
+    cliente.force_login(Usuario.objects.get(email=os.environ["MEDICION_EMAIL"]))
+    sesion = cliente.session
+    sesion["segundo_factor_ok"] = True
+    sesion.save()
     http = requests.Session()
-    csrf = http.get(f"{API}/api/auth/csrf").json()["csrf"]
-    resp = http.post(
-        f"{API}/api/auth/login",
-        json={"email": os.environ["MEDICION_EMAIL"], "password": os.environ["MEDICION_CLAVE"]},
-        headers={"X-CSRFToken": csrf, "Referer": API},
-    )
-    resp.raise_for_status()
-    http.headers.update({"X-CSRFToken": resp.json()["csrf"], "Referer": API})
+    http.cookies.set(settings.SESSION_COOKIE_NAME, cliente.cookies[settings.SESSION_COOKIE_NAME].value)
+    http.get(f"{API}/api/auth/csrf")
+    http.headers.update({"X-CSRFToken": http.cookies.get(settings.CSRF_COOKIE_NAME), "Referer": API})
     return http
 
 

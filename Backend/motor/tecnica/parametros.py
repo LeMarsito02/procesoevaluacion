@@ -47,6 +47,10 @@ class ParametrosTecnicos:
     plural_principal: float = 0.50
     plural_demas: float = 0.05
     plural_sin_experiencia_max: float = 0.10
+    # Puntaje de cada factor leído del capítulo IV: {clave: puntos}, None si
+    # el pliego dice "NO APLICA". Lo que falta no se leyó (se usa el del
+    # documento tipo y se avisa).
+    puntajes: dict[str, float | None] = field(default_factory=dict)
 
     def presupuesto_smmlv(self, lote: LoteTecnico) -> float | None:
         return None if lote.presupuesto is None else lote.presupuesto / self.smmlv
@@ -170,6 +174,44 @@ def _longitud(especifica_norm: str) -> tuple[float | None, float | None, float |
     return minima, total, fraccion
 
 
+# Factores de puntaje por el título de su sección (el numeral cambia entre pliegos).
+_TITULOS_PUNTAJE: dict[str, str] = {
+    "gerencia_proyectos": r"PROGRAMA\s+DE\s+GERENCIA\s+DE\s+PROYECTOS",
+    "maquinaria": r"CONDICIONES\s+FUNCIONALES\s+DE\s+LA\s+MAQUINARIA",
+    "plan_calidad": r"PRESENTACION\s+DE\s+UN\s+PLAN\s+DE\s+CALIDAD",
+    "criterios_ambientales": r"CRITERIOS\s+AMBIENTALES\s+Y\s+SOCIALES",
+    "industria_nacional": r"ACREDITACION\s+DEL\s+PUNTAJE\s+POR\s+SERVICIOS\s+NACIONALES",
+    "discapacidad": r"VINCULACION\s+DE\s+PERSONAS\s+CON\s+DISCAPACIDAD",
+    "mujeres": r"EMPRENDIMIENTOS\s+Y\s+EMPRESAS\s+DE\s+MUJERES",
+    "mipyme": r"MIPYME\s+DOMICILIADA\s+EN\s+COLOMBIA",
+}
+_PUNTOS_RE = re.compile(
+    r"(?:ASIGNAR|OTORGAR)[A-Z]*\s+(?:HASTA\s+)?(?:UN\s+PUNTAJE\s+DE\s+)?[A-Z ]{0,60}?\(\s*(\d+(?:[.,]\d+)?)\s*\)\s*PUNTOS?"
+)
+
+
+def _puntajes(texto_norm: str) -> dict[str, float | None]:
+    """Puntos de cada factor, en el cuerpo del capítulo IV (no en el índice:
+    ahí el título va seguido de puntos suspensivos y la página)."""
+    puntajes: dict[str, float | None] = {}
+    for clave, titulo in _TITULOS_PUNTAJE.items():
+        encabezados = [
+            m for m in re.finditer(rf"\n\s*4(?:\.\d+){{1,2}}\.?\s*[^\n]{{0,45}}?{titulo}[^\n]*", texto_norm)
+            if "...." not in m.group(0)
+        ]
+        if not encabezados:
+            continue
+        m = encabezados[-1]
+        cuerpo = texto_norm[m.end():m.end() + 1500]
+        siguiente = re.search(r"\n\s*4(?:\.\d+){1,2}\.?\s+[A-Z]", cuerpo)
+        cuerpo = cuerpo[: siguiente.start() if siguiente else None]
+        if re.match(r"\s*(?:NO\s+APLICA|ESTE\s+NUMERAL\s+NO\s+APLICA)", cuerpo) or "NO APLICA" in m.group(0):
+            puntajes[clave] = None
+        elif p := _PUNTOS_RE.search(cuerpo):
+            puntajes[clave] = float(p.group(1).replace(",", "."))
+    return puntajes
+
+
 def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None]], smmlv: float) -> ParametrosTecnicos:
     """`lotes`: [(nombre, presupuesto en pesos)] como los leyó el análisis del
     documento base."""
@@ -181,6 +223,7 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
     parametros = ParametrosTecnicos(smmlv=smmlv)
     parametros.clases_unspsc = _clases_unspsc(texto_norm)
     parametros.tabla_valor = _tabla_valor(tablas) or list(TABLA_VALOR_DOCUMENTO_TIPO)
+    parametros.puntajes = _puntajes(texto_norm)
     experiencia = _experiencia_por_lote(tablas)
     if len(experiencia) > 1 and len(lotes) < len(experiencia):
         # El análisis del documento base no separó los lotes (presupuesto en letras).

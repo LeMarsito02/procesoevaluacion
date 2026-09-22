@@ -407,3 +407,17 @@ class SalarioMinimo(models.Model):
 
     def __str__(self) -> str:
         return f"{self.ano}: ${self.valor:,}"
+
+
+class MedicionRendimiento(models.Model):
+    """Foto de la analítica de rendimiento (evaluaciones.analitica): el programa
+    contra evaluaciones reales ya hechas por entidades. La genera el comando
+    `manage.py medir_rendimiento`; el tablero muestra la última."""
+
+    id = models.BigAutoField(primary_key=True)
+    creada_en = models.DateTimeField(auto_now_add=True)
+    datos = models.JSONField()
+    nota = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["-creada_en"]

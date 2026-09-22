@@ -371,6 +371,32 @@ class MemoPorPdfsTests(SimpleTestCase):
         self.assertEqual(llamadas, [("ANA", True), ("ANA", False)])
 
 
+class PuntajesDelPliegoTests(SimpleTestCase):
+    def test_valores_y_no_aplica_salen_del_pliego(self):
+        from motor.tecnica.parametros import _puntajes
+
+        texto = (
+            "\n4.2.1 IMPLEMENTACION DEL PROGRAMA DE GERENCIA DE PROYECTOS\nLA ENTIDAD ASIGNARA DIEZ (10) PUNTOS AL PROPONENTE"
+            "\n4.2.2 DISPONIBILIDAD Y CONDICIONES FUNCIONALES DE LA MAQUINARIA DE OBRA\nNO APLICA"
+            "\n4.2.4 CRITERIOS AMBIENTALES Y SOCIALES\nLA ENTIDAD ASIGNARA QUINCE (15) PUNTOS AL PROPONENTE"
+            "\n4.6 EMPRENDIMIENTOS Y EMPRESAS DE MUJERES\nLA ENTIDAD ASIGNARA UN PUNTAJE DE CERO PUNTO VEINTICINCO (0.25) PUNTOS"
+        )
+        self.assertEqual(_puntajes(texto), {"gerencia_proyectos": 10, "maquinaria": None, "criterios_ambientales": 15, "mujeres": 0.25})
+
+    def test_se_aplican_al_puntaje(self):
+        from motor.tecnica.proponente import aplicar_puntajes_del_pliego
+        from motor.tecnica.puntaje import Factor
+
+        gerencia = Factor("gerencia_proyectos", "g", 5, puntaje=5)
+        maquinaria = Factor("maquinaria", "m", 0)
+        plan = Factor("plan_calidad", "p", 5, puntaje=5)
+        aplicar_puntajes_del_pliego([gerencia, maquinaria, plan], {"gerencia_proyectos": 10, "maquinaria": None})
+        self.assertEqual((gerencia.puntaje_maximo, gerencia.puntaje), (10, 10))
+        self.assertTrue(maquinaria.no_aplica)
+        # Sin valor en el pliego: a revisión, nunca se otorga el del documento tipo.
+        self.assertIsNone(plan.puntaje)
+
+
 class DefinicionTecnicaTests(SimpleTestCase):
     def test_un_requisito_de_experiencia_por_lote(self):
         definicion = criterios.expandir_lotes(criterios.definicion_sistema("tecnica"), ["LOTE 1", "LOTE 2"])
@@ -396,3 +422,28 @@ class InformeTecnicoTests(SimpleTestCase):
         hoja = openpyxl.load_workbook(io.BytesIO(contenido))["Resumen"]
         fila = next(f for f in hoja.iter_rows(values_only=True) if f[0] == "P-01")
         self.assertEqual(fila[2:], ("CUMPLE", 30, 0, PENDIENTE, 0.25, 0.25, 0, f"30.5 + {PENDIENTE}"))
+
+
+class AnaliticaTests(SimpleTestCase):
+    def test_techo_del_error(self):
+        from evaluaciones.analitica import techo_del_error
+
+        # 0 errores en n decisiones: 1 - 0,05^(1/n) (regla de tres: ~3/n).
+        self.assertAlmostEqual(techo_del_error(0, 1000), 0.002991, places=5)
+        self.assertIsNone(techo_del_error(0, 0))
+        # Con errores, la cota es mayor que la tasa observada.
+        self.assertGreater(techo_del_error(1, 1000), 0.001)
+        self.assertLess(techo_del_error(1, 1000), 0.006)
+
+    def test_resumen_de_una_prueba(self):
+        from evaluaciones.analitica import Fila, Prueba, resumir
+
+        filas = [
+            Fila("P-01", "1", "SI", "SI"), Fila("P-01", "2", "NO", "NO"),
+            Fila("P-02", "1", "SI", "NO"), Fila("P-02", "2", "N.A.", "N.A."),
+        ]
+        r = resumir(Prueba("x", "juridica", "Prueba", filas=filas, tiempos={"P-01": 10, "P-02": 30}))
+        self.assertEqual((r["decisiones"], r["automaticas"], r["indebidas"], r["revision_justificada"]), (4, 3, 1, 1))
+        self.assertEqual(r["proponentes_resueltos_solos"], 1)
+        self.assertEqual(r["proponentes_resueltos_solos_mal"], 1)
+        self.assertEqual(r["segundos_por_proponente"], 20)

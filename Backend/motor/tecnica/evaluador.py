@@ -36,6 +36,7 @@ FACTORES: dict[str, int] = {
     "discapacidad": 125,
     "mujeres": 126,
     "mipyme": 127,
+    "maquinaria": 128,
 }
 OBRAS_INCONCLUSAS = 130
 
@@ -163,6 +164,9 @@ def evaluar_factor(proponente: Proponente, proceso: ProcesoDocumentoBase, clave:
     factor: Factor | None = next((f for f in resultado.puntaje if f.clave == clave), None)
     if factor is None:
         return ResultadoRequisito(**_base(proponente, numero), error=f"Factor desconocido: {clave}")
+    detalle = {"factor_clave": factor.clave, "puntaje_maximo": factor.puntaje_maximo, "puntaje": factor.puntaje}
+    if factor.no_aplica:
+        return ResultadoRequisito(**_base(proponente, numero), cumple=True, motivo=factor.motivos[0], detalle=detalle)
     otorgado = factor.puntaje is not None and factor.puntaje > 0
     motivo = "; ".join(factor.motivos) or None
     return ResultadoRequisito(
@@ -171,7 +175,7 @@ def evaluar_factor(proponente: Proponente, proceso: ProcesoDocumentoBase, clave:
         motivo=(f"Otorga {factor.puntaje:g} puntos. {motivo}" if otorgado and motivo else
                 f"Otorga {factor.puntaje:g} puntos." if otorgado else motivo),
         archivo_evaluado=factor.archivo,
-        detalle={"factor_clave": factor.clave, "puntaje_maximo": factor.puntaje_maximo, "puntaje": factor.puntaje},
+        detalle=detalle,
     )
 
 

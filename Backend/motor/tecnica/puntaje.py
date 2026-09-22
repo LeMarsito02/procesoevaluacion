@@ -94,6 +94,8 @@ class Factor:
     puntaje: float | None = None
     archivo: str | None = None
     motivos: list[str] = field(default_factory=list)
+    # El pliego dice que el factor NO APLICA en este proceso.
+    no_aplica: bool = False
 
 
 def _buscar_formato(pdfs: dict[str, bytes], titulo: re.Pattern, pista: re.Pattern | None = None):

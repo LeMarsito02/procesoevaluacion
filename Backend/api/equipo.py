@@ -503,3 +503,36 @@ def guardar_salario_minimo(request: HttpRequest, ano: int, datos: SalarioMinimoI
     )
     auditar(request, "plataforma.salario_minimo", entidad_id=None, ano=ano, anterior=anterior, valor=datos.valor, norma=s.norma)
     return _salario_out(s)
+
+
+# --- Analítica de rendimiento (tablero comercial) ---
+class RendimientoOut(Schema):
+    foto: dict | None
+    creada_en: datetime | None
+    nota: str
+    # En la plataforma, en vivo (fila de trabajos).
+    proponentes_evaluados: int
+    segundos_por_proponente: float | None
+
+
+@plataforma.get("/rendimiento", response=RendimientoOut)
+def rendimiento(request: HttpRequest) -> RendimientoOut:
+    """La última foto de la analítica (manage.py medir_rendimiento) y los
+    números en vivo de la plataforma."""
+    from django.db.models import Avg, DurationField, ExpressionWrapper, F
+
+    from evaluaciones.models import EstadoTrabajo, MedicionRendimiento, Trabajo
+
+    _solo_superadmin(request)
+    foto = MedicionRendimiento.objects.first()
+    terminados = Trabajo.objects.filter(estado=EstadoTrabajo.TERMINADO, iniciado_en__isnull=False, terminado_en__isnull=False)
+    duracion = terminados.aggregate(
+        d=Avg(ExpressionWrapper(F("terminado_en") - F("iniciado_en"), output_field=DurationField()))
+    )["d"]
+    return RendimientoOut(
+        foto=foto.datos if foto else None,
+        creada_en=foto.creada_en if foto else None,
+        nota=foto.nota if foto else "",
+        proponentes_evaluados=terminados.values("evaluacion_id", "proponente_id").distinct().count(),
+        segundos_por_proponente=duracion.total_seconds() if duracion else None,
+    )
