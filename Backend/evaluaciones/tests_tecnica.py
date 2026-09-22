@@ -262,6 +262,8 @@ class ExperienciaTests(SimpleTestCase):
         self.assertTrue(lote2.longitud)
 
     def test_longitudes_explicitas(self):
+        self.assertEqual([round(x, 5) for x in longitudes_en("SE CONSTRUYO UNA LONGITUD TOTAL DE 5,041,56 METROS LINEALES DE VIA")],
+                         [5.04156])
         self.assertEqual(longitudes_en("Longitud Intervenida: 2346,73 ML"), [2.34673])
         self.assertEqual(longitudes_en("se pavimentaron 2,3 km de via"), [2.3])
         # Cantidades de la tabla de ítems o medidas de materiales no son la longitud de la vía.

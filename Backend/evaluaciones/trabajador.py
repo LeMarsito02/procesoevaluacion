@@ -25,10 +25,12 @@ from evaluaciones.servicios import (
     avances,
     definicion_de,
     guardar_resultados,
+    parametros_financieros_de,
     parametros_tecnicos_de,
     proponente_motor,
     reclamar,
     recuperar_huerfanos,
+    revisar_integrantes_compartidos,
 )
 from motor.esquemas.proceso import ProcesoDocumentoBase
 from motor.workers import detener_pool
@@ -69,6 +71,8 @@ def _cerrar(trabajo: Trabajo, resultados, error: str | None) -> None:
     with transaction.atomic():
         if resultados is not None:
             guardar_resultados(evaluacion, trabajo.proponente, resultados)
+            if evaluacion.tipo == "financiera":
+                revisar_integrantes_compartidos(evaluacion)
         Trabajo.objects.filter(pk=trabajo.pk).update(
             estado=EstadoTrabajo.ERROR if error else EstadoTrabajo.TERMINADO,
             error=error or "",
@@ -89,6 +93,8 @@ async def _atender(trabajo: Trabajo) -> None:
     documento.criterios = (await sync_to_async(definicion_de)(trabajo.evaluacion)).model_dump(mode="json")
     if trabajo.evaluacion.tipo == "tecnica":
         documento.parametros_tecnicos = await sync_to_async(parametros_tecnicos_de)(trabajo.evaluacion.proceso)
+    if trabajo.evaluacion.tipo == "financiera":
+        documento.parametros_financieros = await sync_to_async(parametros_financieros_de)(trabajo.evaluacion.proceso)
     inicio = timezone.now()
     try:
         proponente = await sync_to_async(proponente_motor)(trabajo.proponente, trabajo.evaluacion)

@@ -208,6 +208,37 @@ export interface TipoEvaluacion {
   disponible: boolean
 }
 
+export interface LoteFinanciero {
+  nombre: string
+  presupuesto: number | null
+  plazo_meses: number | null
+  anticipo: number | null
+  capital_de_trabajo_demandado: number | null
+  capacidad_residual_del_proceso: number | null
+}
+
+export interface UmbralesFinancieros {
+  liquidez_min: number | null
+  endeudamiento_max: number | null
+  cobertura_min: number | null
+  roa_min: number | null
+  roe_min: number | null
+  fuente: string
+}
+
+export interface ParametrosFinancieros {
+  smmlv: number
+  lotes: LoteFinanciero[]
+  umbrales: UmbralesFinancieros
+  umbrales_completos: boolean
+  patrimonio_aplica: boolean
+  avisos: string[]
+}
+
+export const parametrosFinancieros = (id: string) =>
+  pedirJson<ParametrosFinancieros | null>(`/api/evaluaciones/${id}/parametros-financieros`)
+export const registrarUmbrales = (id: string, u: Omit<UmbralesFinancieros, 'fuente'>) =>
+  enviarJson<ParametrosFinancieros>(`/api/evaluaciones/${id}/umbrales-financieros`, 'PUT', u)
 export const listarTipos = () => pedirJson<TipoEvaluacion[]>('/api/evaluaciones/tipos')
 
 export const actualizarPlantillaEvaluacion = (id: string) =>

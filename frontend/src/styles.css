@@ -664,3 +664,8 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
   .rend-tile-valor { font-size: 22px; }
   .rend-barra-relleno, .rend-barra-pista { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* Parámetros financieros del proceso */
+.param-fin-lotes { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.param-fin-umbrales { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-top: 12px; }
+.param-fin-umbrales .acciones { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; }

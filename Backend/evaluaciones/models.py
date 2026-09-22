@@ -33,6 +33,10 @@ class Proceso(models.Model):
     # cada lote, experiencia exigida, códigos UNSPSC, tabla de valor mínimo):
     # motor.tecnica.evaluador.parametros_a_dict. Se calculan la primera vez.
     parametros_tecnicos = models.JSONField(null=True, blank=True)
+    # Parámetros de la evaluación financiera: plazo y anticipo de cada lote
+    # (del pliego) y los umbrales de la Matriz 2, que puede registrar una
+    # persona si el pliego no los trae (motor.financiera.evaluador.parametros_a_dict).
+    parametros_financieros = models.JSONField(null=True, blank=True)
     # Retención: fecha en que se borraron las copias de los documentos de los
     # proponentes (se conservan resultados, decisiones e informes).
     documentos_eliminados_en = models.DateTimeField(null=True, blank=True)

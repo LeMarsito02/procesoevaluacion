@@ -78,7 +78,15 @@ export async function descargarPlantilla(p: Plantilla) {
 }
 
 // --- Plantillas de evaluación ---
-export type GrupoRequisito = 'oferta' | 'camara' | 'antecedentes' | 'experiencia' | 'puntaje' | 'adicionales'
+export type GrupoRequisito =
+  | 'oferta'
+  | 'camara'
+  | 'antecedentes'
+  | 'experiencia'
+  | 'puntaje'
+  | 'financiera'
+  | 'residual'
+  | 'adicionales'
 export type TipoProponente = 'persona_natural' | 'persona_juridica' | 'consorcio' | 'union_temporal'
 
 export interface Bloque {

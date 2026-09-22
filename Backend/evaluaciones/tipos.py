@@ -45,8 +45,9 @@ TIPOS: dict[str, TipoEvaluacion] = {
     TipoArea.FINANCIERA: TipoEvaluacion(
         clave=TipoArea.FINANCIERA,
         nombre="Financiera",
-        descripcion="Indicadores financieros y organizacionales (liquidez, endeudamiento, cobertura, rentabilidad).",
-        disponible=False,
+        descripcion="Capacidad financiera y organizacional del RUP (liquidez, endeudamiento, cobertura, rentabilidad), "
+        "capital de trabajo y capacidad residual por lote, y validez de los documentos de los contadores.",
+        disponible=True,
         plantilla=None,
     ),
 }

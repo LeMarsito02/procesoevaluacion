@@ -19,7 +19,7 @@ interface Estadisticas {
 
 interface ResumenPrueba extends Estadisticas {
   clave: string
-  area: 'juridica' | 'tecnica'
+  area: Area
   nombre: string
   a_ciegas: boolean
   nota: string
@@ -54,7 +54,9 @@ interface Rendimiento {
 const pct = (v: number | null | undefined, dec = 1) =>
   v == null ? '—' : `${(v * 100).toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })} %`
 const entero = (v: number) => v.toLocaleString('es-CO')
-const AREA = { juridica: 'Jurídica', tecnica: 'Técnica' } as const
+const AREA = { juridica: 'Jurídica', tecnica: 'Técnica', financiera: 'Financiera' } as const
+type Area = keyof typeof AREA
+const AREAS = Object.keys(AREA) as Area[]
 
 function duracion(segundos: number | null | undefined): string {
   if (segundos == null) return '—'
@@ -75,14 +77,14 @@ function Tile({ etiqueta, valor, detalle }: { etiqueta: string; valor: string; d
 export default function PaginaRendimiento() {
   const [datos, setDatos] = useState<Rendimiento | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [minutos, setMinutos] = useState<Record<string, number>>({ juridica: 6, tecnica: 10 })
-  const [area, setArea] = useState<'juridica' | 'tecnica'>('juridica')
+  const [minutos, setMinutos] = useState<Record<string, number>>({ juridica: 6, tecnica: 10, financiera: 15 })
+  const [area, setArea] = useState<Area>('juridica')
 
   useEffect(() => {
     pedirJson<Rendimiento>('/api/plataforma/rendimiento')
       .then((d) => {
         setDatos(d)
-        if (d.foto) setMinutos(d.foto.global.minutos_manuales)
+        if (d.foto) setMinutos((m) => ({ ...m, ...d.foto!.global.minutos_manuales }))
       })
       .catch((e: unknown) => setError(mensajeDe(e)))
   }, [])
@@ -191,13 +193,13 @@ export default function PaginaRendimiento() {
             <Tile
               etiqueta="Horas de trabajo ahorradas"
               valor={horas.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-              detalle={`con ${minutos.juridica} min por requisito jurídico y ${minutos.tecnica} técnico`}
+              detalle={`con ${minutos.juridica} min por requisito jurídico, ${minutos.tecnica} técnico y ${minutos.financiera} financiero`}
             />
           </section>
 
           <div className="rend-minutos no-imprimir">
             <span className="small muted">Minutos que tarda una persona por requisito:</span>
-            {(['juridica', 'tecnica'] as const).map((a) => (
+            {AREAS.filter((a) => pruebas.some((p) => p.area === a)).map((a) => (
               <label key={a} className="small">
                 {AREA[a]}{' '}
                 <input
@@ -258,7 +260,7 @@ export default function PaginaRendimiento() {
             <div className="rend-seccion-cabeza">
               <h2>Qué resuelve solo, requisito por requisito</h2>
               <div className="segmentado no-imprimir" role="tablist">
-                {(['juridica', 'tecnica'] as const).map((a) => (
+                {AREAS.filter((a) => pruebas.some((p) => p.area === a)).map((a) => (
                   <button key={a} type="button" role="tab" aria-selected={area === a} onClick={() => setArea(a)}>
                     {AREA[a]}
                   </button>

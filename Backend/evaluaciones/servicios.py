@@ -158,6 +158,72 @@ def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultado
         sincronizar_personas(evaluacion, proponente)
 
 
+def _clave_integrante(nombre: str, nit: str | None) -> str:
+    digitos = "".join(c for c in (nit or "") if c.isdigit()).lstrip("0")
+    if len(digitos) == 10 and digitos[0] in "89":
+        return digitos[:9]  # NIT de empresa con dígito de verificación
+    if len(digitos) >= 6:
+        return digitos
+    return " ".join(nombre.upper().split())
+
+
+def revisar_integrantes_compartidos(evaluacion: Evaluacion) -> int:
+    """Evaluación financiera: un integrante que está en varias ofertas del
+    mismo proceso (para lotes distintos) debe tener capacidad residual para
+    la suma de los lotes de todas ellas (pliego 3.11; así lo aplicó el
+    evaluador de referencia). Cada oferta se evalúa por separado, así que la
+    capacidad residual de esas ofertas pasa a revisión con la explicación.
+    Devuelve cuántos resultados se marcaron."""
+    residuales = [r for r in definicion_de(evaluacion).requisitos if r.verificacion == "financiera.residual"]
+    numeros = {r.numero for r in residuales}
+    if not numeros:
+        return 0
+    filas = list(
+        Resultado.objects.filter(evaluacion=evaluacion, requisito__in=numeros).select_related("proponente")
+    )
+    por_integrante: dict[str, set] = {}
+    nombres: dict[str, str] = {}
+    lotes: dict = {}
+    for f in filas:
+        financiera = (f.datos.get("detalle") or {}).get("financiera") or {}
+        if financiera.get("no_aplica"):
+            continue
+        lotes.setdefault(f.proponente_id, set()).add(financiera.get("lote") or "")
+        for i in (f.datos.get("detalle") or {}).get("integrantes_financieros") or []:
+            clave = _clave_integrante(i.get("nombre") or "", i.get("nit"))
+            por_integrante.setdefault(clave, set()).add(f.proponente_id)
+            nombres[clave] = i.get("nombre") or clave
+    marcados = 0
+    with transaction.atomic():
+        for f in filas:
+            datos = f.datos
+            financiera = (datos.get("detalle") or {}).get("financiera") or {}
+            if financiera.get("no_aplica") or financiera.get("compartido") or not datos.get("cumple"):
+                continue
+            otros = {}
+            for i in (datos.get("detalle") or {}).get("integrantes_financieros") or []:
+                clave = _clave_integrante(i.get("nombre") or "", i.get("nit"))
+                for p in por_integrante.get(clave, set()) - {f.proponente_id}:
+                    otros.setdefault(p, []).append(nombres[clave])
+            if not otros:
+                continue
+            hojas = {p.id: p for p in Proponente.objects.filter(id__in=otros)}
+            partes = [
+                f"{', '.join(sorted(set(n)))} también integra {hojas[p].hoja} {hojas[p].nombre_proponente} "
+                f"({', '.join(sorted(l.lower() for l in lotes.get(p, set()) if l)) or 'otros lotes'})"
+                for p, n in otros.items() if p in hojas
+            ]
+            aviso = ("; ".join(partes) + ": la capacidad residual de ese integrante debe alcanzar para los lotes de "
+                     "todas las ofertas en que participa (pliego 3.11); verifícala en conjunto.")
+            datos = {**datos, "cumple": False, "motivo": f"{aviso} {datos.get('motivo') or ''}".strip(),
+                     "detalle": {**datos["detalle"], "financiera": {**financiera, "compartido": True}}}
+            Resultado.objects.filter(pk=f.pk).update(
+                datos=datos, requiere_revision=requiere_revision(ResultadoRequisito.model_validate(datos))
+            )
+            marcados += 1
+    return marcados
+
+
 def clave_persona(nombre: str, documento: str | None, tipo: str | None = None) -> str:
     """Una misma persona se reconoce por su documento; sin él, por su nombre.
 
@@ -396,6 +462,9 @@ def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
     if evaluacion.tipo == "tecnica":
         parametros = parametros_tecnicos_de(evaluacion.proceso) or {}
         definicion = criterios.expandir_lotes(definicion, [l["nombre"] for l in parametros.get("lotes", [])])
+    if evaluacion.tipo == "financiera":
+        parametros = parametros_financieros_de(evaluacion.proceso) or {}
+        definicion = criterios.expandir_lotes(definicion, [l["nombre"] for l in parametros.get("lotes", [])])
     # El salario mínimo del año del cierre, salvo que la entidad fije otro.
     if not definicion.parametros.get("smmlv"):
         salario = salario_minimo(evaluacion.proceso.fecha_cierre.year)
@@ -427,6 +496,57 @@ def parametros_tecnicos_de(proceso) -> dict | None:
     parametros = parametros_a_dict(leer_parametros(contenido, [(l.numero, l.valor_presupuesto) for l in base.lotes], salario))
     type(proceso).objects.filter(pk=proceso.pk).update(parametros_tecnicos=parametros)
     proceso.parametros_tecnicos = parametros
+    return parametros
+
+
+def parametros_financieros_de(proceso) -> dict | None:
+    """Parámetros de la evaluación financiera: presupuesto de cada lote (el
+    mismo que lee la técnica), plazo y anticipo del pliego y los umbrales de
+    la Matriz 2 si el pliego los trae. Se calculan una vez y quedan
+    guardados (los umbrales que registre una persona no se pisan)."""
+    if proceso.parametros_financieros:
+        return proceso.parametros_financieros
+    tecnicos = parametros_tecnicos_de(proceso)
+    analisis = proceso.analisis_pliego
+    salario = salario_minimo(proceso.fecha_cierre.year)
+    if tecnicos is None or analisis is None or not analisis.archivo or not salario:
+        return None
+    from motor.financiera.evaluador import parametros_a_dict
+    from motor.financiera.parametros import leer_parametros
+
+    try:
+        with analisis.archivo.open("rb") as f:
+            contenido = f.read()
+    except OSError:
+        return None
+    lotes = [(l["nombre"], l.get("presupuesto")) for l in tecnicos.get("lotes", [])]
+    parametros = parametros_a_dict(leer_parametros(contenido, lotes, salario))
+    type(proceso).objects.filter(pk=proceso.pk).update(parametros_financieros=parametros)
+    proceso.parametros_financieros = parametros
+    return parametros
+
+
+UMBRALES_FINANCIEROS = ("liquidez_min", "endeudamiento_max", "cobertura_min", "roa_min", "roe_min")
+
+
+def registrar_umbrales_financieros(proceso, valores: dict, usuario) -> dict:
+    """Umbrales de la Matriz 2 que registra una persona (la matriz es un
+    anexo aparte del pliego). Quedan con quién y cuándo los registró; para
+    que cuenten hay que volver a evaluar."""
+    parametros = parametros_financieros_de(proceso)
+    if parametros is None:
+        raise ValueError("El proceso no tiene los parámetros financieros del pliego (falta el pliego o el salario mínimo).")
+    umbrales = {}
+    for clave in UMBRALES_FINANCIEROS:
+        v = valores.get(clave)
+        if v is None or isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 or v > 1000:
+            raise ValueError(f"Falta o no es válido el umbral «{clave}».")
+        umbrales[clave] = float(v)
+    nombre = usuario.nombre_completo or usuario.email
+    umbrales["fuente"] = f"Matriz 2, registrada por {nombre} el {timezone.localdate():%d/%m/%Y}"
+    parametros = {**parametros, "umbrales": umbrales}
+    type(proceso).objects.filter(pk=proceso.pk).update(parametros_financieros=parametros)
+    proceso.parametros_financieros = parametros
     return parametros
 
 
@@ -521,6 +641,8 @@ def generar_informe_excel(evaluacion: Evaluacion) -> tuple[bytes, str]:
     elegida = plantilla_para_informe(evaluacion.entidad_id, evaluacion.tipo)
     if elegida is None and evaluacion.tipo == "tecnica":
         return generar_informe_tecnico(evaluacion)
+    if elegida is None and evaluacion.tipo == "financiera":
+        return generar_informe_financiero(evaluacion)
     if elegida is None:
         raise SinPlantillaInforme()
     plantilla, mapeo = elegida
@@ -568,6 +690,43 @@ def generar_informe_tecnico(evaluacion: Evaluacion) -> tuple[bytes, str]:
     )
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
     return contenido, f"INFORME EVALUACION TECNICA {proceso.codigo}{borrador}.xlsx"
+
+
+def generar_informe_financiero(evaluacion: Evaluacion) -> tuple[bytes, str]:
+    """Resumen financiero por lote (sin plantilla de la entidad)."""
+    from motor.financiera.informe import generar_informe
+    from motor.tecnica.informe import ResultadoInforme
+
+    proceso = evaluacion.proceso
+    definicion = definicion_de(evaluacion)
+    revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion)}
+    hojas = {p.id: p.hoja for p in proceso.proponentes.all()}
+    resultados = {}
+    for r in Resultado.objects.filter(evaluacion=evaluacion):
+        revision = revisiones.get((r.proponente_id, r.requisito))
+        resultados[(hojas[r.proponente_id], r.requisito)] = ResultadoInforme(aplicar_revision(r.datos, revision), revision is not None)
+    por_lote: dict[int, list[int]] = {}
+    generales = []
+    for r in definicion.requisitos:
+        if r.verificacion in criterios.POR_LOTE:
+            por_lote.setdefault(r.lote or 0, []).append(r.numero)
+        else:
+            generales.append(r.numero)
+    parametros = parametros_financieros_de(proceso) or {}
+    lotes = [(i, l["nombre"]) for i, l in enumerate(parametros.get("lotes", []))] or [(0, "Lote único")]
+    contenido = generar_informe(
+        proceso.codigo,
+        proceso.objeto,
+        lotes,
+        [(p.hoja, p.nombre_proponente) for p in proceso.proponentes.order_by("numero_orden")],
+        resultados,
+        generales,
+        por_lote,
+        borrador=evaluacion.estado != EstadoEvaluacion.APROBADA,
+        titulos={r.numero: r.titulo for r in definicion.requisitos},
+    )
+    borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
+    return contenido, f"INFORME EVALUACION FINANCIERA {proceso.codigo}{borrador}.xlsx"
 
 
 def eliminar_proceso(proceso) -> dict[str, int]:

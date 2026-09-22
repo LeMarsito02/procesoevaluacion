@@ -185,6 +185,56 @@ export interface ContratoTecnico {
   problemas: string[]
 }
 
+export interface IntegranteFinanciero {
+  nombre: string
+  nit: string | null
+  participacion: number | null
+  rup: string | null
+  financiera: {
+    fecha_corte: string | null
+    activo_corriente: number | null
+    activo_total: number | null
+    pasivo_corriente: number | null
+    pasivo_total: number | null
+    patrimonio: number | null
+    utilidad_operacional: number | null
+    gastos_intereses: number | null
+  } | null
+}
+
+export interface ResidualIntegrante {
+  nombre: string
+  co: number | null
+  e: number | null
+  puntos_e: number | null
+  profesionales: number | null
+  puntos_ct: number | null
+  liquidez: number | null
+  puntos_cf: number | null
+  sce: number | null
+  crp: number | null
+}
+
+export interface DetalleFinanciero {
+  no_aplica?: boolean
+  compartido?: boolean
+  lote?: string
+  liquidez?: number | null
+  endeudamiento?: number | null
+  cobertura?: number | null
+  roa?: number | null
+  roe?: number | null
+  capital_de_trabajo?: number
+  demandado?: number | null
+  exigida?: number
+  crp?: number
+  lotes_cubiertos?: string[]
+  integrantes?: ResidualIntegrante[]
+  patrimonio?: number | null
+  /** Validez: por integrante, sus estados financieros y el estado del certificado de cada tarjeta profesional. */
+  validez?: Record<string, { estados: string[]; tarjetas: Record<string, string> }>
+}
+
 export interface DetalleTecnico {
   lote?: string
   valor_a_certificar?: number | null
@@ -198,6 +248,9 @@ export interface DetalleTecnico {
   contratos?: ContratoTecnico[]
   integrantes?: { nombre: string; nit: string | null; participacion: number | null; rup: string | null; tamano: string | null }[]
   formato3?: string | null
+  /** Evaluación financiera: indicadores, capital de trabajo o capacidad residual. */
+  financiera?: DetalleFinanciero
+  integrantes_financieros?: IntegranteFinanciero[]
   factor_clave?: string
   puntaje_maximo?: number
   puntaje?: number | null

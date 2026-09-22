@@ -3,6 +3,7 @@ import type { ResultadoRequisito } from '../api'
 import Icono from '../components/Icono'
 import AntecedentesProponente from '../components/AntecedentesProponente'
 import DocumentosFinales from '../components/DocumentosFinales'
+import ParametrosFinancieros from '../components/ParametrosFinancieros'
 import PliegoProceso from '../components/PliegoProceso'
 import PanelProponente from '../components/PanelProponente'
 import PasoDatos from '../components/PasoDatos'
@@ -388,7 +389,12 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           }
           onVolver={null}
           onEvaluar={confirmarDatos}
-          antesDeAcciones={<PliegoProceso evaluacionId={id} pliego={inicial.pliego} />}
+          antesDeAcciones={
+            <>
+              <PliegoProceso evaluacionId={id} pliego={inicial.pliego} />
+              {resumen.tipo === 'financiera' && <ParametrosFinancieros evaluacionId={id} soloLectura={soloLectura} />}
+            </>
+          }
         />
       )}
 

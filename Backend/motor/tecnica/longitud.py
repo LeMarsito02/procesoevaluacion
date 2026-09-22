@@ -18,6 +18,10 @@ from motor.procesamiento.pdf_utils import extraer_texto
 from motor.tecnica.rup import normalizar, numero
 
 PAGINAS_POR_SOPORTE = 15
+# Si un soporte es del contrato pero la longitud no está en sus primeras
+# páginas (actas largas: la relación de longitudes va al final), se sigue
+# leyendo solo ese documento.
+PAGINAS_SOPORTE_DEL_CONTRATO = 40
 _UNIDAD = r"(KMS?|KILOMETROS?|ML|MTS?|METROS?(?:\s+LINEALES)?)\b"
 _VERBO = r"(?:INTERVEN|EJECUT|CONSTRU|PAVIMENT|MEJOR|REHABILIT|RECONSTRU|REPAVIMENT|ATENDID)\w*"
 _LONGITUD_RE = re.compile(
@@ -37,6 +41,11 @@ _NO_ES_SOPORTE_RE = re.compile(r"\bRUP\b|REGISTRO UNICO|FORMATO\s*[1-9]\b|FORMA\
 
 
 def _km(valor: str, unidad: str) -> float | None:
+    if re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+[.,]\d{1,2}", valor.rstrip(".,")):
+        # "5,041,56": miles y decimales con el mismo signo; la última
+        # separación es la de los decimales (la lectura más baja).
+        partes = re.split(r"[.,]", valor.rstrip(".,"))
+        valor = "".join(partes[:-1]) + "," + partes[-1]
     v = numero(valor)
     if v is None:
         return None
@@ -176,7 +185,7 @@ def longitud_del_contrato(
         # El número del contrato junto a la palabra "contrato" (un 688 suelto
         # puede ser un valor o una cantidad de otro contrato), o en la carpeta.
         cita_numero = any(
-            re.search(rf"CONTRATO[^\n]{{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
+            re.search(rf"CONTRATO(?:[^\n]|\n(?!\s*\n)){{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
             for n in numeros
         )
         cita_contratante = not palabras or any(p in texto for p in palabras)
@@ -186,11 +195,22 @@ def longitud_del_contrato(
         longitudes = longitudes_en(texto)
         if longitudes and (mejor[0] is None or max(longitudes) > mejor[0]):
             mejor = (max(longitudes), archivo)
+    if mejor[0] is None:
+        for archivo in citados:
+            clave = f"{archivo}#completo"
+            if clave not in textos:
+                try:
+                    textos[clave] = normalizar(extraer_texto(pdfs[archivo], max_paginas=PAGINAS_SOPORTE_DEL_CONTRATO))
+                except Exception:  # noqa: BLE001
+                    textos[clave] = textos[archivo]
+            longitudes = longitudes_en(textos[clave])
+            if longitudes and (mejor[0] is None or max(longitudes) > mejor[0]):
+                mejor = (max(longitudes), archivo)
     if mejor[0] is not None:
         return mejor[0], mejor[1], None
     # Los soportes con más menciones de longitud primero; como mucho tres.
     for archivo in sorted(citados, key=lambda a: -len(_PISTA_LONGITUD_RE.findall(textos[a])))[:3]:
-        km, cita = longitud_con_ia(textos[archivo])
+        km, cita = longitud_con_ia(textos.get(f"{archivo}#completo", textos[archivo]))
         if km is not None:
             return km, archivo, cita
     return None, None, None
@@ -209,7 +229,7 @@ def area_del_contrato(
         if archivo not in pdfs:
             continue
         cita_numero = any(
-            re.search(rf"CONTRATO[^\n]{{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
+            re.search(rf"CONTRATO(?:[^\n]|\n(?!\s*\n)){{0,40}}?(?<!\d)0*{n}(?!\d)", texto) or re.search(rf"(?<!\d)0*{n}(?!\d)", normalizar(archivo))
             for n in numeros
         )
         if cita_numero and (not palabras or any(p in texto for p in palabras)):

@@ -4,6 +4,7 @@ import { claveRevision, ETIQUETA_ESTADO, esPendiente, estadoDe, resumenProponent
 import { GRUPOS, ORDEN_GRUPOS, ordenarArchivosPorRequisito, REQUISITOS } from '../requisitos'
 import { fuenteDe } from '../historico'
 import Icono from './Icono'
+import DetalleFinanciero from './DetalleFinanciero'
 import DetalleTecnico from './DetalleTecnico'
 
 const TIPO: Record<string, string> = {
@@ -156,6 +157,7 @@ export default function PanelProponente(p: Props) {
                           </div>
                         )}
                         {r.detalle?.contratos && <DetalleTecnico detalle={r.detalle} />}
+                        {r.detalle?.financiera && <DetalleFinanciero detalle={r.detalle} />}
                         {p.onConsultarCopnia && r.matricula_profesional && fuente(info.numero)?.clave === 'copnia' && esPendiente(estado) && (
                           <div className="acciones">
                             <span className="small muted">

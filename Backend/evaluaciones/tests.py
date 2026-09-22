@@ -215,7 +215,7 @@ class CrearYAsignarTests(BaseEvaluaciones):
         self.crear()
         self.crear("abogado@otraentidad.gov.co")
 
-    def test_financiera_se_crea_y_asigna_pero_no_evalua(self):
+    def test_las_tres_areas_se_crean_y_asignan(self):
         c = Cliente()
         c.entrar("admin@entidad.gov.co")
         with self.captureOnCommitCallbacks(execute=True):
@@ -235,15 +235,10 @@ class CrearYAsignarTests(BaseEvaluaciones):
         self.assertIsNone(por_tipo["financiera"]["responsable"])
         self.assertTrue(por_tipo["juridica"]["tipo_disponible"])
         self.assertTrue(por_tipo["tecnica"]["tipo_disponible"])
-        self.assertFalse(por_tipo["financiera"]["tipo_disponible"])
+        self.assertTrue(por_tipo["financiera"]["tipo_disponible"])
         self.assertEqual({m.to[0] for m in mail.outbox}, {"abogado@entidad.gov.co", "tecnico@entidad.gov.co"})
-        # La financiera aún no evalúa ni tiene informe.
-        r = c.post(f"/api/evaluaciones/{por_tipo['financiera']['id']}/evaluar", {})
-        self.assertEqual(r.status_code, 409)
-        self.assertIn("en preparación", r.json()["detail"])
-        self.assertEqual(c.get(f"/api/evaluaciones/{por_tipo['financiera']['id']}/informe").status_code, 400)
         tipos = {t["clave"]: t["disponible"] for t in c.get("/api/evaluaciones/tipos").json()}
-        self.assertEqual(tipos, {"juridica": True, "tecnica": True, "financiera": False})
+        self.assertEqual(tipos, {"juridica": True, "tecnica": True, "financiera": True})
 
     def test_tipo_invalido(self):
         c = Cliente()
@@ -525,7 +520,7 @@ class PlantillasTests(BaseEvaluaciones):
         listado = {t["tipo"]: t for t in self.admin.get("/api/configuracion/plantillas").json()}
         self.assertEqual(listado["juridica"]["activa"]["id"], plantilla["id"])
         self.assertFalse(listado["juridica"]["usa_plantilla_del_sistema"])
-        self.assertTrue(listado["financiera"]["activa"] is None and not listado["financiera"]["motor_disponible"])
+        self.assertTrue(listado["financiera"]["activa"] is None and listado["financiera"]["motor_disponible"])
 
         # El informe usa la plantilla y el mapeo de la entidad.
         import io

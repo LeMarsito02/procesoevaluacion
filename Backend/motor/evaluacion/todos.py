@@ -81,6 +81,9 @@ def liberar_memoria_proponente() -> None:
     from motor.tecnica import evaluador as tecnico
 
     tecnico._ULTIMO = None
+    from motor.financiera import evaluador as financiero
+
+    financiero._ULTIMO = None
     pdf_utils.limpiar_memoria_texto()
     gc.collect()
 
@@ -153,6 +156,10 @@ def evaluar_requisito(
         )
     if req.verificacion.startswith("tecnica."):
         return _evaluar_tecnico(proponente, proceso, req)
+    if req.verificacion.startswith("financiera."):
+        from motor.financiera import evaluador as financiero
+
+        return financiero.evaluar(proponente, proceso, req.verificacion.removeprefix("financiera."), req.numero, req.lote)
     interno = criterios.VERIFICACIONES[req.verificacion].numero_interno
     evaluador = EVALUADORES_POR_REQUISITO.get(interno) or EVALUADORES_DEL_PLIEGO[interno]
     resultado = evaluador(proponente, proceso)

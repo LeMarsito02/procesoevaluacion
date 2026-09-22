@@ -124,6 +124,25 @@ class ExperienciaRup:
 
 
 @dataclass
+class InformacionFinanciera:
+    """Lo que el RUP certifica de los estados financieros del inscrito (la
+    evaluación financiera se hace con esto: pliego 3.10.1)."""
+    fecha_corte: date | None = None
+    activo_corriente: float | None = None
+    activo_total: float | None = None
+    pasivo_corriente: float | None = None
+    pasivo_total: float | None = None
+    patrimonio: float | None = None
+    utilidad_operacional: float | None = None
+    gastos_intereses: float | None = None
+
+    @property
+    def completa(self) -> bool:
+        return None not in (self.activo_corriente, self.activo_total, self.pasivo_corriente, self.pasivo_total,
+                            self.patrimonio, self.utilidad_operacional, self.gastos_intereses)
+
+
+@dataclass
 class Rup:
     nombre: str = ""
     nit: str = ""
@@ -132,6 +151,7 @@ class Rup:
     tamano_empresa: str = ""
     # Primeras líneas del certificado (para reconocer siglas del nombre).
     encabezado: str = ""
+    financiera: InformacionFinanciera | None = None
     experiencias: dict[str, ExperienciaRup] = field(default_factory=dict)
 
     @property
@@ -163,6 +183,47 @@ def _sin_encabezados(texto_norm: str) -> str:
 def _campo(patron: re.Pattern, bloque: str) -> str:
     m = patron.search(bloque)
     return " ".join(m.group(1).split()) if m else ""
+
+
+_VALOR_PESOS = r"\$?\s*(-?\s*\(?[\d.,]+\)?)"
+_CAMPOS_FINANCIEROS = {
+    "activo_corriente": rf"ACTIVO\s+CORRIENTE\s*:\s*{_VALOR_PESOS}",
+    "activo_total": rf"ACTIVO\s+TOTAL\s*:\s*{_VALOR_PESOS}",
+    "pasivo_corriente": rf"PASIVO\s+CORRIENTE\s*:\s*{_VALOR_PESOS}",
+    "pasivo_total": rf"PASIVO\s+TOTAL\s*:\s*{_VALOR_PESOS}",
+    "patrimonio": rf"PATRIMONIO(?:\s+NETO)?\s*:\s*{_VALOR_PESOS}",
+    "utilidad_operacional": rf"UTILIDAD(?:/PERDIDA)?\s+OPERACIONAL\s*:\s*{_VALOR_PESOS}",
+    "gastos_intereses": rf"GASTOS?\s+DE\s+INTERESES\s*:\s*{_VALOR_PESOS}",
+}
+_CORTE_RE = re.compile(r"FECHA\s+(?:DE\s+)?CORTE\s+DE\s+LA\s+INFORMACION\s+FINANCIERA\s*:\s*(\d{1,4})[/-](\d{1,2})[/-](\d{1,4})")
+
+
+def _pesos(texto: str) -> float | None:
+    negativo = "-" in texto or "(" in texto
+    valor = numero(re.sub(r"[^\d.,]", "", texto))
+    return None if valor is None else (-valor if negativo else valor)
+
+
+def leer_financiera(cuerpo: str) -> InformacionFinanciera | None:
+    """La sección "INFORMACIÓN FINANCIERA" más reciente del certificado
+    (algunos traen varios años; el primero es el último corte)."""
+    inicio = cuerpo.find("INFORMACION FINANCIERA")
+    while inicio >= 0 and not re.search(r"ACTIVO\s+CORRIENTE", cuerpo[inicio:inicio + 1500]):
+        inicio = cuerpo.find("INFORMACION FINANCIERA", inicio + 10)
+    if inicio < 0:
+        return None
+    seccion = cuerpo[inicio:inicio + 2500]
+    info = InformacionFinanciera()
+    if m := _CORTE_RE.search(seccion):
+        a, b, c = (int(x) for x in m.groups())
+        try:
+            info.fecha_corte = date(a, b, c) if a > 31 else date(c, b, a)
+        except ValueError:
+            pass
+    for campo, patron in _CAMPOS_FINANCIEROS.items():
+        if m := re.search(patron, seccion):
+            setattr(info, campo, _pesos(m.group(1)))
+    return info
 
 
 def _clases(bloque: str) -> set[str]:
@@ -213,6 +274,7 @@ def leer_rup(texto: str) -> Rup:
         pass
     rup.nombre = _campo(_NOMBRE_RE, cuerpo)
     rup.encabezado = cuerpo[:4000]
+    rup.financiera = leer_financiera(cuerpo)
     rup.nit = re.sub(r"\s", "", _campo(_NIT_RE, cuerpo))
     if m := _TAMANO_RE.search(cuerpo):
         rup.tamano_empresa = " ".join((m.group(1) or m.group(2) or "").split())

@@ -1,11 +1,12 @@
 """Calcula la analítica de rendimiento contra las evaluaciones reales de
 referencia y la guarda como la foto que muestra el tablero.
 
-Uso: manage.py medir_rendimiento [--minutos-juridica 6] [--minutos-tecnica 10]
+Uso: manage.py medir_rendimiento [--minutos-juridica 6] [--minutos-tecnica 10] [--minutos-financiera 15]
 
-Las fuentes son las mediciones que dejan scratch_medicion.py (jurídica) y
-.scratch/tecnica/medir.py (técnica). Los nombres son comerciales: no llevan el
-nombre de la entidad ni de los proponentes.
+Las fuentes son las mediciones que dejan scratch_medicion.py (jurídica),
+.scratch/tecnica/medir.py (técnica) y .scratch/financiera/medir.py
+(financiera). Los nombres son comerciales: no llevan el nombre de la
+entidad ni de los proponentes.
 """
 from __future__ import annotations
 
@@ -29,6 +30,8 @@ class Command(BaseCommand):
                             help="Minutos que tarda una persona en verificar un requisito jurídico.")
         parser.add_argument("--minutos-tecnica", type=float, default=10.0,
                             help="Minutos que tarda una persona en verificar un requisito técnico.")
+        parser.add_argument("--minutos-financiera", type=float, default=15.0,
+                            help="Minutos que tarda una persona en verificar un requisito financiero.")
         parser.add_argument("--nota", default="")
 
     def handle(self, *args, **opciones):
@@ -42,8 +45,11 @@ class Command(BaseCommand):
                                       nota="Medido a ciegas la primera vez; después se usó para mejoras."),
         ]
         tecnica = SCRATCH / "tecnica"
-        mediciones = sorted(tecnica.glob("medicion_*.json"))
-        mediciones = [m for m in mediciones if not m.stem.count(".")]  # sin las versiones viejas (.v1)
+        # La evaluación hecha en la plataforma, si existe; si no, las mediciones sueltas.
+        plataforma = tecnica / "medicion_plataforma.json"
+        mediciones = [plataforma] if plataforma.exists() else [
+            m for m in sorted(tecnica.glob("medicion_*.json")) if not m.stem.count(".")  # sin versiones viejas (.v1)
+        ]
         referencia = tecnica / "referencia.json"
         pruebas += [
             # P-01 a P-30 sirvieron para desarrollar el motor técnico: se muestran
@@ -54,8 +60,16 @@ class Command(BaseCommand):
                                      mediciones, referencia, hasta=30, a_ciegas=False,
                                      nota="Proponentes usados para desarrollar el motor técnico."),
         ]
+        financiera = SCRATCH / "financiera"
+        resultados = sorted((d for d in financiera.glob("res_v*") if d.is_dir()), key=lambda d: int(d.name[5:] or 0))
+        if resultados:
+            pruebas.append(analitica.prueba_financiera(
+                "financiera_lp", "Licitación de obra vial por lotes (financiera)", resultados[-1],
+                financiera / "referencia.json", nota="Proceso con el que se desarrolló el motor financiero.",
+            ))
         resumenes = [analitica.resumir(p, titulos) for p in pruebas if p is not None]
-        minutos = {"juridica": opciones["minutos_juridica"], "tecnica": opciones["minutos_tecnica"]}
+        minutos = {"juridica": opciones["minutos_juridica"], "tecnica": opciones["minutos_tecnica"],
+                   "financiera": opciones["minutos_financiera"]}
         datos = {
             "global": analitica.global_(resumenes, minutos),
             "global_a_ciegas": analitica.global_([r for r in resumenes if r["a_ciegas"]], minutos),

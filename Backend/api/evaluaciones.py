@@ -653,6 +653,61 @@ def actualizar_documento_base(request: HttpRequest, evaluacion_id: UUID, datos: 
     return datos
 
 
+class UmbralesFinancierosIn(Schema):
+    liquidez_min: float
+    endeudamiento_max: float
+    cobertura_min: float
+    roa_min: float
+    roe_min: float
+
+
+@router.get("/{evaluacion_id}/parametros-financieros", response={200: dict | None})
+def parametros_financieros(request: HttpRequest, evaluacion_id: UUID) -> dict | None:
+    """Lo que la evaluación financiera toma del pliego (presupuesto, plazo y
+    anticipo por lote, capital de trabajo y capacidad residual exigidos) y
+    los umbrales de la Matriz 2."""
+    evaluacion = _evaluacion(request.auth, evaluacion_id)
+    if evaluacion.tipo != "financiera":
+        raise HttpError(400, "Solo aplica a la evaluación financiera.")
+    datos = servicios.parametros_financieros_de(evaluacion.proceso)
+    if datos is None:
+        return None
+    from motor.financiera.evaluador import parametros_de_dict
+
+    parametros = parametros_de_dict(datos)
+    return {
+        **datos,
+        "umbrales_completos": parametros.umbrales.completos,
+        "lotes": [
+            {**l, "capital_de_trabajo_demandado": lf.capital_de_trabajo_demandado,
+             "capacidad_residual_del_proceso": lf.capacidad_residual_del_proceso}
+            for l, lf in zip(datos.get("lotes", []), parametros.lotes)
+        ],
+    }
+
+
+@router.put("/{evaluacion_id}/umbrales-financieros", response=dict)
+def registrar_umbrales(request: HttpRequest, evaluacion_id: UUID, datos: UmbralesFinancierosIn) -> dict:
+    """Registra los umbrales de la Matriz 2 del proceso. Los proponentes ya
+    evaluados se vuelven a poner en la fila para que cuenten."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    if evaluacion.tipo != "financiera":
+        raise HttpError(400, "Solo aplica a la evaluación financiera.")
+    if evaluacion.estado == EstadoEvaluacion.APROBADA:
+        raise HttpError(409, "La evaluación está aprobada: reábrela para cambiar los umbrales.")
+    try:
+        parametros = servicios.registrar_umbrales_financieros(evaluacion.proceso, datos.dict(), usuario)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    auditar(request, "proceso.umbrales_financieros", objeto=evaluacion.proceso, **datos.dict())
+    evaluados = list(evaluacion.resultados.values_list("proponente_id", flat=True).distinct())
+    if evaluados:
+        servicios.encolar(evaluacion, evaluados, usuario)
+    return parametros
+
+
 @router.post("/{evaluacion_id}/asignar", response=EvaluacionResumenOut)
 def asignar(request: HttpRequest, evaluacion_id: UUID, datos: AsignarIn) -> EvaluacionResumenOut:
     usuario: Usuario = request.auth

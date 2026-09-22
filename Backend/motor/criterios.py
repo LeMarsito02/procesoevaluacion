@@ -253,6 +253,8 @@ GRUPOS: dict[str, str] = {
     "adicionales": "Requisitos adicionales",
     "experiencia": "Experiencia habilitante",
     "puntaje": "Puntaje",
+    "financiera": "Capacidad financiera y organizacional",
+    "residual": "Capacidad residual",
 }
 
 
@@ -362,6 +364,29 @@ VERIFICACIONES: dict[str, Verificacion] = {
         Verificacion("tecnica.obras_inconclusas", "tecnica", 130, "Obras inconclusas", "Obras civiles inconclusas",
                      "Consulta del Registro Nacional de Obras Civiles Inconclusas: una anotación vigente descuenta un punto.",
                      "puntaje"),
+        # --- Evaluación financiera (motor/financiera), con la información del
+        # RUP; en plurales, la suma de los componentes. El capital de trabajo y
+        # la capacidad residual se evalúan por lote.
+        Verificacion("financiera.indicadores", "financiera", 201, "Cap. financiera", "Capacidad financiera",
+                     "Liquidez, endeudamiento y razón de cobertura de intereses del RUP frente a los umbrales de la "
+                     "Matriz 2 (pliego 3.6).", "financiera", ("rup",)),
+        Verificacion("financiera.organizacional", "financiera", 202, "Cap. organizacional", "Capacidad organizacional",
+                     "Rentabilidad del activo y del patrimonio del RUP frente a los umbrales de la Matriz 2 (pliego 3.9).",
+                     "financiera", ("rup",)),
+        Verificacion("financiera.validez", "financiera", 203, "Validez CO", "Validez de los documentos de la capacidad de organización",
+                     "Estado de resultados firmado, dictamen del revisor fiscal y certificado de la Junta Central de "
+                     "Contadores vigente al cierre de cada firmante.",
+                     "financiera", ("estados financieros", "junta central", "dictamen", "contador")),
+        Verificacion("financiera.patrimonio", "financiera", 204, "Patrimonio", "Patrimonio",
+                     "Solo cuando el pliego lo exige (presupuesto de 40.000 SMMLV o más y plazo de 24 meses o más).",
+                     "financiera", ("rup",)),
+        Verificacion("financiera.capital_trabajo", "financiera", 211, "C. trabajo", "Capital de trabajo",
+                     "Activo corriente menos pasivo corriente del RUP frente al capital de trabajo demandado del lote (pliego 3.7).",
+                     "financiera", ("rup",)),
+        Verificacion("financiera.residual", "financiera", 221, "K residual", "Capacidad residual",
+                     "CRP = CO × (E + CT + CF) / 100 − SCE de cada integrante frente a la capacidad residual del lote "
+                     "(pliego 3.11), con el Formato 5 y los estados financieros.",
+                     "residual", ("formato 5", "residual", "estados financieros")),
     )
 }
 
@@ -478,12 +503,21 @@ class DefinicionEvaluacion(BaseModel):
         return self
 
 
+# Verificaciones que se evalúan por lote, con su nombre corto por lote.
+POR_LOTE: dict[str, str] = {
+    "tecnica.experiencia": "Exp.",
+    "financiera.capital_trabajo": "C. trabajo",
+    "financiera.residual": "K residual",
+}
+
+
 def expandir_lotes(definicion: DefinicionEvaluacion, lotes: list[str]) -> DefinicionEvaluacion:
-    """Evaluación técnica: el requisito de experiencia se vuelve uno por lote
-    del pliego (101, 102, …), con el nombre de cada lote."""
+    """Evaluaciones técnica y financiera: los requisitos por lote (experiencia,
+    capital de trabajo, capacidad residual) se vuelven uno por lote del pliego
+    (101, 102, …), con el nombre de cada lote."""
     requisitos: list[RequisitoDefinicion] = []
     for r in definicion.requisitos:
-        if r.verificacion != "tecnica.experiencia" or r.lote is not None:
+        if r.verificacion not in POR_LOTE or r.lote is not None:
             requisitos.append(r)
             continue
         for i, nombre in enumerate(lotes or ["Lote único"]):
@@ -491,7 +525,7 @@ def expandir_lotes(definicion: DefinicionEvaluacion, lotes: list[str]) -> Defini
                 "numero": r.numero + i,
                 "lote": i,
                 "titulo": f"{r.titulo} — {nombre.title()}" if len(lotes) > 1 else r.titulo,
-                "corto": f"Exp. {nombre.split()[-1]}" if len(lotes) > 1 else r.corto,
+                "corto": f"{POR_LOTE[r.verificacion]} {nombre.split()[-1]}"[:20] if len(lotes) > 1 else r.corto,
             }))
     return definicion.model_copy(update={"requisitos": requisitos})
 
@@ -499,7 +533,7 @@ def expandir_lotes(definicion: DefinicionEvaluacion, lotes: list[str]) -> Defini
 def definicion_sistema(tipo: str) -> DefinicionEvaluacion:
     """Definición base del sistema: la evaluación jurídica de referencia, con la
     numeración de la plantilla de Excel de ejemplo."""
-    if tipo not in ("juridica", "tecnica"):
+    if tipo not in ("juridica", "tecnica", "financiera"):
         return DefinicionEvaluacion()
     requisitos = [
         RequisitoDefinicion(

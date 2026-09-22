@@ -75,6 +75,8 @@ class ProcesoDocumentoBase(BaseModel):
     # Parámetros de la evaluación técnica leídos del pliego
     # (motor.tecnica.evaluador.parametros_a_dict). Solo en evaluaciones técnicas.
     parametros_tecnicos: dict | None = Field(default=None, exclude=True)
+    # Parámetros de la evaluación financiera (motor.financiera.evaluador.parametros_a_dict).
+    parametros_financieros: dict | None = Field(default=None, exclude=True)
 
 
 class AnalisisResponse(BaseModel):

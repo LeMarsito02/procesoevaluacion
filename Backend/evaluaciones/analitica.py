@@ -63,7 +63,7 @@ class Fila:
 @dataclass
 class Prueba:
     clave: str
-    area: str  # juridica | tecnica
+    area: str  # juridica | tecnica | financiera
     nombre: str  # nombre comercial, sin datos de la entidad
     filas: list[Fila] = field(default_factory=list)
     tiempos: dict[str, float] = field(default_factory=dict)  # segundos por proponente
@@ -198,4 +198,43 @@ def prueba_tecnica(clave: str, nombre: str, mediciones: list[Path], referencia: 
                 otorgado = ref[n]["lote1"][clave_ref] > 0
                 nuestro = "N.A." if factor.get("no_aplica") else ("SI" if factor["puntaje"] is not None else "NO")
                 prueba.filas.append(Fila(hoja, factor["nombre"], nuestro, "SI" if otorgado else "NO"))
+    return prueba if prueba.filas else None
+
+
+def prueba_financiera(clave: str, nombre: str, resultados: Path, referencia: Path, a_ciegas: bool = False,
+                      nota: str = "") -> Prueba | None:
+    """Medición financiera (.scratch/financiera/medir.py) contra el informe del
+    evaluador financiero: el resultado de cada lote y el de cada componente.
+    Un lote al que el proponente no se presentó ("N/A") no se cuenta."""
+    if not referencia.exists() or not resultados.exists():
+        return None
+    ref = json.loads(referencia.read_text())
+    prueba = Prueba(clave, "financiera", nombre, a_ciegas=a_ciegas, nota=nota)
+
+    def si_no(valor) -> str:
+        return "SI" if valor else "NO"
+
+    for archivo in sorted(resultados.glob("P-*.json")):
+        dato = json.loads(archivo.read_text())
+        n = str(dato.get("n"))
+        if n not in ref or "error" in dato:
+            continue
+        r, hoja = ref[n], f"P-{int(n):02d}"
+        if dato.get("seg"):
+            prueba.tiempos[hoja] = float(dato["seg"])
+        for i in (1, 2):
+            esperado = r.get(f"lote{i}")
+            if esperado in (None, "N/A"):
+                continue
+            nuestro = dato.get(f"L{i}")
+            prueba.filas.append(Fila(hoja, f"Capacidad financiera lote {i}", si_no(nuestro), si_no(esperado == "CUMPLE")))
+        componentes = [
+            ("Indicadores financieros", dato.get("financiera"), all(r.get(c, [0, "SI"])[1] == "SI" for c in ("liquidez", "endeudamiento", "cobertura"))),
+            ("Indicadores organizacionales", dato.get("organizacional"), all(r.get(c, [0, "SI"])[1] == "SI" for c in ("roa", "roe"))),
+            ("Validez de los documentos", dato.get("validez"), all(v == "SI" for v in r.get("validez", ["SI"]))),
+            ("Capacidad residual", dato.get("residual"), r.get("k_cumple") == "SI"),
+        ]
+        for titulo, nuestro, esperado in componentes:
+            if nuestro is not None:
+                prueba.filas.append(Fila(hoja, titulo, si_no(nuestro.get("cumple")), si_no(esperado)))
     return prueba if prueba.filas else None
