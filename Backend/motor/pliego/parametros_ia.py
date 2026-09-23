@@ -39,7 +39,7 @@ TROZO = int(os.environ.get("PLIEGO_IA_TROZO", "3500"))
 TIEMPO_MAXIMO = float(os.environ.get("PLIEGO_IA_TIMEOUT", "600"))
 HABILITADO = os.environ.get("PLIEGO_PARAMETROS_IA", "1") == "1"
 # Cambia cuando cambia la forma de leer: las lecturas viejas se repiten.
-VERSION = 2
+VERSION = 3
 
 
 class Leido(BaseModel):
@@ -66,6 +66,7 @@ class ParametrosIA(BaseModel):
     # Dinero y plazos.
     anticipo: Leido | None = None
     plazo_meses: dict[str, Leido] = Field(default_factory=dict)
+    presupuesto_lotes: dict[str, Leido] = Field(default_factory=dict)
     # Indicadores financieros.
     liquidez_min: Leido | None = None
     endeudamiento_max: Leido | None = None
@@ -113,9 +114,13 @@ PREGUNTAS: dict[str, str] = {
 """ + _COMUN + """
 {"anticipo_porcentaje": número 0-100 del valor del contrato que se entrega como anticipo, o 0 si el pliego dice expresamente que NO se entregará anticipo,
  "cita": "frase literal que habla del anticipo"}""",
-    "plazo": """Eres evaluador de procesos de obra pública en Colombia. Lee este fragmento del pliego y di el PLAZO de ejecución del contrato.
+    "plazo": """Eres evaluador de procesos de obra pública en Colombia. Lee este fragmento del pliego y di en qué LOTES se divide el proceso, con su presupuesto y su plazo.
 """ + _COMUN + """
-{"lote": "número del lote, o \"ÚNICO\"", "plazo_meses": número de meses del plazo de ejecución, "cita": "frase literal"}""",
+{"lotes": [{"lote": "número del lote, o \"ÚNICO\" si el proceso no se divide en lotes",
+            "presupuesto": presupuesto oficial de ese lote en pesos (solo el número),
+            "plazo_meses": meses del plazo de ejecución,
+            "cita": "frase literal donde aparecen esos datos"}]}
+Si el proceso tiene varios lotes, devuélvelos todos.""",
     "financiera": """Eres evaluador financiero de procesos de obra pública en Colombia. Lee este fragmento del pliego y extrae los INDICADORES financieros exigidos.
 """ + _COMUN + """
 {"liquidez_minima": número, "cita_liquidez": "frase literal",
@@ -228,6 +233,7 @@ _NEGACION_RE = re.compile(r"\bNO\s+(?:SE\s+)?(?:ENTREGARA|OTORGARA|HABRA|CONTEMP
 _TEMA: dict[str, str] = {
     "anticipo": r"ANTICIPO|PAGO\s+ANTICIPADO",
     "plazo": r"PLAZO|MES(?:ES)?\b|DURACION",
+    "presupuesto": r"PRESUPUESTO|VALOR|\$",
     "puntaje": r"PUNTO|PUNTAJE|ASIGNARA|OTORGARA|NO\s+APLICA|N\s*/\s*A",
     # La experiencia general es la lista de actividades de obra; la
     # específica y la condición de objeto siempre dicen "por lo menos uno".
@@ -263,7 +269,12 @@ def _en_la_cita(numero: float, cita: str) -> bool:
     texto = _norm(cita).replace(",", ".")
     formas = {f"{numero:g}", f"{numero:.1f}", f"{numero:.2f}"}
     if numero == int(numero):
-        formas |= {str(int(numero)), f"{int(numero):02d}"}
+        entero = int(numero)
+        formas |= {str(entero), f"{entero:02d}"}
+        # El pliego escribe las cifras grandes con separadores de miles
+        # ("$3.542.952.462"): sin esto ningún presupuesto pasaría la prueba.
+        if entero >= 1000:
+            formas.add(f"{entero:,}".replace(",", "."))
     return any(re.search(rf"(?<![\d.]){re.escape(f)}(?![\d])", texto) for f in formas)
 
 
@@ -390,10 +401,22 @@ def _aplicar(datos: dict, trozo: TrozoParametros, p: "ParametrosIA") -> None:
             _poner(p, "anticipo", _fraccion(datos.get("anticipo_porcentaje"), c, "anticipo", cero_si_niega=True),
                    c, trozo.seccion)
     elif trozo.pregunta == "plazo":
-        lote = _lote(datos.get("lote"))
-        if (c := cita("cita", "plazo")) and lote is not None:
-            _guardar(p.plazo_meses, lote, _valor_numerico(datos.get("plazo_meses"), c, "plazo", 0.5, 120),
-                     c, trozo.seccion)
+        for fila in datos.get("lotes") or []:
+            if not isinstance(fila, dict):
+                continue
+            lote = _lote(fila.get("lote"))
+            if lote is None:
+                continue
+            bruta = fila.get("cita")
+            if c := _cita_util(bruta, trozo.texto, "plazo"):
+                _guardar(p.plazo_meses, lote, _valor_numerico(fila.get("plazo_meses"), c, "plazo", 0.5, 120),
+                         c, trozo.seccion)
+            if c := _cita_util(bruta, trozo.texto, "presupuesto"):
+                # Un presupuesto de obra nunca baja de un millón: menos que eso
+                # es otra cifra de la tabla.
+                _guardar(p.presupuesto_lotes, lote,
+                         _valor_numerico(fila.get("presupuesto"), c, "presupuesto", 1_000_000, 1e13),
+                         c, trozo.seccion)
     elif trozo.pregunta == "financiera":
         for campo, clave, nombre_cita, tema, tope, porcentaje in (
             ("liquidez_min", "liquidez_minima", "cita_liquidez", "liquidez", 20.0, False),

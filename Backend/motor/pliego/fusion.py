@@ -140,12 +140,39 @@ def sin_verificar(ia: ParametrosIA | None) -> list[str]:
     return [f"{requisito} — pliego: «{cita[:140]}»" for requisito, cita in faltantes]
 
 
+def _separar_lotes(parametros, ia: ParametrosIA) -> bool:
+    """Si las reglas no pudieron separar los lotes del pliego y la IA sí los
+    vio, se usan los suyos. Evaluar un proceso de tres lotes como si fuera
+    uno da resultados equivocados; es mejor evaluarlos por separado y que una
+    persona confirme la división."""
+    from dataclasses import replace
+
+    presupuestos = {lote: leido for lote, leido in ia.presupuesto_lotes.items()
+                    if lote != "ÚNICO" and isinstance(leido.valor, (int, float))}
+    if len(parametros.lotes) != 1 or len(presupuestos) < 2:
+        return False
+    molde = parametros.lotes[0]
+    parametros.lotes = [
+        replace(molde, nombre=lote, presupuesto=float(leido.valor),
+                experiencia_general="", experiencia_especifica="", condicion_objeto="",
+                fraccion_un_contrato=None, longitud_minima_km=None, longitud_total_km=None,
+                fraccion_longitud=None, area_minima_m2=None, area_total_m2=None, fraccion_area=None)
+        for lote, leido in sorted(presupuestos.items())
+    ]
+    return True
+
+
 def aplicar_a_tecnicos(parametros, ia: ParametrosIA | None, confirmados: dict | None = None) -> Fusion:
     """Completa los parámetros técnicos con lo que leyó la IA y deja dicho de
     dónde salió cada cosa. No cambia nada que las reglas ya hayan leído."""
     fusion = Fusion()
     if ia is None:
         return fusion
+    if _separar_lotes(parametros, ia):
+        fusion.procedencias["lotes del proceso"] = Procedencia(
+            "lotes del proceso", "ia", None, [l.nombre for l in parametros.lotes],
+            "; ".join(f"{lote}: {leido.cita[:60]}" for lote, leido in sorted(ia.presupuesto_lotes.items())[:3]),
+        )
 
     def poner(objeto, campo: str, valor_ia: Leido | None, etiqueta: str | None = None) -> None:
         clave = etiqueta or campo

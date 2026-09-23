@@ -143,9 +143,12 @@ def _experiencia_por_lote(tablas) -> dict[str, tuple[str, str]]:
         antes = len(por_lote)
         for fila in filas:
             celdas = [c for c in fila if c]
-            if len(celdas) < 3 or not re.fullmatch(r"\d{1,2}", celdas[0]):
+            if len(celdas) < 3:
                 continue
-            por_lote[celdas[0]] = (celdas[1], " ".join(celdas[2:]))
+            numero = re.fullmatch(r"(?:LOTE\s*)?(?:N[O0°º]\.?\s*)?(\d{1,2})\.?", normalizar(celdas[0]))
+            if numero is None:
+                continue
+            por_lote[str(int(numero.group(1)))] = (celdas[1], " ".join(celdas[2:]))
         if len(por_lote) == antes and sin_lote is None:
             sin_lote = _experiencia_en_filas(filas)
     if not por_lote and sin_lote:
@@ -244,7 +247,9 @@ def _clases_de_la_tabla(seccion: str) -> set[str]:
     return clases
 
 
-_LOTE_SECCION_RE = re.compile(r"OBJETO, PRESUPUESTO OFICIAL, PLAZO Y UBICACION(.{0,6000}?)\n\s*1\.2\.?\s", re.S)
+_LOTE_SECCION_RE = re.compile(
+    r"OBJETO, PRESUPUESTO OFICIAL, PLAZO Y UBICACION(.{0,6000}?)"
+    r"(?:\n\s*1\.2\.?\s|\n\s*DOCUMENTOS DEL PROCESO|\n\s*COMUNICACIONES Y OBSERVACIONES|\Z)", re.S)
 _VALOR_ENTRE_PARENTESIS_RE = re.compile(r"\(\s*\$\s*([\d.,]+)\s*\)")
 
 
@@ -269,7 +274,8 @@ _AREA_TOTAL_RE = re.compile(
 # "un área intervenida o construida igual o superior al (50%) del total de
 # metros cuadrados".
 _FRACCION_AREA_RE = re.compile(
-    r"AREA\s+(?:INTERVENIDA|CONSTRUIDA|DISENADA)[^.]{0,80}?(?:IGUAL\s+O\s+SUPERIOR|POR\s+LO\s+MENOS|MINIMO)\s+(?:AL?\s*)?\(?\s*(\d{1,3})\s*%"
+    r"AREA\s+(?:INTERVENIDA|CONSTRUIDA|DISENADA)[^.]{0,120}?"
+    r"(?:IGUAL\s+(?:Y\s*/\s*O\s+|O\s+)?SUPERIOR|SUPERIOR|POR\s+LO\s+MENOS|MINIMO)\s+(?:AL?\s*)?\(?\s*(\d{1,3})\s*%"
 )
 
 
@@ -368,7 +374,17 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
     experiencia = _experiencia_por_lote(tablas)
     if len(experiencia) > 1 and len(lotes) < len(experiencia):
         # El análisis del documento base no separó los lotes (presupuesto en letras).
-        lotes = lotes_del_pliego(texto_norm, sorted(experiencia, key=int)) or lotes
+        separados = lotes_del_pliego(texto_norm, sorted(experiencia, key=int))
+        if separados:
+            lotes = separados
+        else:
+            # No se pudieron separar: evaluar un solo lote cuando el pliego
+            # tiene varios da resultados equivocados, así que se avisa y nada
+            # se aprueba solo hasta que alguien lo confirme.
+            parametros.sin_confirmar.append(
+                f"el pliego tiene {len(experiencia)} lotes (según la tabla de experiencia) y no se pudo leer el "
+                f"presupuesto de cada uno: se evalúa como un solo lote; revísalo antes de dar por buena la evaluación"
+            )
     for nombre, presupuesto in lotes:
         numero_lote = re.search(r"\d+", nombre)
         general, especifica = experiencia.get(numero_lote.group(0) if numero_lote else "1", ("", ""))
