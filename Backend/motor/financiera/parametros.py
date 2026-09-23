@@ -78,6 +78,11 @@ class ParametrosFinancieros:
     umbrales: Umbrales = field(default_factory=Umbrales)
     patrimonio_aplica: bool = False
     avisos: list[str] = field(default_factory=list)
+    # Parámetros que solo leyó la IA del pliego, o en los que la IA y las
+    # reglas no coinciden. Entran en `avisos` (y por tanto ningún lote se
+    # aprueba solo) hasta que una persona los confirme: ver
+    # motor/pliego/fusion.py.
+    sin_confirmar: list[str] = field(default_factory=list)
 
 
 # El título de la sección cambia entre documentos tipo: "ANTICIPO Y/O PAGO

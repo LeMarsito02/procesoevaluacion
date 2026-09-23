@@ -272,6 +272,24 @@ class ExperienciaTests(SimpleTestCase):
         self.assertIsNone(objeto_valido("MEJORAMIENTO DE LA VÍA A BETA", lote))
         self.assertIsNone(objeto_valido("SUMINISTRO DE PAPELERÍA", lote))
 
+    def test_la_condicion_de_objeto_de_la_especifica_no_se_aprueba_sola(self):
+        """El pliego de MC-019 pide, además de la experiencia general, que un
+        contrato sea de edificaciones "declaradas como bienes de interés
+        cultural": la entidad lo acredita con los documentos de la
+        declaratoria, así que el lote va a revisión (P-26 se había aprobado)."""
+        from motor.tecnica.parametros import _condicion_objeto
+
+        general = "CONSTRUCCIÓN Y/O MANTENIMIENTO Y/O RESTAURACIÓN DE EDIFICACIONES"
+        especifica = ("Por lo menos uno (1) de los contratos válidos aportados como experiencia general debe "
+                      "corresponder o contemplar la construcción y/o mantenimiento y/o restauración DE EDIFICACIONES, "
+                      "DECLARADAS COMO BIENES DE INTERÉS CULTURAL y/o CONSERVACIÓN PATRIMONIAL.")
+        self.assertEqual(_condicion_objeto(general, especifica),
+                         "DECLARADAS COMO BIENES DE INTERES CULTURAL Y/O CONSERVACION PATRIMONIAL")
+        # Una específica que solo habla de valor no impone condición de objeto.
+        solo_valor = ("Por lo menos uno (1) de los contratos válidos aportados como experiencia general sea de un "
+                      "valor correspondiente a por lo menos el 70% del valor de PRESUPUESTO OFICIAL del lote.")
+        self.assertEqual(_condicion_objeto(general, solo_valor), "")
+
     def test_longitud_afectada_por_la_participacion(self):
         integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0, _rup("VIAS ALFA S.A.S.", _exp("12", 3000, participacion=0.5, celebrado="CONSORCIO")))
         parametros = _parametros(longitud=1.512)
@@ -411,7 +429,26 @@ class PuntajesDelPliegoTests(SimpleTestCase):
             "\n4.2.4 CRITERIOS AMBIENTALES Y SOCIALES\nLA ENTIDAD ASIGNARA QUINCE (15) PUNTOS AL PROPONENTE"
             "\n4.6 EMPRENDIMIENTOS Y EMPRESAS DE MUJERES\nLA ENTIDAD ASIGNARA UN PUNTAJE DE CERO PUNTO VEINTICINCO (0.25) PUNTOS"
         )
-        self.assertEqual(_puntajes(texto), {"gerencia_proyectos": 10, "maquinaria": None, "criterios_ambientales": 15, "mujeres": 0.25})
+        puntajes, nombrados = _puntajes(texto)
+        self.assertEqual(puntajes, {
+            "gerencia_proyectos": 10, "maquinaria": None, "criterios_ambientales": 15, "mujeres": 0.25,
+            # Los que el pliego no nombra no hacen parte del proceso.
+            "plan_calidad": None, "industria_nacional": None, "discapacidad": None, "mipyme": None,
+        })
+        self.assertEqual(nombrados, {"gerencia_proyectos", "maquinaria", "criterios_ambientales", "mujeres"})
+
+    def test_el_pliego_escribe_no_aplica_como_na(self):
+        """El documento tipo pone "N/A." pegado al título, que además parte de
+        renglón: antes se mandaban a revisión 32 veces por proceso."""
+        from motor.tecnica.parametros import _puntajes
+
+        texto = ("\n4.2.2. DISPONIBILIDAD Y CONDICIONES FUNCIONALES DE LA MAQUINARIA DE\nOBRA N/A."
+                 "\n4.2.3. PRESENTACION DE UN PLAN DE CALIDAD N/A."
+                 "\n4.2.4. CRITERIOS AMBIENTALES Y SOCIALES\nLA ENTIDAD ASIGNARA QUINCE (15) PUNTOS AL PROPONENTE")
+        puntajes, _ = _puntajes(texto)
+        self.assertIsNone(puntajes["maquinaria"])
+        self.assertIsNone(puntajes["plan_calidad"])
+        self.assertEqual(puntajes["criterios_ambientales"], 15)
 
     def test_se_aplican_al_puntaje(self):
         from motor.tecnica.proponente import aplicar_puntajes_del_pliego
@@ -420,11 +457,22 @@ class PuntajesDelPliegoTests(SimpleTestCase):
         gerencia = Factor("gerencia_proyectos", "g", 5, puntaje=5)
         maquinaria = Factor("maquinaria", "m", 0)
         plan = Factor("plan_calidad", "p", 5, puntaje=5)
-        aplicar_puntajes_del_pliego([gerencia, maquinaria, plan], {"gerencia_proyectos": 10, "maquinaria": None})
+        aplicar_puntajes_del_pliego([gerencia, maquinaria, plan], {"gerencia_proyectos": 10, "maquinaria": None},
+                                    {"gerencia_proyectos", "maquinaria"})
         self.assertEqual((gerencia.puntaje_maximo, gerencia.puntaje), (10, 10))
         self.assertTrue(maquinaria.no_aplica)
+        self.assertIn("NO APLICA", maquinaria.motivos[0])
         # Sin valor en el pliego: a revisión, nunca se otorga el del documento tipo.
         self.assertIsNone(plan.puntaje)
+
+    def test_un_factor_que_el_pliego_no_nombra_no_se_evalua(self):
+        from motor.tecnica.proponente import aplicar_puntajes_del_pliego
+        from motor.tecnica.puntaje import Factor
+
+        plan = Factor("plan_calidad", "p", 5, puntaje=5)
+        aplicar_puntajes_del_pliego([plan], {"plan_calidad": None}, {"gerencia_proyectos"})
+        self.assertTrue(plan.no_aplica)
+        self.assertIn("no incluye este factor", plan.motivos[0])
 
 
 class DefinicionTecnicaTests(SimpleTestCase):

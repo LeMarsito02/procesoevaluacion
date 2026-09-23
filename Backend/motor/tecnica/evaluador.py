@@ -46,8 +46,11 @@ _ULTIMO: tuple[str, ResultadoTecnico] | None = None
 
 
 def parametros_a_dict(parametros: ParametrosTecnicos) -> dict:
+    """Los parámetros como JSON: los conjuntos se guardan como listas
+    ordenadas (un set no se puede serializar y rompe la API)."""
     datos = asdict(parametros)
     datos["clases_unspsc"] = sorted(parametros.clases_unspsc)
+    datos["factores_nombrados"] = sorted(parametros.factores_nombrados)
     return datos
 
 
@@ -55,8 +58,9 @@ def parametros_de_dict(datos: dict) -> ParametrosTecnicos:
     datos = dict(datos)
     lotes = [LoteTecnico(**l) for l in datos.pop("lotes", [])]
     clases = set(datos.pop("clases_unspsc", []))
+    nombrados = set(datos.pop("factores_nombrados", []))
     tabla = [tuple(f) for f in datos.pop("tabla_valor", [])]
-    parametros = ParametrosTecnicos(**datos, lotes=lotes, clases_unspsc=clases)
+    parametros = ParametrosTecnicos(**datos, lotes=lotes, clases_unspsc=clases, factores_nombrados=nombrados)
     if tabla:
         parametros.tabla_valor = tabla
     return parametros

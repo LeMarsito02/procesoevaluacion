@@ -473,6 +473,22 @@ def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
     return definicion
 
 
+def _fundir_con_la_ia(parametros, analisis, *, tecnicos: bool) -> None:
+    """Completa los parámetros que leyeron las reglas con los que la IA leyó
+    del pliego, y deja anotado lo que nadie ha confirmado todavía: mientras
+    eso esté ahí, ningún lote se aprueba solo (motor/pliego/fusion.py)."""
+    from evaluaciones.pliego import parametros_leidos
+    from motor.pliego import fusion
+
+    ia = parametros_leidos(analisis)
+    if ia is None:
+        return
+    confirmados = (analisis.parametros_confirmados or {}) if analisis is not None else {}
+    aplicar = fusion.aplicar_a_tecnicos if tecnicos else fusion.aplicar_a_financieros
+    resultado = aplicar(parametros, ia, confirmados)
+    parametros.sin_confirmar = [p.explicacion() for p in resultado.sin_confirmar]
+
+
 def parametros_tecnicos_de(proceso) -> dict | None:
     """Parámetros de la evaluación técnica leídos del pliego del proceso. Se
     calculan una vez y quedan guardados; None si el proceso no tiene el
@@ -500,7 +516,9 @@ def parametros_tecnicos_de(proceso) -> dict | None:
     except OSError:
         return None
     base = ProcesoDocumentoBase.model_validate(proceso.documento_base)
-    parametros = parametros_a_dict(leer_parametros(contenido, [(l.numero, l.valor_presupuesto) for l in base.lotes], salario))
+    leidos = leer_parametros(contenido, [(l.numero, l.valor_presupuesto) for l in base.lotes], salario)
+    _fundir_con_la_ia(leidos, analisis, tecnicos=True)
+    parametros = parametros_a_dict(leidos)
     type(proceso).objects.filter(pk=proceso.pk).update(parametros_tecnicos=parametros)
     proceso.parametros_tecnicos = parametros
     return parametros
@@ -527,7 +545,9 @@ def parametros_financieros_de(proceso) -> dict | None:
     except OSError:
         return None
     lotes = [(l["nombre"], l.get("presupuesto")) for l in tecnicos.get("lotes", [])]
-    parametros = parametros_a_dict(leer_parametros(contenido, lotes, salario))
+    leidos = leer_parametros(contenido, lotes, salario)
+    _fundir_con_la_ia(leidos, analisis, tecnicos=False)
+    parametros = parametros_a_dict(leidos)
     type(proceso).objects.filter(pk=proceso.pk).update(parametros_financieros=parametros)
     proceso.parametros_financieros = parametros
     return parametros

@@ -42,11 +42,13 @@ def _personas():
     luis = P("LUIS FERNANDO ORTIZ CANO", "ORTIZ CANO", "LUIS FERNANDO", "1999000008", date(2004, 1, 16), date(1986, 6, 22))
     maria = P("MARÍA JOSÉ RESTREPO DÍAZ", "RESTREPO DÍAZ", "MARÍA JOSÉ", "1999000009", date(2001, 3, 12), date(1982, 8, 17), matricula="99202-000009")
     andres = P("ANDRÉS FELIPE GÓMEZ RUIZ", "GÓMEZ RUIZ", "ANDRÉS FELIPE", "1999000011", date(2010, 10, 8), date(1992, 5, 14))
-    return laura, jorge, julian, sofia, carlos, paula, ana, luis, maria, andres
+    ricardo = P("RICARDO JOSÉ BELTRÁN NAVAS", "BELTRÁN NAVAS", "RICARDO JOSÉ", "1999000012", date(2000, 7, 4), date(1980, 11, 26),
+                matricula="99202-000012")
+    return laura, jorge, julian, sofia, carlos, paula, ana, luis, maria, andres, ricardo
 
 
 def _proponentes() -> list[d.Proponente]:
-    laura, jorge, julian, sofia, carlos, paula, ana, luis, maria, andres = _personas()
+    laura, jorge, julian, sofia, carlos, paula, ana, luis, maria, andres, ricardo = _personas()
     E = d.Empresa
     andes = E("ANDES INGENIERIA DEMO S.A.S.", "999100001", "4", julian)
     valle = E("ESTRUCTURAS DEL VALLE DEMO S.A.S.", "999100002", "2", sofia)
@@ -55,6 +57,19 @@ def _proponentes() -> list[d.Proponente]:
     topo = E("TOPOGRAFIA NORTE DEMO S.A.S.", "999100005", "7", luis)
     llano = E("CONSTRUCCIONES DEL LLANO DEMO S.A.", "999100006", "5", maria, suplente=andres, anonima=True,
               revisor_fiscal="DIEGO MAURICIO LÓPEZ VARGAS", revisor_cedula="1.999.000.010")
+    # Multa impuesta cuatro meses antes del cierre: cae dentro del año que
+    # mira el art. 58 de la Ley 2195 de 2022, así que el programa no la
+    # aprueba solo y la manda a revisión del abogado.
+    sierra = E("OBRAS Y DISENOS SIERRA DEMO S.A.S.", "999100007", "3", ricardo, sanciones=[
+        d.SancionDemo(
+            tipo="MULTA",
+            entidad="INSTITUTO DE INFRAESTRUCTURA VIAL DEMO - IIVD",
+            contrato="IIVD-CM-045-2025",
+            descripcion="MULTA POR INCUMPLIMIENTO PARCIAL DEL CRONOGRAMA DE OBRA IMPUESTA MEDIANTE RESOLUCION 0412 DE 2026",
+            ejecutoria=date(2026, 5, 18),
+            valor="42.350.000",
+        ),
+    ])
     return [
         d.Proponente("P-01", "CONSORCIO VIAS DEL SUR DEMO", "consorcio", laura, jorge, integrantes=[(andes, 60), (valle, 40)]),
         d.Proponente("P-02", "INGENIERIA ANDINA DEMO S.A.S.", "persona_juridica", carlos, paula, empresa=andina),
@@ -64,6 +79,8 @@ def _proponentes() -> list[d.Proponente]:
         # Su COPNIA es de abril: más de tres meses antes del cierre.
         d.Proponente("P-04", "CONSTRUCCIONES DEL LLANO DEMO S.A.", "persona_juridica", maria, andres, empresa=llano,
                      copnia=date(2026, 4, 20)),
+        # Su RUP reporta una multa de mayo de 2026: dentro del último año.
+        d.Proponente("P-05", "OBRAS Y DISENOS SIERRA DEMO S.A.S.", "persona_juridica", ricardo, None, empresa=sierra),
     ]
 
 

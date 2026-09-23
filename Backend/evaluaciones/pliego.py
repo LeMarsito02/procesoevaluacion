@@ -14,7 +14,7 @@ from django.utils import timezone
 from evaluaciones.models import AnalisisPliego
 from motor import criterios
 from motor.pliego import analisis as motor_analisis
-from motor.pliego import lector_ia, lectura
+from motor.pliego import lector_ia, lectura, parametros_ia
 
 log = logging.getLogger("mievaluador.pliego")
 # Una lectura "leyendo" sin terminar en este tiempo se da por caída (el
@@ -29,7 +29,9 @@ def vigente(entidad_id: UUID, sha: str) -> AnalisisPliego | None:
     con la versión vigente del analizador."""
     existente = AnalisisPliego.objects.filter(entidad_id=entidad_id, sha256=sha).first()
     if existente is not None and existente.version == motor_analisis.VERSION_ANALISIS:
-        if existente.version_ia != lector_ia.VERSION and existente.estado_ia not in ("pendiente", "leyendo"):
+        desactualizado = (existente.version_ia != lector_ia.VERSION
+                          or existente.version_parametros_ia != parametros_ia.VERSION)
+        if desactualizado and existente.estado_ia not in ("pendiente", "leyendo"):
             # La forma de leer con IA mejoró: se vuelve a leer en el trabajador.
             existente.estado_ia, existente.progreso_ia = "pendiente", 0
             existente.save(update_fields=["estado_ia", "progreso_ia"])
@@ -59,7 +61,8 @@ def guardar(
         if existente is not None:  # el analizador cambió: se relee el mismo PDF
             for campo, valor in datos.items():
                 setattr(existente, campo, valor)
-            if existente.version_ia != lector_ia.VERSION:
+            if (existente.version_ia != lector_ia.VERSION
+                    or existente.version_parametros_ia != parametros_ia.VERSION):
                 existente.estado_ia, existente.progreso_ia = "pendiente", 0
             existente.save()
             return existente
@@ -91,6 +94,16 @@ def requisitos_ia(analisis: AnalisisPliego) -> list[lector_ia.RequisitoPliego]:
     if analisis.estado_ia != "listo":
         return []
     return [lector_ia.RequisitoPliego.model_validate(r) for r in analisis.requisitos_ia]
+
+
+def parametros_leidos(analisis: AnalisisPliego | None) -> parametros_ia.ParametrosIA | None:
+    """Lo que la IA leyó del pliego, o None si no se ha leído."""
+    if analisis is None or analisis.estado_ia != "listo" or not analisis.parametros_ia:
+        return None
+    try:
+        return parametros_ia.ParametrosIA.model_validate(analisis.parametros_ia)
+    except Exception:  # noqa: BLE001 — una lectura vieja con otra forma no debe romper la evaluación
+        return None
 
 
 def hallazgos(analisis: AnalisisPliego, tipo: str = "juridica") -> list[motor_analisis.Hallazgo]:
@@ -146,12 +159,30 @@ def leer_con_ia(analisis: AnalisisPliego) -> None:
     def progreso(hechos: int, total: int) -> None:
         AnalisisPliego.objects.filter(pk=analisis.pk).update(progreso_ia=min(99, int(100 * hechos / max(total, 1))))
 
-    requisitos = lector_ia.leer(lectura.secciones(paginas), ambitos, paginas, progreso)
+    secciones = lectura.secciones(paginas)
+    # Dos lecturas en la misma pasada: los requisitos jurídicos y los
+    # parámetros del proceso (experiencia, umbrales, anticipo, puntajes…).
+    # La barra de progreso las cuenta juntas.
+    partes_juridicas = len(lector_ia.trozos(secciones, ambitos))
+    partes_parametros = len(parametros_ia.trozos(secciones, ambitos))
+    total = max(partes_juridicas + partes_parametros, 1)
+
+    def progreso_juridico(hechos: int, _total: int) -> None:
+        progreso(hechos, total)
+
+    def progreso_parametros(hechos: int, _total: int) -> None:
+        progreso(partes_juridicas + hechos, total)
+
+    requisitos = lector_ia.leer(secciones, ambitos, paginas, progreso_juridico)
+    leidos = (parametros_ia.leer(secciones, ambitos, progreso_parametros)
+              if parametros_ia.HABILITADO else parametros_ia.ParametrosIA())
     AnalisisPliego.objects.filter(pk=analisis.pk).update(
         estado_ia="listo", progreso_ia=100, requisitos_ia=[r.model_dump(mode="json") for r in requisitos],
+        parametros_ia=leidos.model_dump(mode="json"), version_parametros_ia=parametros_ia.VERSION,
         version_ia=lector_ia.VERSION, ia_terminada=timezone.now(),
     )
-    log.info("Pliego %s leído con IA: %d requisitos jurídicos", analisis.nombre_archivo, len(requisitos))
+    log.info("Pliego %s leído con IA: %d requisitos jurídicos, %d fragmentos de parámetros (%d sin respuesta)",
+             analisis.nombre_archivo, len(requisitos), leidos.leidas, leidos.fallidas)
 
 
 def atender_lecturas_pendientes() -> int:

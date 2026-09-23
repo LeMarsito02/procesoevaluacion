@@ -209,14 +209,17 @@ def integrantes_del_proponente(
     return integrantes, avisos
 
 
-def aplicar_puntajes_del_pliego(factores: list[Factor], puntajes: dict[str, float | None]) -> list[Factor]:
+def aplicar_puntajes_del_pliego(factores: list[Factor], puntajes: dict[str, float | None],
+                                nombrados: set[str] | None = None) -> list[Factor]:
     """El puntaje de cada factor sale del pliego (capítulo IV). "NO APLICA":
     no se evalúa. Si no se pudo leer, se deja a revisión con el valor del
     documento tipo como referencia."""
     for f in factores:
         if f.clave in puntajes and puntajes[f.clave] is None:
             f.puntaje_maximo, f.puntaje, f.no_aplica = 0, 0, True
-            f.motivos = ["N.A. — el pliego dice que este factor NO APLICA"]
+            f.motivos = ["N.A. — el pliego dice que este factor NO APLICA"
+                         if nombrados is None or f.clave in nombrados
+                         else "N.A. — el pliego no incluye este factor de puntaje"]
         elif f.clave in puntajes:
             f.puntaje_maximo = float(puntajes[f.clave])
             if f.puntaje is not None:
@@ -258,7 +261,7 @@ def evaluar_proponente_tecnico(
         mipyme(integrantes, plural),
         Factor("maquinaria", "4.2.2 Disponibilidad y condiciones funcionales de la maquinaria de obra", 0,
                motivos=["el programa no verifica este factor: revísalo a mano con lo que pide el pliego"]),
-    ], parametros.puntajes)
+    ], parametros.puntajes, parametros.factores_nombrados)
     for lote in resultado.lotes:
         for aviso in avisos:
             lote.motivos.append(aviso)

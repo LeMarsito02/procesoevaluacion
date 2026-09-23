@@ -66,10 +66,26 @@ class Empresa:
     anonima: bool = False
     revisor_fiscal: str | None = None
     revisor_cedula: str | None = None
+    # Multas y sanciones que su RUP reporta (para mostrar el art. 58 de la
+    # Ley 2195 de 2022 y el art. 90 de la Ley 1474 de 2011).
+    sanciones: list["SancionDemo"] = field(default_factory=list)
 
     @property
     def nit_puntos(self) -> str:
         return f"{self.nit[:3]}.{self.nit[3:6]}.{self.nit[6:]}-{self.dv}"
+
+
+@dataclass
+class SancionDemo:
+    """Una multa o declaratoria como la reporta el RUP de verdad."""
+
+    tipo: str  # MULTA | DECLARATORIA DE INCUMPLIMIENTO
+    entidad: str
+    contrato: str
+    descripcion: str
+    ejecutoria: date
+    valor: str = ""
+    es_incumplimiento: bool = False
 
 
 @dataclass
@@ -299,9 +315,29 @@ def rup(e: Empresa, expedido: date) -> str:
 <p>CERTIFICA:<br>CLASIFICACION: 721410 SERVICIOS DE INTERVENTORIA DE OBRAS CIVILES · 811015 INGENIERIA CIVIL</p>
 <div class='salto'></div>
 <p>CERTIFICA:<br>REPORTE DE LAS ENTIDADES ESTATALES SOBRE CONTRATOS, MULTAS, SANCIONES E INHABILIDADES EN FIRME</p>
-<p>A LA FECHA DE EXPEDICION DE ESTE CERTIFICADO NO APARECEN REPORTES DE CONTRATOS, MULTAS, SANCIONES NI INHABILIDADES.</p>
+{_sanciones_rup(e)}
 """
     return html(cuerpo, "RUP")
+
+
+def _sanciones_rup(e: Empresa) -> str:
+    """El bloque de multas del RUP, con la misma forma que el de la Cámara de
+    Comercio: una ficha por sanción con entidad, contrato, descripción y
+    fecha de ejecutoria."""
+    if not e.sanciones:
+        return "<p>A LA FECHA DE EXPEDICION DE ESTE CERTIFICADO NO APARECEN REPORTES DE CONTRATOS, MULTAS, SANCIONES NI INHABILIDADES.</p>"
+    partes = ["<p>LA INFORMACION REPORTADA POR LAS ENTIDADES ESTATALES EN RELACION CON LAS SANCIONES EN FIRME ES LA SIGUIENTE:</p>"]
+    for s in e.sanciones:
+        partes.append(f"""<p><b>SANCIONES</b><br>
+ENTIDAD QUE REPORTO LA {s.tipo}: {s.entidad}<br>
+NUMERO DE REGISTRO: {s.ejecutoria.year}-{s.contrato}<br>
+CONTRATO AFECTADO: {s.contrato}<br>
+DESCRIPCION DE LA SANCION: {s.descripcion}<br>
+LA SANCION ES INCUMPLIMIENTO (SI O NO): {"SI" if s.es_incumplimiento else "NO"}<br>
+VALOR DE LA MULTA EN PESOS: {s.valor or "0"}<br>
+FECHA DEL ACTO ADMINISTRATIVO QUE LA IMPUSO: {s.ejecutoria:%Y/%m/%d}<br>
+FECHA DE EJECUTORIA: {s.ejecutoria:%Y/%m/%d}</p>""")
+    return "\n".join(partes)
 
 
 def poliza(p: Proponente, expedida: date, hasta: date) -> str:

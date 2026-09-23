@@ -77,7 +77,9 @@ class ContratoEvaluado:
 
     @property
     def valido(self) -> bool:
-        return self.valor_aportado is not None and self.unspsc is True and self.terminado is not False
+        # unspsc None = no se pudieron leer los códigos del pliego: el
+        # contrato no se descarta por eso, el lote entero va a revisión.
+        return self.valor_aportado is not None and self.unspsc is not False and self.terminado is not False
 
 
 @dataclass
@@ -393,7 +395,35 @@ def evaluar_lote(
                     "verifica que el proponente la haya aportado"
                 )
     exigencias = [cumple_valor, resultado.un_contrato_70 is not False, resultado.condiciones_plural is not False]
+    if lote.condicion_objeto and validos:
+        # El pliego pide, además de la experiencia general, que al menos un
+        # contrato cumpla una condición del objeto ("…DECLARADAS COMO BIENES
+        # DE INTERÉS CULTURAL"). La entidad la da por acreditada con los
+        # documentos de la declaratoria, no con el objeto del contrato: no se
+        # puede aprobar sola.
+        palabras = {p for p in re.findall(r"[A-ZÑ]{5,}", lote.condicion_objeto) if p not in ("COMO", "BIENES")}
+        parecidos = [str(c.orden) for c in validos
+                     if palabras & set(re.findall(r"[A-ZÑ]{5,}", normalizar(c.objeto)))]
+        resultado.motivos.append(
+            f"la experiencia específica exige que al menos un contrato sea «{lote.condicion_objeto.lower()}»: "
+            + (f"revisa el contrato {', '.join(parecidos)} y el documento que acredita esa condición"
+               if parecidos else "ningún contrato lo dice en su objeto; revisa los documentos aportados")
+        )
+    if not parametros.clases_unspsc:
+        resultado.motivos.append(
+            "no se leyeron en el pliego los códigos UNSPSC exigidos: no se verificó la clasificación de los contratos"
+        )
+    if parametros.sin_confirmar:
+        # Se evalúa con lo que la IA leyó del pliego, pero no se aprueba solo
+        # hasta que alguien confirme esos parámetros en la plataforma.
+        resultado.motivos.append(
+            "del pliego se leyó con IA y falta confirmar: " + "; ".join(parametros.sin_confirmar[:4])
+            + (f" (y {len(parametros.sin_confirmar) - 4} más)" if len(parametros.sin_confirmar) > 4 else "")
+        )
     dudas = [
+        bool(parametros.sin_confirmar),
+        bool(lote.condicion_objeto),
+        not parametros.clases_unspsc,
         any(objeto[id(c)] is None or (c.de_un_socio and not socio_ok.get(id(c))) for c in validos),
         lote.longitud_minima_km is not None and resultado.longitud is not True,
         plural and resultado.condiciones_plural is None,

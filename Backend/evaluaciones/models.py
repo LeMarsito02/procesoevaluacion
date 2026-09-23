@@ -381,6 +381,16 @@ class AnalisisPliego(models.Model):
     error_ia = models.TextField(blank=True)
     ia_iniciada = models.DateTimeField(null=True, blank=True)
     ia_terminada = models.DateTimeField(null=True, blank=True)
+    # Parámetros del proceso leídos del pliego con IA
+    # (motor.pliego.parametros_ia.ParametrosIA): experiencia, umbrales,
+    # anticipo, plazo, puntajes… cada uno con su cita. Se juntan con lo que
+    # leen las reglas en motor.pliego.fusion.
+    parametros_ia = models.JSONField(default=dict, blank=True)
+    version_parametros_ia = models.PositiveIntegerField(default=0)
+    # Lo que una persona confirmó o corrigió de esos parámetros: {campo: valor}.
+    parametros_confirmados = models.JSONField(default=dict, blank=True)
+    confirmados_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    confirmados_en = models.DateTimeField(null=True, blank=True)
     creado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)

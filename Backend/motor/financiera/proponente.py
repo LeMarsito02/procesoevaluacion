@@ -45,7 +45,11 @@ def evaluar_proponente_financiero(
     rups = leer_rups(pdfs)
     plural = bool(_PLURAL_RE.match(normalizar(nombre_proponente))) or len(integrantes_formato2(pdfs, codigo_proceso)) >= 2
     integrantes, avisos = integrantes_del_proponente(pdfs, rups, plural, codigo_proceso)
-    resultado.integrantes, resultado.avisos = integrantes, [*avisos, *parametros.avisos]
+    sin_confirmar = (
+        ["del pliego se leyó con IA y falta confirmar: " + "; ".join(parametros.sin_confirmar[:4])]
+        if parametros.sin_confirmar else []
+    )
+    resultado.integrantes, resultado.avisos = integrantes, [*avisos, *parametros.avisos, *sin_confirmar]
     numeros = [m.group(0) for l in parametros.lotes if (m := re.search(r"\d+", l.nombre))]
     elegidos = lotes_de_la_oferta(pdfs, numeros) if len(parametros.lotes) > 1 else None
     if len(parametros.lotes) > 1 and elegidos is None:

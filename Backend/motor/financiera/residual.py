@@ -211,9 +211,19 @@ _MONTO = r"\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d{4,}(?:[.,]\d{1,2})?"
 _INICIO_FILA_RE = re.compile(r"\$\s*(?:" + _MONTO + r")\s+\d{1,3}(?:[.,]\d{1,2})?\s+\d{1,2}/\d{1,2}/\d{2,4}")
 _FILA_SCE_RE = re.compile(
     r"\$\s*(?P<valor>" + _MONTO + r")\s+(?P<plazo>\d{1,3}(?:[.,]\d{1,2})?)\s+\d{1,2}/\d{1,2}/\d{2,4}\s+"
-    r"(?P<part>\d{1,3}(?:[.,]\d{1,2})?)\s*%\s*\$?\s*(?P<diario>" + _MONTO + r")\s+"
+    r"(?P<part>\d{1,3}(?:[.,]\d{1,2})?)\s*%(?:\s+(?:SI|NO)){0,2}\s*\$?\s*(?P<diario>" + _MONTO + r")\s+"
     # Sin "$", el saldo tiene que traer separadores de miles (un "2025" suelto es otra columna).
     r"(?:\$\s*(?P<saldo>" + _MONTO + r")|(?P<saldo_sin>\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?))(?![\d.,]*\d)"
+)
+
+# La tabla parte el número del contrato entre columnas y lo deja en medio de
+# la fila: "LOP $2.618.545.675,68 5 6/04/2026 50% NO NO 003 DE $17.456.971,17
+# $881.577.044,15 2025". Solo se dejan pasar trozos cortos (ni montos ni
+# porcentajes) y el saldo diario tiene que venir con "$".
+_FILA_SCE_PARTIDA_RE = re.compile(
+    r"\$\s*(?P<valor>" + _MONTO + r")\s+(?P<plazo>\d{1,3}(?:[.,]\d{1,2})?)\s+\d{1,2}/\d{1,2}/\d{2,4}\s+"
+    r"(?P<part>\d{1,3}(?:[.,]\d{1,2})?)\s*%(?:\s+(?:SI|NO|[A-ZÑ]{1,8}|\d{1,4})){1,6}\s+"
+    r"\$\s*(?P<diario>" + _MONTO + r")\s+\$\s*(?P<saldo>" + _MONTO + r")(?![\d.,]*\d)"
 )
 
 # Otra lectura del PDF saca primero el saldo: "$ 761.466.589,72 NO $ 14.952.434.852,59 18 11/11/2026 10% $ 27.689.694,17".
@@ -237,6 +247,8 @@ def _suma_filas_sce(tramo: str) -> float | None:
     inicios = len(_INICIO_FILA_RE.findall(tramo))
     filas = list(_FILA_SCE_RE.finditer(tramo))
     if len(filas) != inicios:
+        filas = list(_FILA_SCE_PARTIDA_RE.finditer(tramo))
+    if len(filas) != inicios:
         filas = list(_FILA_SCE_SALDO_PRIMERO_RE.finditer(tramo))
     if not filas or len(filas) != inicios:
         return None
@@ -258,7 +270,7 @@ def _suma_filas_sce(tramo: str) -> float | None:
 # Sin la palabra TOTAL (se pierde al leer la tabla): la celda del total va
 # justo antes de la nota del formato "SE DEBE DILIGENCIAR UNICAMENTE…".
 _TOTAL_ANTES_DE_NOTA_RE = re.compile(
-    r"\$\s*(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)\s*\(?\s*SE\s+DEBE\s+DILIGENCIAR"
+    r"\$?\s*(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)\s*\(?\s*SE\s+DEBE\s+DILIGENCIAR"
 )
 
 

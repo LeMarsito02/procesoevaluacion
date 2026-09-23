@@ -32,12 +32,22 @@ class LoteTecnico:
     longitud_minima_km: float | None = None
     longitud_total_km: float | None = None
     fraccion_longitud: float | None = None
+    # Lo que la experiencia específica exige del objeto por encima de la
+    # general ("…DE EDIFICACIONES, DECLARADAS COMO BIENES DE INTERÉS
+    # CULTURAL"): no se puede dar por cumplido sin ver los documentos.
+    condicion_objeto: str = ""
 
 
 @dataclass
 class ParametrosTecnicos:
     smmlv: float
     lotes: list[LoteTecnico] = field(default_factory=list)
+    # Factores de puntaje que el pliego nombra (los que no, no se evalúan).
+    factores_nombrados: set[str] = field(default_factory=set)
+    # Parámetros que solo leyó la IA del pliego, o en los que la IA y las
+    # reglas no coinciden. Mientras una persona no los confirme, ningún lote
+    # se aprueba solo: ver motor/pliego/fusion.py.
+    sin_confirmar: list[str] = field(default_factory=list)
     # Códigos UNSPSC a nivel de clase ("721410").
     clases_unspsc: set[str] = field(default_factory=set)
     tabla_valor: list[tuple[int, int, float]] = field(default_factory=lambda: list(TABLA_VALOR_DOCUMENTO_TIPO))
@@ -134,6 +144,35 @@ def _experiencia_por_lote(tablas) -> dict[str, tuple[str, str]]:
     return por_lote
 
 
+# Palabras que no distinguen nada al comparar la experiencia específica con
+# la general.
+_VACIAS_CONDICION = {
+    "DE", "DEL", "LA", "LAS", "EL", "LOS", "Y", "O", "U", "EN", "QUE", "SE", "SU", "CON", "POR", "PARA", "AL",
+    "UNO", "UNA", "COMO", "DEBE", "DEBEN", "SER", "CONTRATO", "CONTRATOS", "VALIDOS", "APORTADOS", "MENOS",
+    "EXPERIENCIA", "GENERAL", "ESPECIFICA", "CORRESPONDER", "CONTEMPLAR", "PRESENTE", "PROCESO", "SELECCION",
+}
+
+
+def _condicion_objeto(general: str, especifica: str) -> str:
+    """Lo que la experiencia específica pide del objeto y la general no.
+
+    El documento tipo repite en la específica toda la lista de actividades de
+    la general y le añade la exigencia propia del proceso ("… DE
+    EDIFICACIONES, DECLARADAS COMO BIENES DE INTERÉS CULTURAL Y/O
+    CONSERVACIÓN PATRIMONIAL"). Esa cola es lo que se devuelve; si la
+    específica solo habla de valor o de longitud, no hay condición de objeto."""
+    gen, esp = normalizar(general), normalizar(especifica)
+    if not gen or not esp:
+        return ""
+    materia = re.split(r"\s+(?:EN|DE)\s+", gen, maxsplit=1)
+    ultima = materia[1].split(" O ")[0].strip(" .,") if len(materia) > 1 else ""
+    if not ultima or ultima not in esp:
+        return ""
+    cola = esp[esp.rindex(ultima) + len(ultima):].split(".")[0].strip(" ,;:")
+    nuevas = {p for p in re.findall(r"[A-ZÑ]{4,}", cola) if p not in _VACIAS_CONDICION and p not in gen}
+    return cola if len(nuevas) >= 2 else ""
+
+
 def _tabla_valor(tablas) -> list[tuple[int, int, float]] | None:
     for _, filas in tablas:
         if not any("VALOR MINIMO A CERTIFICAR" in normalizar(" ".join(f)) for f in filas):
@@ -154,17 +193,35 @@ def _tabla_valor(tablas) -> list[tuple[int, int, float]] | None:
 
 
 def _clases_unspsc(texto_norm: str) -> set[str]:
-    """Códigos de la tabla de 3.5.4 (segmento, familia y clase). La tabla a
-    veces sale partida: "72 14 10 Servicios..." en un renglón, y en otro "72
-    Servicios de construcción..." con "14 11" en el renglón siguiente."""
-    # El índice del pliego también tiene el título: se toma la última aparición.
-    inicio = texto_norm.rfind("CLASIFICACION DE LA EXPERIENCIA EN EL")
-    if inicio < 0:
-        return set()
-    seccion = texto_norm[inicio:inicio + 2500]
-    fin = re.search(r"\n\s*(?:\d+(?:\.\d+)+\.?\s*)?ACREDITACION DE LA EXPERIENCIA REQUERIDA\s*\n", seccion)
-    seccion = seccion[: fin.start() if fin else None]
+    """Las clases del clasificador de Naciones Unidas en las que deben estar
+    los contratos de experiencia. El pliego las escribe de varias formas:
+    "72 14 10 Servicios…" (licitación, a veces partida en dos renglones) y
+    "72000000 72120000 72121400" o "72121400" pegado a su descripción (menor
+    cuantía). De un segmento/familia/clase solo cuenta la clase.
+
+    El mismo pliego puede traer dos tablas (la del capítulo 1 y la de la
+    experiencia): se toman los códigos de todas, porque son los que la
+    entidad aceptó."""
     clases: set[str] = set()
+    for titulo in ("CLASIFICACION DE LA EXPERIENCIA EN EL", "CLASIFICADOR DE BIENES Y SERVICIOS DE NACIONES UNIDAS"):
+        for encontrado in re.finditer(re.escape(titulo), texto_norm):
+            seccion = texto_norm[encontrado.start(): encontrado.start() + 2500]
+            # Hasta donde empieza lo siguiente: el título que sigue en la
+            # licitación, o el número de la próxima sección ("1.5. RECURSOS…").
+            fin = re.search(r"\n\s*(?:\d+(?:\.\d+)+\.?\s*)?ACREDITACION DE LA EXPERIENCIA REQUERIDA\s*\n"
+                            r"|\n\s*\d+\.\d+\.?\s+[A-ZÑ]", seccion[100:])
+            seccion = seccion[: 100 + fin.start() if fin else None]
+            clases |= _clases_de_la_tabla(seccion)
+    return clases
+
+
+def _clases_de_la_tabla(seccion: str) -> set[str]:
+    clases: set[str] = set()
+    # "72121400": los dígitos 5 y 6 en "00" son la familia ("72120000") o el
+    # segmento ("72000000"), que no sirven para comparar con el RUP.
+    for codigo in re.findall(r"\b(\d{4})(\d{2})00\b", seccion):
+        if codigo[1] != "00":
+            clases.add("".join(codigo))
     segmento = None
     for linea in seccion.splitlines():
         linea = linea.strip()
@@ -223,26 +280,40 @@ _PUNTOS_RE = re.compile(
 )
 
 
-def _puntajes(texto_norm: str) -> dict[str, float | None]:
+def _puntajes(texto_norm: str) -> tuple[dict[str, float | None], set[str]]:
     """Puntos de cada factor, en el cuerpo del capítulo IV (no en el índice:
-    ahí el título va seguido de puntos suspensivos y la página)."""
+    ahí el título va seguido de puntos suspensivos y la página). None cuando
+    el factor no hace parte del proceso: el pliego lo dice con "NO APLICA" o
+    con "N/A." debajo del título, o sencillamente no lo nombra."""
     puntajes: dict[str, float | None] = {}
+    nombrados: set[str] = set()
     for clave, titulo in _TITULOS_PUNTAJE.items():
-        encabezados = [
-            m for m in re.finditer(rf"\n\s*4(?:\.\d+){{1,2}}\.?\s*[^\n]{{0,45}}?{titulo}[^\n]*", texto_norm)
-            if "...." not in m.group(0)
+        apariciones = [
+            m for m in re.finditer(titulo, texto_norm)
+            if "...." not in texto_norm[texto_norm.rfind("\n", 0, m.start()) + 1: texto_norm.find("\n", m.end())]
         ]
-        if not encabezados:
+        if not apariciones:
+            # El pliego no nombra el factor: no se evalúa en este proceso.
+            puntajes[clave] = None
             continue
-        m = encabezados[-1]
+        nombrados.add(clave)
+        # El encabezado de la sección ("4.2.3. PRESENTACIÓN DE UN PLAN…") vale
+        # más que una mención suelta en otra parte del pliego.
+        encabezados = [
+            m for m in apariciones
+            if re.match(r"\s*4(?:\.\d+){1,2}\.?\s", texto_norm[texto_norm.rfind("\n", 0, m.start()) + 1: m.start()] or " ")
+        ]
+        m = (encabezados or apariciones)[-1]
         cuerpo = texto_norm[m.end():m.end() + 1500]
         siguiente = re.search(r"\n\s*4(?:\.\d+){1,2}\.?\s+[A-Z]", cuerpo)
         cuerpo = cuerpo[: siguiente.start() if siguiente else None]
-        if re.match(r"\s*(?:NO\s+APLICA|ESTE\s+NUMERAL\s+NO\s+APLICA)", cuerpo) or "NO APLICA" in m.group(0):
+        # "N/A." va pegado al título, que a veces sigue en el renglón de abajo
+        # ("…DE LA MAQUINARIA DE\nOBRA N/A.").
+        if re.match(r"[^.]{0,60}?(?:NO\s+APLICA|N\s*/\s*A)\b", cuerpo):
             puntajes[clave] = None
         elif p := _PUNTOS_RE.search(cuerpo):
             puntajes[clave] = float(p.group(1).replace(",", "."))
-    return puntajes
+    return puntajes, nombrados
 
 
 def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None]], smmlv: float) -> ParametrosTecnicos:
@@ -256,7 +327,7 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
     parametros = ParametrosTecnicos(smmlv=smmlv)
     parametros.clases_unspsc = _clases_unspsc(texto_norm)
     parametros.tabla_valor = _tabla_valor(tablas) or list(TABLA_VALOR_DOCUMENTO_TIPO)
-    parametros.puntajes = _puntajes(texto_norm)
+    parametros.puntajes, parametros.factores_nombrados = _puntajes(texto_norm)
     experiencia = _experiencia_por_lote(tablas)
     if len(experiencia) > 1 and len(lotes) < len(experiencia):
         # El análisis del documento base no separó los lotes (presupuesto en letras).
@@ -282,5 +353,6 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
             longitud_minima_km=minima,
             longitud_total_km=total,
             fraccion_longitud=fraccion,
+            condicion_objeto=_condicion_objeto(general, especifica),
         ))
     return parametros
