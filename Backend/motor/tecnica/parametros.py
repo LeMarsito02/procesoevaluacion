@@ -65,7 +65,12 @@ class ParametrosTecnicos:
 _CODIGO_RE = re.compile(r"\b(\d{2})\s+(\d{2})\s+(\d{2})\b")
 _LONGITUD_TOTAL_RE = re.compile(r"LONGITUD DE LA (?:VIA|CARRETERA)[^.]{0,40}?ES DE\s*([\d.,]+)\s*(KM|KILOMETROS|M|ML|METROS)\b")
 _FRACCION_LONGITUD_RE = re.compile(r"LONGITUD\s+INTERVENIDA\s+CORRESPONDIENTE\s+A\s+POR\s+LO\s+MENOS\s+EL\s+(\d{1,3})\s*%")
-_FRACCION_VALOR_RE = re.compile(r"POR\s+LO\s+MENOS\s+EL\s+(\d{1,3})\s*%\s*DEL\s+VALOR\s+DE(?:L)?\s+PRESUPUESTO\s+OFICIAL")
+# "por lo menos el 70% del valor del presupuesto oficial" (licitación) y
+# "debe corresponder mínimo al 30% del presupuesto oficial" (menor cuantía).
+_FRACCION_VALOR_RE = re.compile(
+    r"POR\s+LO\s+MENOS\s+UNO\s*\(\s*1\s*\)\s+DE\s+LOS\s+CONTRATOS[^.]{0,400}?"
+    r"(?:POR\s+LO\s+MENOS|MINIMO\s+AL|CORRESPONDIENTE\s+A)\s+(?:EL\s+)?(\d{1,3})\s*%\s*DEL\s+(?:VALOR\s+DE(?:L)?\s+)?PRESUPUESTO\s+OFICIAL"
+)
 _FILA_TABLA_VALOR_RE = re.compile(r"(?:DE\s+(\d+)\s+HASTA\s+(\d+)|HASTA\s+(\d+))\D{0,20}?(\d{2,3})\s*%")
 
 
@@ -85,19 +90,47 @@ def _tablas(pdf) -> list[tuple[int, list[list[str]]]]:
     return tablas
 
 
+def _experiencia_en_filas(filas) -> tuple[str, str] | None:
+    """Proceso de un solo lote (menor cuantía): la tabla no tiene columna de
+    lote, sino los títulos en su propia fila — "EXPERIENCIA GENERAL" y
+    debajo el texto, luego "EXPERIENCIA ESPECÍFICA" y debajo el suyo."""
+    textos: dict[str, list[str]] = {"general": [], "especifica": []}
+    actual: str | None = None
+    for fila in filas:
+        celdas = [c for c in fila if c and c.strip()]
+        if not celdas:
+            continue
+        titulo = normalizar(" ".join(celdas))
+        if re.fullmatch(r"EXPERIENCIA\s+GENERAL\s*:?", titulo):
+            actual = "general"
+        elif re.fullmatch(r"EXPERIENCIA\s+(?:ESPECIFICA|ESPECIFICA\s*:)\s*:?", titulo):
+            actual = "especifica"
+        elif actual:
+            textos[actual].append(" ".join(celdas))
+    if not textos["general"]:
+        return None
+    return " ".join(textos["general"]), " ".join(textos["especifica"])
+
+
 def _experiencia_por_lote(tablas) -> dict[str, tuple[str, str]]:
     """{"1": (general, específica)} de la tabla "Lote | Experiencia General |
     Experiencia Especifica" (3.5.2 A)."""
     por_lote: dict[str, tuple[str, str]] = {}
+    sin_lote: tuple[str, str] | None = None
     for _, filas in tablas:
         encabezado = next((f for f in filas if any("EXPERIENCIA GENERAL" in normalizar(c) for c in f)), None)
         if encabezado is None:
             continue
+        antes = len(por_lote)
         for fila in filas:
             celdas = [c for c in fila if c]
             if len(celdas) < 3 or not re.fullmatch(r"\d{1,2}", celdas[0]):
                 continue
             por_lote[celdas[0]] = (celdas[1], " ".join(celdas[2:]))
+        if len(por_lote) == antes and sin_lote is None:
+            sin_lote = _experiencia_en_filas(filas)
+    if not por_lote and sin_lote:
+        por_lote["1"] = sin_lote
     return por_lote
 
 
@@ -234,7 +267,11 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
         if not general and len(experiencia) == 1:
             general, especifica = next(iter(experiencia.values()))
         esp = normalizar(especifica)
-        fraccion_valor = _FRACCION_VALOR_RE.search(esp)
+        # La tabla a veces parte la experiencia específica en dos páginas: si
+        # el porcentaje no quedó en ella, se busca en el texto del pliego.
+        fraccion_valor = _FRACCION_VALOR_RE.search(esp) or (
+            _FRACCION_VALOR_RE.search(texto_norm) if len(lotes) == 1 else None
+        )
         minima, total, fraccion = _longitud(esp)
         parametros.lotes.append(LoteTecnico(
             nombre=nombre,

@@ -246,6 +246,32 @@ class ExperienciaTests(SimpleTestCase):
         self.assertIsNone(objeto_valido("MANTENIMIENTO RUTINARIO DE LA MALLA VIAL", lote2))
         self.assertFalse(objeto_valido("CONSTRUCCION DE UN COLEGIO", lote2))
 
+    def test_objeto_de_edificaciones_cuando_el_lote_no_es_de_vias(self):
+        """En un proceso de edificaciones (bienes de interés cultural) un
+        contrato de sedes, instalaciones o templos sí cuenta; antes se
+        descartaban todos por no nombrar una vía."""
+        from motor.tecnica.parametros import LoteTecnico
+        from motor.tecnica.experiencia import familia_del_lote
+
+        lote = LoteTecnico(
+            nombre="ÚNICO", presupuesto=1e9,
+            experiencia_general="CONSTRUCCIÓN Y/O ADECUACIÓN Y/O MANTENIMIENTO Y/O RESTAURACIÓN DE EDIFICACIONES",
+        )
+        self.assertEqual(familia_del_lote(lote), "edificaciones")
+        self.assertTrue(objeto_valido("MANTENIMIENTO PREVENTIVO DE LAS INSTALACIONES DE LA POLICÍA", lote))
+        self.assertTrue(objeto_valido("MANTENIMIENTO Y MEJORAMIENTO DE LAS SEDES EDUCATIVAS", lote))
+        self.assertFalse(objeto_valido("MEJORAMIENTO DE LA VÍA TERCIARIA EL RECODO", lote))
+        self.assertFalse(objeto_valido("SUMINISTRO DE PAPELERÍA", lote))
+
+    def test_sin_experiencia_general_no_se_descarta_ningun_objeto(self):
+        """Si no se leyó la experiencia general del pliego no hay con qué
+        comparar: va a revisión, nunca se descarta el contrato."""
+        from motor.tecnica.parametros import LoteTecnico
+
+        lote = LoteTecnico(nombre="ÚNICO", presupuesto=1e9, experiencia_general="")
+        self.assertIsNone(objeto_valido("MEJORAMIENTO DE LA VÍA A BETA", lote))
+        self.assertIsNone(objeto_valido("SUMINISTRO DE PAPELERÍA", lote))
+
     def test_longitud_afectada_por_la_participacion(self):
         integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0, _rup("VIAS ALFA S.A.S.", _exp("12", 3000, participacion=0.5, celebrado="CONSORCIO")))
         parametros = _parametros(longitud=1.512)

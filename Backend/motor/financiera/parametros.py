@@ -80,8 +80,15 @@ class ParametrosFinancieros:
     avisos: list[str] = field(default_factory=list)
 
 
-_ANTICIPO_RE = re.compile(r"ANTICIPO\s+Y/O\s+PAGO\s+ANTICIPADO(.{0,1200})", re.S)
-_PORCENTAJE_RE = re.compile(r"\(\s*(\d{1,3}(?:[.,]\d+)?)\s*%\s*\)")
+# El título de la sección cambia entre documentos tipo: "ANTICIPO Y/O PAGO
+# ANTICIPADO" (licitación) y "ANTICIPO O PAGO ANTICIPADO" (menor cuantía).
+_ANTICIPO_RE = re.compile(r"ANTICIPO\s+(?:Y\s*/\s*O|O)\s+PAGO\s+ANTICIPADO(.{0,1200})", re.S)
+# Con el número de sección delante es la sección de verdad y no una
+# mención de paso ("se incluye la forma de pago, anticipo o pago anticipado").
+_ANTICIPO_NUMERADO_RE = re.compile(r"8\.3\.?\s*ANTICIPO\s+(?:Y\s*/\s*O|O)\s+PAGO\s+ANTICIPADO(.{0,1200})", re.S)
+# "(30%)" o "[30%]": el documento tipo deja los corchetes de la plantilla
+# sin reemplazar ("A TITULO DE [ANTICIPO UN VALOR EQUIVALENTE AL [30%]").
+_PORCENTAJE_RE = re.compile(r"[(\[]\s*(\d{1,3}(?:[.,]\d+)?)\s*%\s*[)\]]")
 # "No se entregará anticipo"; un "NO APLICA" suelto no basta: puede ser el de
 # otra fila de la tabla y dejaría el anticipo en cero (inflando el capital de
 # trabajo y la capacidad residual exigidos).
@@ -109,7 +116,7 @@ _UMBRAL_RE = {
 def _anticipo(texto_norm: str) -> float | None:
     """Fracción del anticipo (8.3): la última sección con ese título (la
     primera es el índice)."""
-    secciones = list(_ANTICIPO_RE.finditer(texto_norm))
+    secciones = list(_ANTICIPO_NUMERADO_RE.finditer(texto_norm)) or list(_ANTICIPO_RE.finditer(texto_norm))
     if not secciones:
         return None
     cuerpo = secciones[-1].group(1)

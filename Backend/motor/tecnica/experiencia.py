@@ -98,41 +98,88 @@ class ResultadoLote:
 
 # ---------------------------------------------------------------- objeto
 
-_PALABRAS_VIA = re.compile(
-    r"\bVIA|\bVIAL|CARRETERA|CALLE|PAVIMENT|MALLA VIAL|RED VIAL|CORREDOR|TRAMO|AUTOPISTA|PISTA|CALZADA|AVENIDA|CARRERA\b|TRONCAL|PLACA HUELLA"
-)
+# Cada familia de obra trae dos listas: cómo se nombra en la experiencia
+# general del pliego y cómo puede aparecer en el objeto de un contrato. Los
+# procesos de vías dicen "EN PAVIMENTO … DE CARRETERAS"; los de edificaciones,
+# "… DE EDIFICACIONES" y los contratos hablan de sedes, instalaciones o
+# templos. Lo que no cae en ninguna familia no se descarta: va a revisión.
+_FAMILIAS: dict[str, tuple[str, str]] = {
+    "vías": (
+        r"VIA|VIAL|CARRETERA|PAVIMENT|CALZADA|CORREDOR|TRONCAL|AUTOPISTA|PLACA\s*HUELLA",
+        r"\bVIA|\bVIAL|CARRETERA|CALLE|PAVIMENT|MALLA VIAL|RED VIAL|CORREDOR|TRAMO|AUTOPISTA|PISTA|CALZADA"
+        r"|AVENIDA|CARRERA\b|TRONCAL|PLACA HUELLA|PUENTE|ANDEN|CICLORRUTA|GLORIETA",
+    ),
+    "edificaciones": (
+        r"EDIFICAC|EDIFICIO|BIEN(?:ES)?\s+DE\s+INTERES\s+CULTURAL|PATRIMONI|INFRAESTRUCTURA\s+SOCIAL",
+        r"EDIFICAC|EDIFICIO|\bSEDE|INSTALACION|COLEGIO|ESCUELA|INSTITUCION\s+EDUCATIVA|HOSPITAL|CENTRO\s+DE\s+SALUD"
+        r"|TEMPLO|IGLESIA|CAPILLA|PARROQUI|VIVIENDA|LOCATIV|CUBIERTA|MUSEO|BIBLIOTECA|ESTACION|BATALLON|COMANDO"
+        r"|ALCALDIA|POLIDEPORTIVO|ESCENARIO\s+DEPORTIVO|PLAZA\s+DE\s+MERCADO|PATRIMONI|INFRAESTRUCTURA\s+SOCIAL"
+        r"|BIEN(?:ES)?\s+DE\s+INTERES\s+CULTURAL|SALON|AULA|OFICINA|PLANTA\s+FISICA",
+    ),
+    "acueducto": (
+        r"ACUEDUCTO|ALCANTARILLADO|PTAP|PTAR|REDES\s+HIDRAULICAS",
+        r"ACUEDUCTO|ALCANTARILLADO|PTAP|PTAR|RED(?:ES)?\s+(?:HIDRAULICA|DE\s+ACUEDUCTO)|COLECTOR|EMISARIO",
+    ),
+}
+_CONECTOR_RE = re.compile(r"\s*(?:Y\s*/\s*O|/|,|\sO\s|\sU\s)\s*")
+
+
+def _actividades_y_materia(lote: LoteTecnico) -> tuple[str, str]:
+    """Parte la experiencia general en lo que se hace y sobre qué se hace:
+    "… O CONSERVACIÓN | EN PAVIMENTO … DE CARRETERAS", "… REPOTENCIACIÓN
+    ESTRUCTURAL | DE EDIFICACIONES"."""
+    general = normalizar(lote.experiencia_general)
+    partes = re.split(r"\s+(?:EN|DE)\s+", general, maxsplit=1)
+    return partes[0], (partes[1] if len(partes) > 1 else "")
 
 
 def actividades_del_lote(lote: LoteTecnico) -> list[str]:
     """Las actividades de la experiencia general ("CONSTRUCCIÓN O
-    MEJORAMIENTO O MANTENIMIENTO RUTINARIO ... EN PAVIMENTO ..."): lo que va
-    antes de " EN "."""
-    general = normalizar(lote.experiencia_general)
-    antes = re.split(r"\s+EN\s+(?:PAVIMENTO|CONCRETO|ASFALTO)", general)[0]
-    actividades = [a.strip(" .,") for a in re.split(r"\s+O\s+|,", antes) if a.strip(" .,")]
-    # Se compara por la raíz: "MANTENIMIENTO RUTINARIO" -> "MANTENIMIENTO".
+    MEJORAMIENTO O MANTENIMIENTO RUTINARIO …", "CONSTRUCCIÓN Y/O AMPLIACIÓN
+    Y/O …"), comparadas por su raíz: "MANTENIMIENTO RUTINARIO" -> "MANTENI"."""
+    antes, _ = _actividades_y_materia(lote)
     raices = []
-    for a in actividades:
-        raiz = a.split()[0]
-        raiz = re.sub(r"(CION|MIENTO|ACION)$", "", raiz)
-        if raiz and raiz not in raices:
+    for actividad in _CONECTOR_RE.split(antes):
+        palabra = actividad.strip(" .,").split()
+        if not palabra:
+            continue
+        raiz = re.sub(r"(CION|MIENTO|ACION|CIONES)$", "", palabra[0])
+        if len(raiz) >= 5 and raiz not in raices:
             raices.append(raiz)
     return raices
 
 
+def familia_del_lote(lote: LoteTecnico) -> str | None:
+    """Sobre qué obra pide experiencia el lote: vías, edificaciones, acueducto.
+    None cuando el pliego no lo dice en esos términos (o no se leyó): entonces
+    ningún contrato se descarta por el objeto, se mandan a revisión."""
+    _, materia = _actividades_y_materia(lote)
+    texto = materia or normalizar(lote.experiencia_general)
+    for familia, (en_el_pliego, _) in _FAMILIAS.items():
+        if re.search(en_el_pliego, texto):
+            return familia
+    return None
+
+
 def objeto_valido(objeto: str, lote: LoteTecnico) -> bool | None:
     """True si el objeto nombra una actividad de la experiencia general del
-    lote y una vía; False si claramente no es de vías; None si no se puede
-    decir (lo resuelve quien revisa con la certificación)."""
+    lote y la clase de obra que pide el proceso; False si claramente es de
+    otra cosa; None si no se puede decir (lo resuelve quien revisa con la
+    certificación)."""
     texto = normalizar(objeto)
     if not texto.strip():
         return None
     actividades = actividades_del_lote(lote)
-    tiene_actividad = any(re.search(rf"\b{re.escape(a)}", texto) for a in actividades) if actividades else None
-    tiene_via = bool(_PALABRAS_VIA.search(texto))
-    if tiene_actividad and tiene_via:
+    familia = familia_del_lote(lote)
+    if not actividades or familia is None:
+        # Sin la experiencia general del pliego no hay con qué comparar: no se
+        # descarta nada por el objeto.
+        return None
+    tiene_actividad = any(re.search(rf"\b{re.escape(a)}", texto) for a in actividades)
+    tiene_materia = bool(re.search(_FAMILIAS[familia][1], texto))
+    if tiene_actividad and tiene_materia:
         return True
-    if not tiene_via and not re.search(r"OBRA|INFRAESTRUCTURA", texto):
+    if not tiene_materia and not re.search(r"OBRA|INFRAESTRUCTURA", texto):
         return False
     return None
 
