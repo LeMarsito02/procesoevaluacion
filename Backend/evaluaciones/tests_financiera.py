@@ -371,3 +371,76 @@ class TitularDelListadoTests(SimpleTestCase):
         a = IntegranteTecnico("VIAS DEL SUR S.A.S", None, 0.5, None)
         b = IntegranteTecnico("VIAS DEL NORTE S.A.S", None, 0.5, None)
         self.assertIsNone(integrante_del_titular(["VIAS DEL"], [a, b]))
+
+
+class UmbralesYAnticipoTests(SimpleTestCase):
+    def test_umbral_en_porcentaje_y_con_simbolos(self):
+        from motor.financiera.parametros import _texto_con_simbolos
+
+        u = umbrales_del_texto(normalizar(_texto_con_simbolos(
+            "INDICE DE LIQUIDEZ ≥ 1,2 NIVEL DE ENDEUDAMIENTO MENOR O IGUAL A 70 % "
+            "RAZON DE COBERTURA DE INTERESES >= 1 RENTABILIDAD DEL ACTIVO MAYOR O IGUAL A 3% "
+            "RENTABILIDAD DEL PATRIMONIO >= 0,02"
+        )), "pliego")
+        # Siempre en razón, nunca en porcentaje: si no, un endeudado pasaría.
+        self.assertEqual((u.liquidez_min, u.endeudamiento_max, u.cobertura_min, u.roa_min, u.roe_min),
+                         (1.2, 0.70, 1.0, 0.03, 0.02))
+
+    def test_un_no_aplica_suelto_no_borra_el_anticipo(self):
+        from motor.financiera.parametros import _anticipo
+
+        con_anticipo = normalizar(
+            "8.3 ANTICIPO Y/O PAGO ANTICIPADO LA ENTIDAD ENTREGARA A TITULO DE ANTICIPO EL VEINTE POR CIENTO (20 %) "
+            "DEL VALOR DEL CONTRATO. PAGO ANTICIPADO: NO APLICA"
+        )
+        self.assertAlmostEqual(_anticipo(con_anticipo), 0.20)
+        sin_anticipo = normalizar("8.3 ANTICIPO Y/O PAGO ANTICIPADO NO SE ENTREGARA ANTICIPO EN ESTE PROCESO (0 %)")
+        self.assertEqual(_anticipo(sin_anticipo), 0.0)
+
+    def test_lote_sin_numero_en_el_nombre_no_rompe_la_evaluacion(self):
+        from motor.financiera.proponente import evaluar_proponente_financiero
+
+        parametros = ParametrosFinancieros(
+            smmlv=1_000_000,
+            lotes=[LoteFinanciero("GRUPO NORTE", 1_000.0, 4, 0.2), LoteFinanciero("LOTE 2", 2_000.0, 4, 0.2)],
+            umbrales=UMBRALES,
+        )
+        with mock.patch("motor.financiera.proponente.leer_rups", return_value=[]), \
+                mock.patch("motor.financiera.proponente.integrantes_formato2", return_value=[]), \
+                mock.patch("motor.financiera.proponente.integrantes_del_proponente", return_value=([], [])), \
+                mock.patch("motor.financiera.proponente.lotes_de_la_oferta", return_value={"2"}), \
+                mock.patch("motor.financiera.proponente.documentos_financieros") as docs, \
+                mock.patch("motor.financiera.proponente.residual_del_proponente", return_value=Revision(False, [])):
+            docs.return_value.estados = {}
+            docs.return_value.completos = {}
+            resultado = evaluar_proponente_financiero({}, {}, "CONSORCIO DE PRUEBA", parametros, date(2026, 8, 3), "PRUEBA-1")
+        self.assertEqual(resultado.lotes_presentados, ["LOTE 2"])
+
+
+class InformeNoAplicaTests(SimpleTestCase):
+    def test_un_requisito_general_que_no_aplica_no_tapa_el_no_cumple(self):
+        import io
+
+        import openpyxl
+
+        from motor.esquemas.proceso import ResultadoRequisito
+        from motor.financiera.informe import generar_informe
+        from motor.tecnica.informe import ResultadoInforme
+
+        def r(numero, cumple, decidido=False, no_aplica=False):
+            detalle = {"financiera": {"no_aplica": True}} if no_aplica else None
+            return ResultadoInforme(
+                ResultadoRequisito(hoja="P-01", numero_orden=1, nombre_proponente="X", requisito=numero,
+                                   cumple=cumple, detalle=detalle),
+                decidido,
+            )
+
+        resultados = {
+            ("P-01", 201): r(201, True), ("P-01", 202): r(202, True), ("P-01", 203): r(203, True),
+            ("P-01", 204): r(204, True, no_aplica=True),   # patrimonio: casi siempre no aplica
+            ("P-01", 211): r(211, True), ("P-01", 221): r(221, False, decidido=True),  # K: no cumple
+        }
+        contenido = generar_informe("PRUEBA-1", "Objeto", [(0, "LOTE 1")], [("P-01", "UNO")], resultados,
+                                    [201, 202, 203, 204], {0: [211, 221]}, borrador=True)
+        hoja = openpyxl.load_workbook(io.BytesIO(contenido))["Resumen"]
+        self.assertEqual([c.value for c in hoja[5]], ["P-01", "UNO", "NO CUMPLE"])

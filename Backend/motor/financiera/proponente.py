@@ -50,7 +50,11 @@ def evaluar_proponente_financiero(
     elegidos = lotes_de_la_oferta(pdfs, numeros) if len(parametros.lotes) > 1 else None
     if len(parametros.lotes) > 1 and elegidos is None:
         resultado.avisos.append("no se identificó en la carta a qué lotes se presenta: se evalúan todos")
-    lotes = [l for l in parametros.lotes if elegidos is None or re.search(r"\d+", l.nombre).group(0) in elegidos]
+    def _numero_del_lote(nombre: str) -> str | None:
+        m = re.search(r"\d+", nombre)
+        return m.group(0) if m else None
+
+    lotes = [l for l in parametros.lotes if elegidos is None or _numero_del_lote(l.nombre) in elegidos]
     resultado.lotes_presentados = [l.nombre for l in lotes]
     ind, faltas = indicadores_del_proponente(integrantes)
     resultado.indicadores = ind

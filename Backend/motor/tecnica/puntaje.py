@@ -466,7 +466,11 @@ def emprendimiento_mujeres(pdfs: dict[str, bytes], integrantes: list[IntegranteT
         elif not (50 < suma <= 100.5):
             faltas.append(f"el cuadro de accionistas suma {suma:g} % (se exige más del 50 %)")
         desde = _mantenida_desde(texto)
-        if desde and fecha_cierre and _mas_meses(desde, 12) > fecha_cierre:
+        if desde is None:
+            # El pliego exige que la propiedad haya pertenecido a mujeres el
+            # último año: sin esa fecha el evaluador no otorga el punto.
+            faltas.append("el Formato 12A no dice desde cuándo se mantiene esa condición (el pliego exige el último año)")
+        elif fecha_cierre and _mas_meses(desde, 12) > fecha_cierre:
             faltas.append(f"la mayoría de mujeres se mantiene desde el {desde:%d/%m/%Y}: menos de un año antes del cierre")
         if not re.search(r"REVISOR\s+FISCAL|CONTADOR", texto) or "REPRESENTANTE LEGAL" not in texto:
             faltas.append("no lo suscriben el representante legal y el revisor fiscal o contador")

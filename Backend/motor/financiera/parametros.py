@@ -82,16 +82,27 @@ class ParametrosFinancieros:
 
 _ANTICIPO_RE = re.compile(r"ANTICIPO\s+Y/O\s+PAGO\s+ANTICIPADO(.{0,1200})", re.S)
 _PORCENTAJE_RE = re.compile(r"\(\s*(\d{1,3}(?:[.,]\d+)?)\s*%\s*\)")
-_SIN_ANTICIPO_RE = re.compile(r"NO\s+(?:SE\s+)?(?:ENTREGARA|OTORGARA|HABRA|CONTEMPLA)\s+(?:NINGUN\s+)?ANTICIPO|NO\s+APLICA")
+# "No se entregará anticipo"; un "NO APLICA" suelto no basta: puede ser el de
+# otra fila de la tabla y dejaría el anticipo en cero (inflando el capital de
+# trabajo y la capacidad residual exigidos).
+_SIN_ANTICIPO_RE = re.compile(
+    r"NO\s+(?:SE\s+)?(?:ENTREGARA|OTORGARA|HABRA|CONTEMPLA|APLICA)\s+(?:NINGUN\s+)?(?:ANTICIPO|PAGO\s+ANTICIPADO)"
+    r"|ANTICIPO[^\n]{0,40}NO\s+APLICA"
+)
 # "(4) MESES", aunque la tabla parta el texto: "(4) MILLONES ... MESES".
 _PLAZO_RE = re.compile(r"\(\s*(\d{1,3})\s*\)(?=[^()$]{0,80}?\bMESES\b)")
 _SECCION_11_RE = re.compile(r"OBJETO, PRESUPUESTO OFICIAL, PLAZO Y UBICACION(.{0,6000}?)\n\s*1\.2\.?\s", re.S)
+# El pliego a veces escribe el umbral en porcentaje ("endeudamiento <= 70 %"):
+# se guarda siempre como razón.
+_MAYOR = r"(?:>=|>|MAYOR\s+O\s+IGUAL\s+A|MAYOR\s+A|SUPERIOR\s+A|MINIMO(?:\s+DE)?)"
+_MENOR = r"(?:<=|<|MENOR\s+O\s+IGUAL\s+A|MENOR\s+A|INFERIOR\s+A|MAXIMO(?:\s+DE)?)"
+_VALOR = r"(\d+(?:[.,]\d+)?)\s*(%?)"
 _UMBRAL_RE = {
-    "liquidez_min": r"LIQUIDEZ[^\n\d]{0,60}?(?:>=|≥|MAYOR\s+O\s+IGUAL\s+A)\s*(\d+(?:[.,]\d+)?)",
-    "endeudamiento_max": r"ENDEUDAMIENTO[^\n\d]{0,60}?(?:<=|≤|MENOR\s+O\s+IGUAL\s+A)\s*(\d+(?:[.,]\d+)?)",
-    "cobertura_min": r"COBERTURA\s+DE\s+INTERESES[^\n\d]{0,60}?(?:>=|≥|MAYOR\s+O\s+IGUAL\s+A)\s*(\d+(?:[.,]\d+)?)",
-    "roa_min": r"RENTABILIDAD\s+(?:DEL|SOBRE\s+EL)\s+ACTIVO[^\n\d]{0,60}?(?:>=|≥|MAYOR\s+O\s+IGUAL\s+A)\s*(\d+(?:[.,]\d+)?)",
-    "roe_min": r"RENTABILIDAD\s+(?:DEL|SOBRE\s+EL)\s+PATRIMONIO[^\n\d]{0,60}?(?:>=|≥|MAYOR\s+O\s+IGUAL\s+A)\s*(\d+(?:[.,]\d+)?)",
+    "liquidez_min": rf"LIQUIDEZ[^\n\d]{{0,60}}?{_MAYOR}\s*{_VALOR}",
+    "endeudamiento_max": rf"ENDEUDAMIENTO[^\n\d]{{0,60}}?{_MENOR}\s*{_VALOR}",
+    "cobertura_min": rf"COBERTURA\s+DE\s+INTERESES[^\n\d]{{0,60}}?{_MAYOR}\s*{_VALOR}",
+    "roa_min": rf"RENTABILIDAD\s+(?:DEL|SOBRE\s+EL)\s+ACTIVO[^\n\d]{{0,60}}?{_MAYOR}\s*{_VALOR}",
+    "roe_min": rf"RENTABILIDAD\s+(?:DEL|SOBRE\s+EL)\s+PATRIMONIO[^\n\d]{{0,60}}?{_MAYOR}\s*{_VALOR}",
 }
 
 
@@ -121,12 +132,20 @@ def _plazos(texto_norm: str, lotes: int) -> list[float | None]:
 
 
 def umbrales_del_texto(texto_norm: str, fuente: str) -> Umbrales:
-    """Umbrales escritos en el pliego o en la Matriz 2 ("LIQUIDEZ >= 1,2")."""
+    """Umbrales escritos en el pliego o en la Matriz 2 ("LIQUIDEZ >= 1,2",
+    "ENDEUDAMIENTO <= 70 %"). Siempre quedan como razón, no como porcentaje."""
     u = Umbrales(fuente=fuente)
     for campo, patron in _UMBRAL_RE.items():
         if m := re.search(patron, texto_norm):
-            setattr(u, campo, numero(m.group(1)))
+            valor = numero(m.group(1))
+            if valor is not None:
+                setattr(u, campo, valor / 100 if m.group(2) else valor)
     return u
+
+
+def _texto_con_simbolos(texto: str) -> str:
+    """normalizar() borra "≥" y "≤" al pasar a ASCII: se cambian antes."""
+    return texto.replace("≥", ">=").replace("≤", "<=").replace("⩾", ">=").replace("⩽", "<=")
 
 
 def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None]], smmlv: float,
@@ -136,7 +155,7 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
     from motor.procesamiento.pdf_utils import abrir_pdf
 
     with abrir_pdf(contenido_pliego) as pdf:
-        texto_norm = normalizar("\n".join(page.extract_text() or "" for page in pdf.pages))
+        texto_norm = normalizar(_texto_con_simbolos("\n".join(page.extract_text() or "" for page in pdf.pages)))
     parametros = ParametrosFinancieros(smmlv=smmlv)
     anticipo = _anticipo(texto_norm)
     if anticipo is None:
@@ -152,6 +171,14 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
     parametros.umbrales = umbrales_del_texto(texto_norm, "pliego")
     if matriz2 is not None and not parametros.umbrales.completos:
         with abrir_pdf(matriz2) as pdf:
-            texto_matriz = normalizar("\n".join(page.extract_text() or "" for page in pdf.pages))
-        parametros.umbrales = umbrales_del_texto(texto_matriz, "Matriz 2")
+            texto_matriz = normalizar(_texto_con_simbolos("\n".join(page.extract_text() or "" for page in pdf.pages)))
+        # La Matriz 2 completa lo que el pliego no dijo; no borra lo ya leído.
+        de_matriz = umbrales_del_texto(texto_matriz, "Matriz 2")
+        for campo in ("liquidez_min", "endeudamiento_max", "cobertura_min", "roa_min", "roe_min"):
+            if getattr(parametros.umbrales, campo) is None and getattr(de_matriz, campo) is not None:
+                setattr(parametros.umbrales, campo, getattr(de_matriz, campo))
+        if parametros.umbrales.fuente == "pliego" and any(
+            getattr(de_matriz, c) is not None for c in ("liquidez_min", "endeudamiento_max", "cobertura_min", "roa_min", "roe_min")
+        ):
+            parametros.umbrales.fuente = "pliego y Matriz 2"
     return parametros

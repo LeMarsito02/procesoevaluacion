@@ -351,6 +351,8 @@ class DiscapacidadMujeresTests(SimpleTestCase):
         self.assertNotIn("50 %", _CUADRO_RE.search(texto).group(1))
         self.assertEqual(_mantenida_desde(texto), date(2025, 1, 2))
         self.assertEqual(_mantenida_desde("SE HA MANTENIDO A PARTIR DE: 08-10-2002"), date(2002, 10, 8))
+        # Sin esa fecha no se puede otorgar el punto (el pliego exige el último año).
+        self.assertIsNone(_mantenida_desde("FECHA DESDE QUE SE HA MANTENIDO ESA CONDICION: N/A"))
 
 
 class MemoPorPdfsTests(SimpleTestCase):

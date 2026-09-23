@@ -31,12 +31,15 @@ def _estado(r: ResultadoInforme | None) -> str:
 
 
 def _lote(estados: list[str]) -> str:
-    """Resultado del lote a partir de sus requisitos."""
-    if NO_APLICA in estados:
+    """Resultado del lote a partir de sus requisitos. Un requisito que no
+    aplica (el patrimonio, por ejemplo) no cuenta: si todos son así, el lote
+    no aplica; si no, manda el peor de los demás."""
+    cuentan = [e for e in estados if e != NO_APLICA]
+    if not cuentan:
         return NO_APLICA
-    if "NO CUMPLE" in estados:
+    if "NO CUMPLE" in cuentan:
         return "NO CUMPLE"
-    if PENDIENTE in estados:
+    if PENDIENTE in cuentan:
         return PENDIENTE
     return "CUMPLE"
 
@@ -72,7 +75,10 @@ def generar_informe(
         por = []
         for indice, _ in lotes:
             propios = [_estado(resultados.get((hoja, n))) for n in por_lote.get(indice, [])]
-            por.append(NO_APLICA if NO_APLICA in propios else _lote(comunes + propios))
+            # El lote no aplica cuando el proponente no se presentó a él, o
+            # sea cuando sus propios requisitos quedaron en "no aplica".
+            no_presentado = bool(propios) and all(e == NO_APLICA for e in propios)
+            por.append(NO_APLICA if no_presentado else _lote(comunes + propios))
         _fila(resumen, fila, [hoja, nombre, *por])
         fila += 1
     for j, ancho in enumerate([8, 50, *([16] * len(lotes))], 1):

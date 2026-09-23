@@ -247,7 +247,7 @@ def evaluar_proponente_tecnico(
         formato3, integrantes, parametros, fecha_cierre, plural,
         lambda c: longitud_del_contrato(pdfs, textos, c.numero_contrato, c.contratante, c.objeto),
         verificador_de_socios(pdfs, integrantes, fecha_cierre),
-        lambda c: area_del_contrato(pdfs, textos, c.numero_contrato, c.contratante),
+        lambda c: area_del_contrato(pdfs, textos, c.numero_contrato, c.contratante, c.objeto),
         lambda c: soporte_del_contrato(pdfs, textos, c.numero_contrato, c.contratante, c.objeto),
     )
     resultado.puntaje = aplicar_puntajes_del_pliego([

@@ -736,6 +736,65 @@ def generar_informe_financiero(evaluacion: Evaluacion) -> tuple[bytes, str]:
     return contenido, f"INFORME EVALUACION FINANCIERA {proceso.codigo}{borrador}.xlsx"
 
 
+def _resultados_para_informe(evaluacion: Evaluacion) -> dict[tuple[str, int], "ResultadoInforme"]:
+    from motor.tecnica.informe import ResultadoInforme
+
+    revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion)}
+    hojas = {p.id: p.hoja for p in evaluacion.proceso.proponentes.all()}
+    resultados = {}
+    for r in Resultado.objects.filter(evaluacion=evaluacion):
+        revision = revisiones.get((r.proponente_id, r.requisito))
+        resultados[(hojas[r.proponente_id], r.requisito)] = ResultadoInforme(
+            aplicar_revision(r.datos, revision), revision is not None
+        )
+    return resultados
+
+
+def _requisitos_por_lote(evaluacion: Evaluacion) -> dict[str, list[int]]:
+    """Requisitos que habilitan, separados en los generales y los de cada
+    lote. Los factores de puntaje no habilitan: solo suman puntos."""
+    reparto: dict[str, list[int]] = {"generales": []}
+    for r in definicion_de(evaluacion).requisitos:
+        if r.grupo == "puntaje":
+            continue
+        if r.verificacion in criterios.POR_LOTE:
+            reparto.setdefault(f"lote_{r.lote or 0}", []).append(r.numero)
+        else:
+            reparto["generales"].append(r.numero)
+    return reparto
+
+
+def lotes_del_proceso(proceso) -> list[tuple[int, str]]:
+    """(índice, nombre) de los lotes del pliego; "Lote único" si no tiene."""
+    parametros = parametros_tecnicos_de(proceso) or parametros_financieros_de(proceso) or {}
+    lotes = [(i, l["nombre"]) for i, l in enumerate(parametros.get("lotes", []))]
+    return lotes or [(0, "Lote único")]
+
+
+def generar_informe_consolidado(proceso) -> tuple[bytes, str]:
+    """Las tres áreas en un solo informe: habilitación por lote, el puntaje
+    que asigna el programa y el orden de elegibilidad."""
+    from motor.consolidado import generar_informe
+
+    evaluaciones = {e.tipo: e for e in proceso.evaluaciones.all()}
+    if not evaluaciones:
+        raise ValueError("El proceso no tiene evaluaciones.")
+    resultados = {tipo: _resultados_para_informe(e) for tipo, e in evaluaciones.items()}
+    requisitos = {tipo: _requisitos_por_lote(e) for tipo, e in evaluaciones.items()}
+    aprobadas = all(e.estado == EstadoEvaluacion.APROBADA for e in evaluaciones.values())
+    contenido = generar_informe(
+        proceso.codigo,
+        proceso.objeto,
+        lotes_del_proceso(proceso),
+        [(p.hoja, p.nombre_proponente) for p in proceso.proponentes.order_by("numero_orden")],
+        resultados,
+        requisitos,
+        borrador=not aprobadas,
+    )
+    borrador = "" if aprobadas else " (BORRADOR)"
+    return contenido, f"INFORME CONSOLIDADO {proceso.codigo}{borrador}.xlsx"
+
+
 def eliminar_proceso(proceso) -> dict[str, int]:
     """Borra el proceso con todo lo suyo: evaluaciones, proponentes,
     resultados, revisiones, personas, certificados aportados y expedientes,
