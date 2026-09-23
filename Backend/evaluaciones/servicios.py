@@ -487,6 +487,9 @@ def _fundir_con_la_ia(parametros, analisis, *, tecnicos: bool) -> None:
     aplicar = fusion.aplicar_a_tecnicos if tecnicos else fusion.aplicar_a_financieros
     resultado = aplicar(parametros, ia, confirmados)
     parametros.sin_confirmar = [p.explicacion() for p in resultado.sin_confirmar]
+    # Lo que el pliego exige y el motor no sabe verificar: se nombra y manda
+    # el lote a revisión, nunca se da por cumplido.
+    parametros.requisitos_sin_verificar = fusion.sin_verificar(ia)
 
 
 def parametros_tecnicos_de(proceso) -> dict | None:

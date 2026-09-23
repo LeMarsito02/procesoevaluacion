@@ -180,3 +180,83 @@ class SinConfirmarNoApruebaTests(SimpleTestCase):
         self.assertNotEqual(antes.cumple, despues.cumple)
         self.assertFalse(despues.cumple)
         self.assertTrue(any("falta confirmar" in m for m in despues.motivos))
+
+
+class RequisitosQueElMotorNoVerificaTests(SimpleTestCase):
+    """La garantía que hace al programa compatible con cualquier pliego: no
+    necesita saber verificarlo todo, necesita no dar por cumplido lo que no
+    miró. Un requisito que el pliego exige y el motor no conoce se nombra y
+    manda el lote a revisión."""
+
+    def test_el_catalogo_reconoce_lo_que_el_motor_sabe_hacer(self):
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertEqual(verificacion_de("Un contrato debe contemplar un área intervenida superior al 50% de los metros cuadrados"),
+                         "tecnica.area")
+        self.assertEqual(verificacion_de("El índice de liquidez debe ser mayor o igual a 1,2"), "financiera.indicadores")
+        self.assertEqual(verificacion_de("La capacidad residual debe ser superior a la del proceso"),
+                         "financiera.capacidad_residual")
+        self.assertEqual(verificacion_de("Los contratos deben estar clasificados en los códigos UNSPSC"), "tecnica.unspsc")
+
+    def test_lo_que_el_motor_no_sabe_verificar_queda_señalado(self):
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertIsNone(verificacion_de("El proponente debe acreditar una póliza de responsabilidad civil extracontractual"))
+        self.assertIsNone(verificacion_de("El proponente debe presentar un plan de manejo de tránsito aprobado"))
+
+    def test_los_tramites_de_la_entidad_no_son_requisitos_del_proponente(self):
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        # Cadena vacía: ni se verifica ni cuenta como requisito sin verificar.
+        self.assertEqual(verificacion_de("La Entidad verificará la información en el SECOP"), "")
+        self.assertEqual(verificacion_de("Serán causales de rechazo de la oferta las siguientes"), "")
+
+    def test_la_cobertura_separa_lo_uno_de_lo_otro(self):
+        from motor.pliego.catalogo_tecnico import cobertura
+
+        cubiertos, faltantes = cobertura([
+            ("Acreditar un índice de liquidez mayor o igual a 1,2", "liquidez mayor o igual a 1,2"),
+            ("Aportar una póliza de responsabilidad civil extracontractual", "póliza de responsabilidad civil"),
+            ("La Entidad consultará el RUP en línea", "La Entidad consultará"),
+        ])
+        self.assertEqual(list(cubiertos), ["financiera.indicadores"])
+        self.assertEqual([r for r, _ in faltantes], ["Aportar una póliza de responsabilidad civil extracontractual"])
+
+    def test_un_requisito_sin_verificar_manda_el_lote_a_revision(self):
+        from datetime import date
+
+        from evaluaciones.tests_tecnica import _fila, _parametros, _rup, _exp, Formato3
+        from motor.tecnica.experiencia import IntegranteTecnico, evaluar_experiencia
+
+        parametros = _parametros()
+        integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0,
+                                       _rup("VIAS ALFA S.A.S.", _exp("12", 3000), _exp("7", 3000)))
+        formato3 = Formato3("f3", [_fila(1, "12", "ALFA"), _fila(2, "7", "GAMMA")])
+        antes, _ = evaluar_experiencia(formato3, [integrante], parametros, date(2026, 8, 3), False)
+        self.assertTrue(antes.cumple)
+
+        parametros.requisitos_sin_verificar = ["Aportar una póliza de responsabilidad civil — pliego: «…»"]
+        despues, _ = evaluar_experiencia(formato3, [integrante], parametros, date(2026, 8, 3), False)
+        self.assertFalse(despues.cumple)
+        self.assertTrue(any("no verifica" in m for m in despues.motivos))
+
+    def test_el_area_exigida_por_el_pliego_no_se_da_por_cumplida(self):
+        """Caso real de ICCU-LP-027: el pliego pide un contrato con área
+        intervenida ≥ 50 % de 1.144 m². Si no se encuentra en los soportes,
+        el lote no se aprueba."""
+        from datetime import date
+
+        from evaluaciones.tests_tecnica import _fila, _parametros, _rup, _exp, Formato3
+        from motor.tecnica.experiencia import IntegranteTecnico, evaluar_experiencia
+
+        parametros = _parametros()
+        parametros.lotes[0].area_minima_m2 = 572.0
+        parametros.lotes[0].area_total_m2 = 1144.0
+        parametros.lotes[0].fraccion_area = 0.5
+        integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0,
+                                       _rup("VIAS ALFA S.A.S.", _exp("12", 3000), _exp("7", 3000)))
+        resultado, _ = evaluar_experiencia(Formato3("f3", [_fila(1, "12", "ALFA"), _fila(2, "7", "GAMMA")]),
+                                           [integrante], parametros, date(2026, 8, 3), False)
+        self.assertFalse(resultado.cumple)
+        self.assertIsNone(resultado.area)
+        self.assertTrue(any("572" in m and "m²" in m for m in resultado.motivos))

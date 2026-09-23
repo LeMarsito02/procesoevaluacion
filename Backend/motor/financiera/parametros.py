@@ -83,6 +83,9 @@ class ParametrosFinancieros:
     # aprueba solo) hasta que una persona los confirme: ver
     # motor/pliego/fusion.py.
     sin_confirmar: list[str] = field(default_factory=list)
+    # Requisitos que el pliego exige y el motor no sabe verificar: mientras
+    # haya alguno, el lote va a revisión (motor/pliego/catalogo_tecnico.py).
+    requisitos_sin_verificar: list[str] = field(default_factory=list)
 
 
 # El título de la sección cambia entre documentos tipo: "ANTICIPO Y/O PAGO

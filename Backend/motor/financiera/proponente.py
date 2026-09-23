@@ -49,6 +49,11 @@ def evaluar_proponente_financiero(
         ["del pliego se leyó con IA y falta confirmar: " + "; ".join(parametros.sin_confirmar[:4])]
         if parametros.sin_confirmar else []
     )
+    if parametros.requisitos_sin_verificar:
+        sin_confirmar.append(
+            f"el pliego exige {len(parametros.requisitos_sin_verificar)} requisito(s) financiero(s) que el programa "
+            "no verifica; revísalos: " + "; ".join(parametros.requisitos_sin_verificar[:3])
+        )
     resultado.integrantes, resultado.avisos = integrantes, [*avisos, *parametros.avisos, *sin_confirmar]
     numeros = [m.group(0) for l in parametros.lotes if (m := re.search(r"\d+", l.nombre))]
     elegidos = lotes_de_la_oferta(pdfs, numeros) if len(parametros.lotes) > 1 else None

@@ -124,6 +124,22 @@ def _del_lote(mapa: dict[str, Leido], lote: str, total_lotes: int) -> Leido | No
     return None
 
 
+def sin_verificar(ia: ParametrosIA | None) -> list[str]:
+    """Lo que el pliego le exige al proponente y el motor no sabe comprobar.
+    Mientras haya algo aquí, ningún lote se aprueba solo: se evalúa lo que se
+    puede y esto queda escrito para que lo mire una persona.
+
+    Es lo que hace al programa compatible con cualquier pliego: no necesita
+    conocer de antemano todos los requisitos posibles, necesita no dar por
+    cumplido lo que no miró."""
+    from motor.pliego.catalogo_tecnico import cobertura
+
+    if ia is None or not ia.requisitos:
+        return []
+    _, faltantes = cobertura([(str(r.valor), r.cita) for r in ia.requisitos])
+    return [f"{requisito} — pliego: «{cita[:140]}»" for requisito, cita in faltantes]
+
+
 def aplicar_a_tecnicos(parametros, ia: ParametrosIA | None, confirmados: dict | None = None) -> Fusion:
     """Completa los parámetros técnicos con lo que leyó la IA y deja dicho de
     dónde salió cada cosa. No cambia nada que las reglas ya hayan leído."""

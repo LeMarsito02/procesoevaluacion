@@ -32,6 +32,12 @@ class LoteTecnico:
     longitud_minima_km: float | None = None
     longitud_total_km: float | None = None
     fraccion_longitud: float | None = None
+    # En edificaciones el pliego exige área en vez de longitud: "un área
+    # intervenida o construida igual o superior al 50 % del total de metros
+    # cuadrados del proceso, el cual corresponde a 1.144 m2".
+    area_minima_m2: float | None = None
+    area_total_m2: float | None = None
+    fraccion_area: float | None = None
     # Lo que la experiencia específica exige del objeto por encima de la
     # general ("…DE EDIFICACIONES, DECLARADAS COMO BIENES DE INTERÉS
     # CULTURAL"): no se puede dar por cumplido sin ver los documentos.
@@ -48,6 +54,9 @@ class ParametrosTecnicos:
     # reglas no coinciden. Mientras una persona no los confirme, ningún lote
     # se aprueba solo: ver motor/pliego/fusion.py.
     sin_confirmar: list[str] = field(default_factory=list)
+    # Requisitos que el pliego exige y el motor no sabe verificar: mientras
+    # haya alguno, el lote va a revisión (motor/pliego/catalogo_tecnico.py).
+    requisitos_sin_verificar: list[str] = field(default_factory=list)
     # Códigos UNSPSC a nivel de clase ("721410").
     clases_unspsc: set[str] = field(default_factory=set)
     tabla_valor: list[tuple[int, int, float]] = field(default_factory=lambda: list(TABLA_VALOR_DOCUMENTO_TIPO))
@@ -252,6 +261,34 @@ def lotes_del_pliego(texto_norm: str, lotes_de_la_tabla: list[str]) -> list[tupl
     return [(f"LOTE {n}", v) for n, v in zip(lotes_de_la_tabla, valores)]
 
 
+# "ÁREA PARA CONSTRUIR/INTERVENIR: 1.144 M2", "el cual corresponde a 1.144 M2".
+_AREA_TOTAL_RE = re.compile(
+    r"AREA\s+(?:ESTIMADA\s+)?(?:PARA\s+)?(?:CONSTRUIR|INTERVENIR|DE\s+INTERVENCION|A\s+INTERVENIR)[^\d]{0,60}?([\d.,]+)\s*M\s*2"
+    r"|CORRESPONDE\s+A\s+([\d.,]+)\s*M\s*2"
+)
+# "un área intervenida o construida igual o superior al (50%) del total de
+# metros cuadrados".
+_FRACCION_AREA_RE = re.compile(
+    r"AREA\s+(?:INTERVENIDA|CONSTRUIDA|DISENADA)[^.]{0,80}?(?:IGUAL\s+O\s+SUPERIOR|POR\s+LO\s+MENOS|MINIMO)\s+(?:AL?\s*)?\(?\s*(\d{1,3})\s*%"
+)
+
+
+def _area(especifica_norm: str, texto_norm: str) -> tuple[float | None, float | None, float | None]:
+    """(mínima, total, fracción) de los metros cuadrados que debe acreditar un
+    contrato. El total sale de la sección de experiencia o del pliego."""
+    fraccion = None
+    if m := _FRACCION_AREA_RE.search(especifica_norm) or _FRACCION_AREA_RE.search(texto_norm):
+        fraccion = int(m.group(1)) / 100
+    total = None
+    for texto in (especifica_norm, texto_norm):
+        if m := _AREA_TOTAL_RE.search(texto):
+            total = numero(m.group(1) or m.group(2))
+            if total is not None:
+                break
+    minima = total * fraccion if total is not None and fraccion is not None else None
+    return minima, total, fraccion
+
+
 def _longitud(especifica_norm: str) -> tuple[float | None, float | None, float | None]:
     total = fraccion = None
     if m := _LONGITUD_TOTAL_RE.search(especifica_norm):
@@ -344,6 +381,7 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
             _FRACCION_VALOR_RE.search(texto_norm) if len(lotes) == 1 else None
         )
         minima, total, fraccion = _longitud(esp)
+        area_minima, area_total, area_fraccion = _area(esp, texto_norm)
         parametros.lotes.append(LoteTecnico(
             nombre=nombre,
             presupuesto=presupuesto,
@@ -353,6 +391,9 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
             longitud_minima_km=minima,
             longitud_total_km=total,
             fraccion_longitud=fraccion,
+            area_minima_m2=area_minima,
+            area_total_m2=area_total,
+            fraccion_area=area_fraccion,
             condicion_objeto=_condicion_objeto(general, especifica),
         ))
     return parametros

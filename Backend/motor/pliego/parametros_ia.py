@@ -30,6 +30,7 @@ import requests
 from pydantic import BaseModel, Field
 
 from motor.pliego.lectura import Seccion
+from motor.tecnica.experiencia import _ACTIVIDADES_OBRA
 from motor.pliego.lector_ia import URL, _cita_en, _norm, _palabras
 
 MODELO = os.environ.get("PLIEGO_IA_MODELO", "qwen3:4b")
@@ -38,7 +39,7 @@ TROZO = int(os.environ.get("PLIEGO_IA_TROZO", "3500"))
 TIEMPO_MAXIMO = float(os.environ.get("PLIEGO_IA_TIMEOUT", "600"))
 HABILITADO = os.environ.get("PLIEGO_PARAMETROS_IA", "1") == "1"
 # Cambia cuando cambia la forma de leer: las lecturas viejas se repiten.
-VERSION = 1
+VERSION = 2
 
 
 class Leido(BaseModel):
@@ -74,6 +75,10 @@ class ParametrosIA(BaseModel):
     capital_trabajo_fraccion: Leido | None = None
     # Puntaje: clave del factor -> puntos (0 cuando el pliego dice que no aplica).
     puntajes: dict[str, Leido] = Field(default_factory=dict)
+    # Todo lo que el pliego le exige al proponente en lo técnico y lo
+    # financiero, con su cita. Se cruza con el catálogo del motor para saber
+    # qué de eso se puede verificar solo y qué tiene que mirar una persona.
+    requisitos: list[Leido] = Field(default_factory=list)
     # Secciones que se leyeron y las que el modelo no pudo responder.
     leidas: int = 0
     fallidas: int = 0
@@ -121,6 +126,10 @@ PREGUNTAS: dict[str, str] = {
  "porcentaje_capital_de_trabajo": número 0-100 del presupuesto menos el anticipo que se exige como capital de trabajo,
  "cita_capital": "frase literal"}
 Los porcentajes como número entre 0 y 100 ("70%" -> 70) y las razones como vienen ("1,2" -> 1.2).""",
+    "requisitos": """Eres evaluador de procesos de obra pública en Colombia. Lee este fragmento del pliego y lista TODO lo que el PROPONENTE debe cumplir o acreditar según él.
+""" + _COMUN + """
+{"requisitos": [{"requisito": "qué se le exige al proponente, en una frase", "cita": "frase literal del fragmento"}]}
+No incluyas: trámites de la entidad, reglas de desempate, definiciones, plazos del cronograma ni causales de rechazo.""",
     "puntaje": """Eres evaluador de procesos de obra pública en Colombia. Lee este fragmento del pliego y extrae los PUNTOS que da cada factor de calificación.
 """ + _COMUN + """
 {"factores": [{
@@ -140,6 +149,7 @@ _DONDE_PREGUNTAR: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("anticipo", ("general", "juridica", "garantias"), r"ANTICIPO|FORMA\s+DE\s+PAGO|PAGO\s+ANTICIPADO"),
     ("plazo", ("general",), r"OBJETO|PLAZO|PRESUPUESTO"),
     ("financiera", ("financiera",), r"."),
+    ("requisitos", ("tecnica", "financiera"), r"."),
     ("puntaje", ("puntaje",), r"."),
 )
 
@@ -209,9 +219,6 @@ def _preguntar(instruccion: str, texto: str, modelo: str = MODELO) -> dict:
 # Lo que no pasa las cuatro, se descarta: es preferible no leer un parámetro
 # (va a revisión) a leerlo mal (aprobaría o rechazaría por un dato falso).
 
-# Las actividades con que un pliego de obra describe la experiencia general.
-_ACTIVIDADES_OBRA = (r"CONSTRUC|MANTENI|MEJORA|REHABILIT|ADECU|AMPLI|REMODEL|PAVIMENT|RESTAUR|CONSERV"
-                     r"|INSTAL|REPAR|RECONSTRUC|INTERVEN|REFORZA|REPOTENCI|OPTIMIZ|TERMINACION")
 # Un umbral siempre viene comparado: "liquidez mayor o igual a 1,2", "≥ 0,70".
 _COMPARADOR_RE = re.compile(r">=|<=|>|<|≥|≤|MAYOR|MENOR|IGUAL|MINIM|MAXIM|SUPERIOR|INFERIOR|AL\s+MENOS|POR\s+LO\s+MENOS")
 _INDICE_RE = re.compile(r"(?:\.\s*){4,}|\b\d{1,3}(?:\s+\d(?:\.\d+){1,3}\s+\d{1,3}){2,}")
@@ -232,10 +239,11 @@ _TEMA: dict[str, str] = {
     "cobertura": r"COBERTURA",
     "roa": r"RENTABILIDAD\s+(?:DEL|SOBRE\s+EL)?\s*ACTIVO",
     "roe": r"RENTABILIDAD\s+(?:DEL|SOBRE\s+EL)?\s*PATRIMONIO",
-    "fraccion": r"PRESUPUESTO\s+OFICIAL|VALOR\s+DEL\s+PRESUPUESTO|%|POR\s+CIENTO",
+    "fraccion": r"PRESUPUESTO\s+OFICIAL|VALOR\s+DE(?:L)?\s+PRESUPUESTO|VALOR\s+DEL\s+CONTRATO|\bPOE\b",
     "longitud": r"LONGITUD|KILOMETRO|\bKM\b",
     "maximo": r"MAXIMO|CONTRATOS",
     "unspsc": r"CLASIFICAD|UNSPSC|CODIGO",
+    "requisito": r"\w",
     "indicador": r"LIQUIDEZ|ENDEUDAMIENTO|COBERTURA|RENTABILIDAD|INDICADOR|CAPITAL\s+DE\s+TRABAJO|PATRIMONIO|ACTIVO",
 }
 
@@ -408,6 +416,19 @@ def _aplicar(datos: dict, trozo: TrozoParametros, p: "ParametrosIA") -> None:
         if c := cita("cita_capital", "fraccion"):
             _poner(p, "capital_trabajo_fraccion",
                    _fraccion(datos.get("porcentaje_capital_de_trabajo"), c, "fraccion"), c, trozo.seccion)
+    elif trozo.pregunta == "requisitos":
+        for fila in datos.get("requisitos") or []:
+            if not isinstance(fila, dict):
+                continue
+            texto = _texto(fila.get("requisito"))
+            c = _cita_util(fila.get("cita"), trozo.texto, "requisito")
+            if not texto or len(texto) < 12 or c is None:
+                continue
+            # Sin repetir: el mismo requisito aparece en varios fragmentos.
+            clave = frozenset(_palabras(texto))
+            if any(len(clave & frozenset(_palabras(str(r.valor)))) >= 0.75 * len(clave) for r in p.requisitos):
+                continue
+            p.requisitos.append(Leido(valor=texto[:300], cita=c[:300], seccion=trozo.seccion[:160]))
     elif trozo.pregunta == "puntaje":
         for fila in datos.get("factores") or []:
             if not isinstance(fila, dict):

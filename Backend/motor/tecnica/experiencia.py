@@ -93,12 +93,20 @@ class ResultadoLote:
     un_contrato_70: bool | None = None
     longitud: bool | None = None
     longitud_minima_km: float | None = None
+    area: bool | None = None
+    area_minima_m2: float | None = None
+    area: bool | None = None
+    area_minima_m2: float | None = None
     condiciones_plural: bool | None = None
     aporte_por_integrante: dict[str, float] = field(default_factory=dict)
     motivos: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- objeto
+
+# Las actividades con que un pliego de obra describe la experiencia general.
+_ACTIVIDADES_OBRA = (r"CONSTRUC|MANTENI|MEJORA|REHABILIT|ADECU|AMPLI|REMODEL|PAVIMENT|RESTAUR|CONSERV"
+                     r"|INSTAL|REPAR|RECONSTRUC|INTERVEN|REFORZA|REPOTENCI|OPTIMIZ|TERMINACION|DOTACION")
 
 # Cada familia de obra trae dos listas: cómo se nombra en la experiencia
 # general del pliego y cómo puede aparecer en el objeto de un contrato. Los
@@ -129,10 +137,29 @@ _CONECTOR_RE = re.compile(r"\s*(?:Y\s*/\s*O|/|,|\sO\s|\sU\s)\s*")
 def _actividades_y_materia(lote: LoteTecnico) -> tuple[str, str]:
     """Parte la experiencia general en lo que se hace y sobre qué se hace:
     "… O CONSERVACIÓN | EN PAVIMENTO … DE CARRETERAS", "… REPOTENCIACIÓN
-    ESTRUCTURAL | DE EDIFICACIONES"."""
+    ESTRUCTURAL | DE EDIFICACIONES".
+
+    El corte no siempre es el primer "de": algunos pliegos empiezan con un
+    preámbulo ("PROYECTOS QUE CORRESPONDAN Y/O CONTEMPLEN ACTIVIDADES DE:
+    CONSTRUCCIÓN Y/O … DE EDIFICACIONES"), y cortar ahí dejaría el preámbulo
+    como actividades y las actividades como materia. Se prueba cada corte y
+    se toma el que deje actividades de obra a la izquierda."""
     general = normalizar(lote.experiencia_general)
-    partes = re.split(r"\s+(?:EN|DE)\s+", general, maxsplit=1)
-    return partes[0], (partes[1] if len(partes) > 1 else "")
+    cortes = list(re.finditer(r"\s+(?:EN|DE)\s+", general))
+    if not cortes:
+        return general, ""
+    for corte in cortes:
+        izquierda, derecha = general[: corte.start()], general[corte.end():]
+        if re.search(_ACTIVIDADES_OBRA, izquierda) and _familia_de(derecha) is not None:
+            return izquierda, derecha
+    return general[: cortes[0].start()], general[cortes[0].end():]
+
+
+def _familia_de(texto: str) -> str | None:
+    for familia, (en_el_pliego, _) in _FAMILIAS.items():
+        if re.search(en_el_pliego, texto):
+            return familia
+    return None
 
 
 def actividades_del_lote(lote: LoteTecnico) -> list[str]:
@@ -142,12 +169,16 @@ def actividades_del_lote(lote: LoteTecnico) -> list[str]:
     antes, _ = _actividades_y_materia(lote)
     raices = []
     for actividad in _CONECTOR_RE.split(antes):
-        palabra = actividad.strip(" .,").split()
-        if not palabra:
-            continue
-        raiz = re.sub(r"(CION|MIENTO|ACION|CIONES)$", "", palabra[0])
-        if len(raiz) >= 5 and raiz not in raices:
-            raices.append(raiz)
+        # La actividad no siempre es la primera palabra del trozo: el pliego
+        # puede escribir "CONTEMPLEN ACTIVIDADES DE: CONSTRUCCIÓN". Se busca
+        # la primera palabra que sea una actividad de obra; así tampoco
+        # entran las del preámbulo ("PROYECTOS", "CONTEMPLEN").
+        for palabra in actividad.strip(" .,:").split():
+            raiz = re.sub(r"(CION|MIENTO|ACION|CIONES)$", "", palabra.strip(" .,:"))
+            if len(raiz) >= 5 and re.match(_ACTIVIDADES_OBRA, raiz):
+                if raiz not in raices:
+                    raices.append(raiz)
+                break
     return raices
 
 
@@ -156,11 +187,7 @@ def familia_del_lote(lote: LoteTecnico) -> str | None:
     None cuando el pliego no lo dice en esos términos (o no se leyó): entonces
     ningún contrato se descarta por el objeto, se mandan a revisión."""
     _, materia = _actividades_y_materia(lote)
-    texto = materia or normalizar(lote.experiencia_general)
-    for familia, (en_el_pliego, _) in _FAMILIAS.items():
-        if re.search(en_el_pliego, texto):
-            return familia
-    return None
+    return _familia_de(materia or normalizar(lote.experiencia_general))
 
 
 def objeto_valido(objeto: str, lote: LoteTecnico) -> bool | None:
@@ -379,6 +406,12 @@ def evaluar_lote(
             )
     if lote.longitud_minima_km is not None:
         resultado.longitud = _longitud_del_lote(lote, validos, resultado, buscar_longitud, buscar_area)
+    resultado.area_minima_m2 = lote.area_minima_m2
+    if lote.area_minima_m2 is not None:
+        resultado.area = _area_del_lote(lote, validos, resultado, buscar_area)
+    if lote.area_minima_m2 is not None:
+        resultado.area_minima_m2 = lote.area_minima_m2
+        resultado.area = _area_del_lote(lote, validos, resultado, buscar_area)
     if plural:
         resultado.condiciones_plural = _condiciones_plural(resultado, validos, integrantes, parametros)
     # Cada contrato que cuenta necesita su acta o certificación: el evaluador
@@ -413,6 +446,14 @@ def evaluar_lote(
         resultado.motivos.append(
             "no se leyeron en el pliego los códigos UNSPSC exigidos: no se verificó la clasificación de los contratos"
         )
+    if parametros.requisitos_sin_verificar:
+        # El pliego exige cosas que el motor no sabe comprobar: se dicen, y el
+        # lote no se aprueba solo (nunca se da por cumplido lo que no se miró).
+        resultado.motivos.append(
+            f"el pliego exige {len(parametros.requisitos_sin_verificar)} requisito(s) que el programa no verifica; "
+            "revísalos: " + "; ".join(parametros.requisitos_sin_verificar[:3])
+            + (" …" if len(parametros.requisitos_sin_verificar) > 3 else "")
+        )
     if parametros.sin_confirmar:
         # Se evalúa con lo que la IA leyó del pliego, pero no se aprueba solo
         # hasta que alguien confirme esos parámetros en la plataforma.
@@ -421,11 +462,14 @@ def evaluar_lote(
             + (f" (y {len(parametros.sin_confirmar) - 4} más)" if len(parametros.sin_confirmar) > 4 else "")
         )
     dudas = [
+        bool(parametros.requisitos_sin_verificar),
         bool(parametros.sin_confirmar),
         bool(lote.condicion_objeto),
         not parametros.clases_unspsc,
         any(objeto[id(c)] is None or (c.de_un_socio and not socio_ok.get(id(c))) for c in validos),
         lote.longitud_minima_km is not None and resultado.longitud is not True,
+        lote.area_minima_m2 is not None and resultado.area is not True,
+        lote.area_minima_m2 is not None and resultado.area is not True,
         plural and resultado.condiciones_plural is None,
         bool(sin_soporte),
     ]
@@ -471,6 +515,65 @@ def _longitud_del_lote(
         f"verifica en las certificaciones que un contrato acredite al menos {minimo:.3f} km intervenidos "
         f"({(lote.fraccion_longitud or 0) * 100:.0f} % de {lote.longitud_total_km} km, afectado por la participación)"
         + (f"; se leyó {'; '.join(leidas)}" if leidas else "; no se encontró la longitud en los soportes")
+    )
+    return None
+
+
+def _area_del_lote(
+    lote: LoteTecnico, validos: list[ContratoEvaluado], resultado: ResultadoLote, buscar: BuscarArea | None,
+) -> bool | None:
+    """True si un contrato válido acredita los metros cuadrados mínimos que
+    pide el pliego en los procesos de edificaciones ("un área intervenida o
+    construida igual o superior al 50 % del total de metros cuadrados del
+    proceso"). Si no se encuentra el área en los soportes, None: a revisión,
+    nunca se da por cumplido."""
+    minimo = lote.area_minima_m2
+    for c in validos:
+        if c.area_m2 is None and buscar is not None:
+            c.area_m2, c.soporte_area, cita = buscar(c)
+            if c.area_m2 is not None and cita:
+                resultado.motivos.append(
+                    f"contrato {c.orden}: área de {c.area_m2:,.2f} m² leída con IA local en {c.soporte_area} "
+                    f"(cita verificada en el documento: «{cita}»)"
+                )
+        if c.area_m2 is not None and c.area_m2 * min(c.participacion or 0, 1.0) >= minimo - 1e-9:
+            return True
+    leidas = [f"contrato {c.orden}: {c.area_m2:,.2f} m² × {min(c.participacion or 0, 1.0) * 100:.0f} %"
+              for c in validos if c.area_m2 is not None]
+    resultado.motivos.append(
+        f"verifica en las certificaciones que un contrato acredite al menos {minimo:,.2f} m² intervenidos o "
+        f"construidos ({(lote.fraccion_area or 0) * 100:.0f} % de {lote.area_total_m2:,.2f} m², afectado por la "
+        "participación)" + (f"; se leyó {'; '.join(leidas)}" if leidas else "; no se encontró el área en los soportes")
+    )
+    return None
+
+
+def _area_del_lote(
+    lote: LoteTecnico, validos: list[ContratoEvaluado], resultado: ResultadoLote, buscar_area: BuscarArea | None,
+) -> bool | None:
+    """True si un contrato válido acredita el área mínima intervenida o
+    construida (en edificaciones el pliego la exige en vez de la longitud).
+    Si no se encuentra en los soportes, None: el lote va a revisión, nunca se
+    aprueba dando el requisito por cumplido."""
+    minimo = lote.area_minima_m2
+    citas: dict[int, str] = {}
+    for c in validos:
+        if c.area_m2 is None and buscar_area is not None:
+            c.area_m2, c.soporte_area, cita = buscar_area(c)
+            if cita:
+                citas[id(c)] = cita
+        if c.area_m2 is not None and c.area_m2 * min(c.participacion or 0, 1.0) >= minimo - 1e-9:
+            resultado.motivos.append(
+                f"contrato {c.orden}: área de {c.area_m2:,.2f} m² acreditada en {c.soporte_area}"
+                + (f" (leída con IA local, cita verificada: «{citas[id(c)]}»)" if citas.get(id(c)) else "")
+            )
+            return True
+    leidas = [f"contrato {c.orden}: {c.area_m2:,.2f} m² × {min(c.participacion or 0, 1.0) * 100:.0f} %"
+              for c in validos if c.area_m2 is not None]
+    resultado.motivos.append(
+        f"verifica en las certificaciones que un contrato acredite al menos {minimo:,.2f} m² intervenidos o "
+        f"construidos ({(lote.fraccion_area or 0) * 100:.0f} % de {lote.area_total_m2:,.2f} m², afectado por la "
+        "participación)" + (f"; se leyó {'; '.join(leidas)}" if leidas else "; no se encontró el área en los soportes")
     )
     return None
 
