@@ -179,7 +179,7 @@ def evaluar_requisito_personalizado(
         return ResultadoRequisito(**base, error=f"No se pudo descargar el archivo de Drive: {exc}")
     if not pdfs:
         return ResultadoRequisito(**base, error="El archivo del proponente no contiene PDFs legibles.")
-    tipo = obtener_tipo_proponente(pdfs)
+    tipo = obtener_tipo_proponente(pdfs, proponente.nombre_proponente)
     necesita_personas = any(b.tipo == "menciona_representante" for b in requisito.config.bloques)
     personas = [n for n, _ in obtener_personas_a_verificar(pdfs, tipo, proceso.codigo_proceso)] if necesita_personas else []
     cumple, motivo, archivo = evaluar_config(pdfs, requisito.config, proceso.fecha_cierre, tipo, personas, proponente.nombre_proponente)

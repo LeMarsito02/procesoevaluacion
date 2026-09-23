@@ -66,7 +66,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 62
+VERSION_LOGICA = 63
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -385,8 +385,39 @@ TIPO_PROPONENTE_FALLBACK_RE = re.compile(r"REPRESENTANTE LEGAL DEL?(?:\s+LA)?\s+
 _TIPO_PROPONENTE_FALLBACK_MAP = {"CONSORCIO": "consorcio", "UNION TEMPORAL": "union_temporal"}
 
 
+# "CONSORCIO …", "UNIÓN TEMPORAL …", "UT …": el nombre con el que se
+# presenta la oferta dice que es plural aunque no se lea el Formato 1.
+# Una persona jurídica siempre lleva su forma societaria en el nombre; lo que
+# queda sin ella es una persona natural (lo usual: una empresa y un ingeniero).
+MARCA_PERSONA_JURIDICA_RE = re.compile(
+    r"S\.\s?A\.\s?S|\bSAS\b|\bS\.\s?A\b|\bLTDA\b|\bLIMITADA\b|\bE\.\s?U\b|\bS\.?\s?EN\s?C\b"
+    r"|\bSUCURSAL\b|\bSOCIEDAD\b|\bCORPORACION\b|\bFUNDACION\b|\bCOOPERATIVA\b|\bS\.\s?L\b|\bINC\b|\bBIC\b"
+)
+
+# (las variantes mal escritas salen de ofertas reales, igual que en motor/tecnica)
+NOMBRE_UT_RE = re.compile(r"^\s*(?:UNION\s+TEMPORAL|U\.?\s?T\.?\b)")
+NOMBRE_CONSORCIO_RE = re.compile(r"^\s*(?:CONSORCIO|CONSROCIO|COSORCIO|CONSORCIP)\b")
+
+
+def tipo_por_el_nombre(nombre_proponente: str | None) -> str | None:
+    """El nombre con el que se presenta la oferta cuando no se pudo leer el
+    Formato 1: "CONSORCIO …", "UNIÓN TEMPORAL …", "U.T. …" dicen por sí solos
+    que el proponente es plural."""
+    if not nombre_proponente:
+        return None
+    norm = _norm(nombre_proponente)
+    if NOMBRE_UT_RE.search(norm):
+        return "union_temporal"
+    if NOMBRE_CONSORCIO_RE.search(norm):
+        return "consorcio"
+    # Una sociedad ("… S.A.S.", "… LTDA") nunca se presenta como consorcio: el
+    # nombre basta para descartar que sea plural. Un nombre sin forma
+    # societaria no dice nada y se deja en None (va a revisión).
+    return "persona_juridica" if MARCA_PERSONA_JURIDICA_RE.search(norm) else None
+
+
 @memo_por_pdfs
-def obtener_tipo_proponente(pdfs: dict[str, bytes]) -> str | None:
+def obtener_tipo_proponente(pdfs: dict[str, bytes], nombre_proponente: str | None = None) -> str | None:
     """Encuentra el Formato 1 dentro de los PDF del proponente y determina si
     es persona natural, jurídica, consorcio o unión temporal. Lo usan otros
     requisitos (4, 5, 6, 12, 14-17) que necesitan saber si el proponente es
@@ -394,7 +425,9 @@ def obtener_tipo_proponente(pdfs: dict[str, bytes]) -> str | None:
     cada uno."""
     encontrado = encontrar_formato1(pdfs)
     if encontrado is None:
-        return None
+        # Sin la carta, el nombre del proponente es lo único que queda; si
+        # tampoco dice, se devuelve None y quien pregunte manda a revisión.
+        return tipo_por_el_nombre(nombre_proponente)
     _, contenido = encontrado
     with abrir_pdf(contenido) as pdf:
         tipo_casilla = _extraer_tipo_proponente(pdf)
@@ -405,7 +438,7 @@ def obtener_tipo_proponente(pdfs: dict[str, bytes]) -> str | None:
         texto = "\n".join(partes)
     match = TIPO_PROPONENTE_FALLBACK_RE.search(_norm(texto))
     tipo_declaracion = _TIPO_PROPONENTE_FALLBACK_MAP[match.group(1)] if match else None
-    return tipo_declaracion or tipo_casilla
+    return tipo_declaracion or tipo_casilla or tipo_por_el_nombre(nombre_proponente)
 
 
 def _veces_nombre_completo(nombre: str, texto_norm: str) -> int:

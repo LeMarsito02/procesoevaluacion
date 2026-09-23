@@ -427,7 +427,7 @@ def evaluar_proponente_requisito12(proponente: Proponente, proceso: ProcesoDocum
             cacheable=False,
         )
 
-    tipo_proponente = obtener_tipo_proponente(pdfs)
+    tipo_proponente = obtener_tipo_proponente(pdfs, proponente.nombre_proponente)
     resultado = evaluar_requisito12(pdfs, tipo_proponente, proceso.codigo_proceso)
 
     return finalizar(

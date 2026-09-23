@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from motor.procesamiento.memoria_proponente import memo_por_pdfs
 from motor.evaluacion.formato1 import (
+    MARCA_PERSONA_JURIDICA_RE,
     _clave_cache,
     _extraer_nombre_apertura,
     _extraer_representante_legal,
@@ -292,6 +293,14 @@ def evaluar_requisito4(
     Unión Temporal, debe aportar el Formato 2 con los integrantes y sus
     porcentajes de participación (deben sumar 100%) y el representante legal
     designado para el consorcio/UT."""
+    if tipo_proponente is None:
+        return ResultadoEvaluacionPlural(
+            cumple=False,
+            motivo=("No se pudo determinar si el proponente es plural: no se leyó el tipo en la carta de presentación "
+                    "(Formato 1) ni el nombre lo indica. Revísalo: si es consorcio o unión temporal, verifica el Formato 2."),
+            datos=None,
+            archivo_formato2=None,
+        )
     if tipo_proponente not in ("consorcio", "union_temporal"):
         return ResultadoEvaluacionPlural(
             cumple=True,
@@ -338,14 +347,6 @@ def evaluar_requisito4(
         motivo = f"{motivo} ({nota})" if motivo else nota
 
     return ResultadoEvaluacionPlural(cumple=cumple, motivo=motivo, datos=datos, archivo_formato2=archivo_formato2)
-
-
-# Una persona jurídica siempre lleva su forma societaria en el nombre; lo que
-# queda sin ella es una persona natural (lo usual: una empresa y un ingeniero).
-MARCA_PERSONA_JURIDICA_RE = re.compile(
-    r"S\.\s?A\.\s?S|\bSAS\b|\bS\.\s?A\b|\bLTDA\b|\bLIMITADA\b|\bE\.\s?U\b|\bS\.?\s?EN\s?C\b"
-    r"|\bSUCURSAL\b|\bSOCIEDAD\b|\bCORPORACION\b|\bFUNDACION\b|\bCOOPERATIVA\b|\bS\.\s?L\b|\bINC\b|\bBIC\b"
-)
 
 
 @dataclass(frozen=True)
@@ -565,7 +566,7 @@ def evaluar_proponente_requisito4(proponente: Proponente, proceso: ProcesoDocume
             cacheable=False,
         )
 
-    tipo_proponente = obtener_tipo_proponente(pdfs)
+    tipo_proponente = obtener_tipo_proponente(pdfs, proponente.nombre_proponente)
     resultado = evaluar_requisito4(pdfs, tipo_proponente, proceso.codigo_proceso)
 
     return finalizar(

@@ -1307,6 +1307,57 @@ class IntegrantesNaturalesTests(TestCase):
             self.assertIsNone(MARCA_PERSONA_JURIDICA_RE.search(persona), persona)
 
 
+
+class TipoProponenteDesconocidoTests(TestCase):
+    """Sin Formato 1 legible, el tipo de proponente salía None y el Requisito 4
+    se daba por "N.A. — persona natural o jurídica individual": un consorcio
+    quedaba aprobado sin mirar su Formato 2 (caso real: "CONSORCIO MUSUESCA
+    2026"). Ahora el nombre decide, y si tampoco dice nada, va a revisión."""
+
+    def test_el_nombre_dice_que_es_plural(self):
+        from motor.evaluacion.formato1 import tipo_por_el_nombre
+
+        self.assertEqual(tipo_por_el_nombre("CONSORCIO MUSUESCA 2026"), "consorcio")
+        self.assertEqual(tipo_por_el_nombre("CONSROCIO VIAL DEL SUR"), "consorcio")
+        self.assertEqual(tipo_por_el_nombre("UNIÓN TEMPORAL VÍAS 2026"), "union_temporal")
+        self.assertEqual(tipo_por_el_nombre("U.T. CONSTRUIR"), "union_temporal")
+        self.assertEqual(tipo_por_el_nombre("UT ANDINA"), "union_temporal")
+
+    def test_una_sociedad_no_se_confunde_con_plural(self):
+        from motor.evaluacion.formato1 import tipo_por_el_nombre
+
+        # La forma societaria en el nombre descarta el consorcio sin inventar nada.
+        for nombre in ("CONSTRUCCIONES XYZ S.A.S.", "UTILES Y OBRAS SAS", "CODIPRO LTDA."):
+            self.assertEqual(tipo_por_el_nombre(nombre), "persona_juridica", nombre)
+
+    def test_un_nombre_que_no_dice_nada_queda_sin_tipo(self):
+        from motor.evaluacion.formato1 import tipo_por_el_nombre
+
+        for nombre in ("JJAB INGENIERIA", "JUAN CARLOS PEREZ GOMEZ", "", None):
+            self.assertIsNone(tipo_por_el_nombre(nombre), nombre)
+
+    def test_sin_formato1_el_nombre_da_el_tipo(self):
+        from motor.evaluacion.formato1 import obtener_tipo_proponente
+
+        self.assertEqual(obtener_tipo_proponente({}, "CONSORCIO MUSUESCA 2026"), "consorcio")
+        self.assertEqual(obtener_tipo_proponente({}, "CONSTRUVALORES SAS"), "persona_juridica")
+        self.assertIsNone(obtener_tipo_proponente({}, "JJAB INGENIERIA"))
+
+    def test_tipo_desconocido_va_a_revision_y_no_a_no_aplica(self):
+        from motor.evaluacion.proponente_plural import evaluar_requisito4
+
+        resultado = evaluar_requisito4({}, None)
+        self.assertFalse(resultado.cumple)
+        self.assertIn("No se pudo determinar", resultado.motivo)
+
+    def test_individual_confirmado_sigue_siendo_no_aplica(self):
+        from motor.evaluacion.proponente_plural import evaluar_requisito4
+
+        resultado = evaluar_requisito4({}, "persona_juridica")
+        self.assertTrue(resultado.cumple)
+        self.assertIn("N.A.", resultado.motivo)
+
+
 # --- El pliego de cada proceso ---
 def _pagina(numero: int, *lineas: str) -> "object":
     from motor.pliego.lectura import Pagina

@@ -476,7 +476,7 @@ def _evaluar_proponente_antecedente(
             cacheable=False,
         )
 
-    tipo_proponente = obtener_tipo_proponente(pdfs)
+    tipo_proponente = obtener_tipo_proponente(pdfs, proponente.nombre_proponente)
     personas = _con_roles(obtener_personas_a_verificar(pdfs, tipo_proponente, proceso.codigo_proceso), tipo_proponente)
     if (
         tipo_proponente in ("consorcio", "union_temporal")

@@ -858,7 +858,7 @@ def _evaluar_proponente_camara(
             cacheable=False,
         )
 
-    tipo_proponente = obtener_tipo_proponente(pdfs)
+    tipo_proponente = obtener_tipo_proponente(pdfs, proponente.nombre_proponente)
     resultado = evaluador(pdfs, proceso, tipo_proponente)
 
     return finalizar(
