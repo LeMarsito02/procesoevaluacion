@@ -686,6 +686,37 @@ def parametros_financieros(request: HttpRequest, evaluacion_id: UUID) -> dict | 
     }
 
 
+@router.get("/{evaluacion_id}/parametros-pliego", response=list[dict])
+def parametros_pliego(request: HttpRequest, evaluacion_id: UUID) -> list[dict]:
+    """Lo que el programa entendió del pliego, con la frase que lo respalda.
+    Lo que solo vio la IA queda marcado: mientras nadie lo confirme, ningún
+    lote se aprueba solo."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    return servicios.parametros_del_pliego(evaluacion.proceso, evaluacion.tipo)
+
+
+@router.put("/{evaluacion_id}/parametros-pliego", response=dict)
+def confirmar_parametros_pliego(request: HttpRequest, evaluacion_id: UUID, datos: dict) -> dict:
+    """Confirma o corrige esos parámetros. Los proponentes ya evaluados
+    vuelven a la fila para que el cambio cuente."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    if evaluacion.estado == EstadoEvaluacion.APROBADA:
+        raise HttpError(409, "La evaluación está aprobada: reábrela para cambiar los parámetros.")
+    try:
+        confirmados = servicios.confirmar_parametros_del_pliego(evaluacion.proceso, datos, usuario)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    auditar(request, "proceso.parametros_pliego_confirmados", objeto=evaluacion.proceso,
+            parametros=sorted(datos)[:20])
+    evaluados = list(evaluacion.resultados.values_list("proponente_id", flat=True).distinct())
+    if evaluados:
+        servicios.encolar(evaluacion, evaluados, usuario)
+    return {"confirmados": confirmados, "reevaluados": len(evaluados)}
+
+
 @router.put("/{evaluacion_id}/umbrales-financieros", response=dict)
 def registrar_umbrales(request: HttpRequest, evaluacion_id: UUID, datos: UmbralesFinancierosIn) -> dict:
     """Registra los umbrales de la Matriz 2 del proceso. Los proponentes ya

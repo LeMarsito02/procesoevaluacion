@@ -260,3 +260,52 @@ class RequisitosQueElMotorNoVerificaTests(SimpleTestCase):
         self.assertFalse(resultado.cumple)
         self.assertIsNone(resultado.area)
         self.assertTrue(any("572" in m and "m²" in m for m in resultado.motivos))
+
+
+class ConfirmarLoLeidoTests(SimpleTestCase):
+    """Confirmar lo que la IA leyó es lo que devuelve el automatismo: a
+    partir de ahí el parámetro vale como si lo hubieran leído las reglas."""
+
+    def _tecnicos(self):
+        from motor.tecnica.parametros import LoteTecnico, ParametrosTecnicos
+
+        return ParametrosTecnicos(smmlv=1_750_905, lotes=[LoteTecnico("ÚNICO", 1e9)])
+
+    def test_confirmar_pone_el_parametro_en_firme(self):
+        parametros = self._tecnicos()
+        ia = ParametrosIA(condicion_objeto={"ÚNICO": Leido(valor="DECLARADAS BIEN DE INTERÉS CULTURAL", cita="c")})
+
+        antes = fusion.aplicar_a_tecnicos(self._tecnicos(), ia)
+        self.assertEqual(len(antes.sin_confirmar), 1)
+
+        despues = fusion.aplicar_a_tecnicos(parametros, ia,
+                                            {"condición de objeto ÚNICO": "DECLARADAS BIEN DE INTERÉS CULTURAL"})
+        self.assertEqual(despues.sin_confirmar, [])
+        self.assertEqual(despues.procedencias["condición de objeto ÚNICO"].origen, "persona")
+
+    def test_corregir_manda_sobre_las_dos_lecturas(self):
+        parametros = self._tecnicos()
+        parametros.lotes[0].fraccion_un_contrato = 0.7
+        ia = ParametrosIA(fraccion_un_contrato={"ÚNICO": Leido(valor=0.3, cita="c")})
+        fusion.aplicar_a_tecnicos(parametros, ia, {"porcentaje de un contrato ÚNICO": 0.4})
+        self.assertEqual(parametros.lotes[0].fraccion_un_contrato, 0.4)
+
+    def test_la_ia_separa_los_lotes_que_las_reglas_no_pudieron(self):
+        """ICCU-LP-035 tiene tres lotes y el documento base no los separa:
+        evaluarlo como uno solo da resultados equivocados."""
+        parametros = self._tecnicos()
+        ia = ParametrosIA(presupuesto_lotes={
+            "LOTE 1": Leido(valor=3_542_952_462, cita="c"),
+            "LOTE 2": Leido(valor=1_200_000_000, cita="c"),
+        })
+        resultado = fusion.aplicar_a_tecnicos(parametros, ia)
+        self.assertEqual([l.nombre for l in parametros.lotes], ["LOTE 1", "LOTE 2"])
+        self.assertEqual(parametros.lotes[0].presupuesto, 3_542_952_462)
+        # Separarlos con la IA es una decisión que alguien tiene que confirmar.
+        self.assertEqual(resultado.procedencias["lotes del proceso"].origen, "ia")
+
+    def test_un_solo_lote_leido_por_la_ia_no_parte_el_proceso(self):
+        parametros = self._tecnicos()
+        ia = ParametrosIA(presupuesto_lotes={"LOTE 1": Leido(valor=3_542_952_462, cita="c")})
+        fusion.aplicar_a_tecnicos(parametros, ia)
+        self.assertEqual([l.nombre for l in parametros.lotes], ["ÚNICO"])

@@ -241,6 +241,25 @@ export const parametrosFinancieros = (id: string) =>
   pedirJson<ParametrosFinancieros | null>(`/api/evaluaciones/${id}/parametros-financieros`)
 export const registrarUmbrales = (id: string, u: Omit<UmbralesFinancieros, 'fuente'>) =>
   enviarJson<ParametrosFinancieros>(`/api/evaluaciones/${id}/umbrales-financieros`, 'PUT', u)
+/** Un parámetro que el programa leyó del pliego, con la frase que lo respalda. */
+export interface ParametroPliego {
+  campo: string
+  valor_reglas: unknown
+  valor_ia: unknown
+  /** regla · regla+ia · ia · conflicto · persona */
+  origen: string
+  en_firme: boolean
+  confirmado: unknown
+  cita: string
+  seccion: string
+}
+
+export const parametrosPliego = (id: string) =>
+  pedirJson<ParametroPliego[]>(`/api/evaluaciones/${id}/parametros-pliego`)
+export const confirmarParametrosPliego = (id: string, valores: Record<string, unknown>) =>
+  enviarJson<{ confirmados: Record<string, unknown>; reevaluados: number }>(
+    `/api/evaluaciones/${id}/parametros-pliego`, 'PUT', valores)
+
 export const listarTipos = () => pedirJson<TipoEvaluacion[]>('/api/evaluaciones/tipos')
 
 export const actualizarPlantillaEvaluacion = (id: string) =>

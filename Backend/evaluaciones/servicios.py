@@ -556,6 +556,73 @@ def parametros_financieros_de(proceso) -> dict | None:
     return parametros
 
 
+def parametros_del_pliego(proceso, tipo: str) -> list[dict]:
+    """Lo que el programa entendió del pliego, para que una persona lo revise
+    antes de dar la evaluación por buena: cada parámetro con su valor, de
+    dónde salió y la frase del pliego que lo respalda.
+
+    Mientras haya parámetros sin confirmar, ningún lote se aprueba solo (ver
+    motor/pliego/fusion.py). Confirmarlos es lo que devuelve el automatismo."""
+    from evaluaciones.pliego import parametros_leidos
+    from motor.pliego import fusion
+    from motor.tecnica.evaluador import parametros_de_dict as tecnicos_de_dict
+
+    analisis = proceso.analisis_pliego
+    ia = parametros_leidos(analisis)
+    if ia is None:
+        return []
+    confirmados = (analisis.parametros_confirmados or {}) if analisis is not None else {}
+    if tipo == "financiera":
+        from motor.financiera.evaluador import parametros_de_dict
+
+        datos = parametros_financieros_de(proceso)
+        if datos is None:
+            return []
+        resultado = fusion.aplicar_a_financieros(parametros_de_dict(datos), ia, {})
+    else:
+        datos = parametros_tecnicos_de(proceso)
+        if datos is None:
+            return []
+        resultado = fusion.aplicar_a_tecnicos(tecnicos_de_dict(datos), ia, {})
+    salida = []
+    for campo, procedencia in sorted(resultado.procedencias.items()):
+        salida.append({
+            "campo": campo,
+            "valor_reglas": procedencia.valor_regla,
+            "valor_ia": procedencia.valor_ia,
+            "origen": procedencia.origen,
+            "en_firme": procedencia.en_firme or campo in confirmados,
+            "confirmado": confirmados.get(campo),
+            "cita": procedencia.cita,
+            "seccion": procedencia.seccion,
+        })
+    return salida
+
+
+def confirmar_parametros_del_pliego(proceso, valores: dict, usuario) -> dict:
+    """Guarda lo que una persona confirmó o corrigió de los parámetros que se
+    leyeron del pliego. A partir de ahí valen como si los hubieran leído las
+    reglas, y los lotes vuelven a poder aprobarse solos."""
+    from django.utils import timezone as _tz
+
+    analisis = proceso.analisis_pliego
+    if analisis is None:
+        raise ValueError("El proceso no tiene pliego analizado.")
+    limpios = {str(k)[:120]: v for k, v in (valores or {}).items()
+               if isinstance(v, (str, int, float, list)) and str(v).strip() != ""}
+    if not limpios:
+        raise ValueError("No se recibió ningún parámetro para confirmar.")
+    confirmados = {**(analisis.parametros_confirmados or {}), **limpios}
+    analisis.parametros_confirmados = confirmados
+    analisis.confirmados_por, analisis.confirmados_en = usuario, _tz.now()
+    analisis.save(update_fields=["parametros_confirmados", "confirmados_por", "confirmados_en"])
+    # Los parámetros guardados del proceso se vuelven a calcular con lo
+    # confirmado la próxima vez que se pidan.
+    type(proceso).objects.filter(pk=proceso.pk).update(parametros_tecnicos={}, parametros_financieros={})
+    proceso.parametros_tecnicos, proceso.parametros_financieros = {}, {}
+    return confirmados
+
+
 UMBRALES_FINANCIEROS = ("liquidez_min", "endeudamiento_max", "cobertura_min", "roa_min", "roe_min")
 
 
