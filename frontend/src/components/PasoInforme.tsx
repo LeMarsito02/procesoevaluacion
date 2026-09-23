@@ -12,6 +12,9 @@ interface Props {
   generando: boolean
   error: string | null
   onGenerar: () => void
+  /** Informe con las tres áreas del proceso. */
+  onGenerarConsolidado?: () => void
+  generandoConsolidado?: boolean
   /** Reporte Word y expediente permanente. */
   extra?: React.ReactNode
   onVolver: () => void
@@ -116,6 +119,23 @@ export default function PasoInforme(p: Props) {
           )}
         </button>
       </section>
+
+      {p.onGenerarConsolidado && (
+        <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 16 }}>
+          <div className="dropzone-icon">
+            <Icono nombre="balanza" tam={22} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <strong>Consolidado del proceso</strong>
+            <div className="small muted">
+              Jurídica, técnica y financiera por lote, con el puntaje que asigna el programa y el orden de elegibilidad.
+            </div>
+          </div>
+          <button className="btn btn-secondary" type="button" onClick={p.onGenerarConsolidado} disabled={p.generandoConsolidado}>
+            {p.generandoConsolidado ? <span className="spinner oscuro" /> : <Icono nombre="descargar" />} Descargar consolidado
+          </button>
+        </section>
+      )}
 
       {p.extra}
 

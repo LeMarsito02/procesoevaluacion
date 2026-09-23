@@ -904,6 +904,23 @@ def reabrir(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
     return _resumenes(usuario, [evaluacion])[0]
 
 
+@router.get("/{evaluacion_id}/consolidado")
+def informe_consolidado(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
+    """Las tres áreas del proceso en un solo archivo, con el puntaje y el
+    orden de elegibilidad por lote."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    proceso = evaluacion.proceso
+    try:
+        contenido, nombre = servicios.generar_informe_consolidado(proceso)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    auditar(request, "informe.consolidado_descargado", objeto=evaluacion, proceso=proceso.codigo)
+    respuesta = HttpResponse(contenido, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+    return respuesta
+
+
 @router.get("/{evaluacion_id}/informe")
 def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
     usuario: Usuario = request.auth

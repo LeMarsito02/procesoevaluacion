@@ -22,6 +22,7 @@ import {
   pausarEvaluacion,
   asignarEvaluacion,
   cargaEquipo,
+  descargarConsolidado,
   descargarInforme,
   guardarDocumentoBase,
   guardarRevision,
@@ -124,6 +125,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const [abriendoDocumento, setAbriendoDocumento] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
   const [generando, setGenerando] = useState(false)
+  const [generandoConsolidado, setGenerandoConsolidado] = useState(false)
   const [errorInforme, setErrorInforme] = useState<string | null>(null)
   const [guardandoDatos, setGuardandoDatos] = useState(false)
   const [ocupadoFila, setOcupadoFila] = useState(false)
@@ -308,6 +310,20 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     }
   }
 
+  async function generarConsolidado() {
+    setGenerandoConsolidado(true)
+    setErrorInforme(null)
+    try {
+      const { blob, nombre } = await descargarConsolidado(id)
+      descargar(blob, nombre ?? `INFORME CONSOLIDADO ${codigo}.xlsx`)
+      setAviso('Consolidado descargado')
+    } catch (err) {
+      setErrorInforme(mensajeDe(err, 'No se pudo generar el consolidado.'))
+    } finally {
+      setGenerandoConsolidado(false)
+    }
+  }
+
   async function generarInforme() {
     setGenerando(true)
     setErrorInforme(null)
@@ -433,6 +449,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           generando={generando}
           error={errorInforme}
           onGenerar={generarInforme}
+          onGenerarConsolidado={generarConsolidado}
+          generandoConsolidado={generandoConsolidado}
           onVolver={() => setPaso('evaluacion')}
           onRevisarPendientes={() => irSiguientePendiente(null)}
           onNuevaEvaluacion={() => navegar('/procesos/nuevo')}

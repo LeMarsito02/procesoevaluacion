@@ -177,6 +177,8 @@ async function descargarBlob(ruta: string): Promise<{ blob: Blob; nombre: string
 }
 
 export const descargarInforme = (id: string) => descargarBlob(`/api/evaluaciones/${id}/informe`)
+/** Las tres áreas del proceso en un archivo, con puntaje y orden de elegibilidad. */
+export const descargarConsolidado = (id: string) => descargarBlob(`/api/evaluaciones/${id}/consolidado`)
 export const verDocumentoProponente = (id: string, proponenteId: string, archivo: string) =>
   descargarBlob(`/api/evaluaciones/${id}/proponentes/${proponenteId}/documento?archivo=${encodeURIComponent(archivo)}`).then((r) => r.blob)
 
