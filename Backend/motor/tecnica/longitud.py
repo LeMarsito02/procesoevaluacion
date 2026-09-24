@@ -102,9 +102,13 @@ def numeros_del_contrato(numero_contrato: str) -> list[str]:
     """Los números que identifican el contrato en sus soportes ("278 DE 2019"
     -> ["278"]; "ICCU-CTO-688 DE 2023" -> ["688"]). Los años solo si no hay
     otro número."""
-    grupos = [g.lstrip("0") for g in re.findall(r"\d+", numero_contrato) if len(g.lstrip("0")) >= 2]
+    grupos = [g.lstrip("0") or "0" for g in re.findall(r"\d+", numero_contrato)]
     no_anos = [g for g in grupos if not (len(g) == 4 and 1990 <= int(g) <= 2035)]
-    return no_anos or grupos
+    # "001 DE 2013": el número del contrato es el 1, aunque tenga un dígito.
+    # Antes se descartaba por corto y solo quedaba el año, que no identifica
+    # nada (y hacía que el acta no se encontrara).
+    largos = [g for g in no_anos if len(g) >= 2]
+    return largos or no_anos or grupos
 
 
 _PALABRAS_GENERICAS = {
@@ -114,15 +118,33 @@ _PALABRAS_GENERICAS = {
 }
 
 
-def soportes_candidatos(pdfs: dict[str, bytes]) -> list[str]:
-    """Documentos que pueden ser actas o certificaciones. Lo que no lo es se
-    reconoce por el nombre del archivo, no por la carpeta (las actas suelen
-    ir dentro de la carpeta "FORMATO 3")."""
-    def no_es(a: str) -> bool:
-        return bool(_NO_ES_SOPORTE_RE.search(normalizar(a.rsplit("/", 1)[-1])))
+# Lo que de verdad es el RUP lo dice su primera página, no su nombre.
+_ES_EL_RUP_RE = re.compile(r"REGISTRO\s+UNICO\s+DE\s+PROPONENTES|CERTIFICADO\s+DE\s+INSCRIPCION")
 
-    candidatos = [a for a in pdfs if _PISTA_SOPORTE_RE.search(normalizar(a)) and not no_es(a)]
-    return candidatos or [a for a in pdfs if not no_es(a)]
+
+def es_el_rup(texto: str) -> bool:
+    """El certificado del RUP (no sirve como soporte de un contrato: el pliego
+    pide el acta o la certificación del contratante, 3.5.6)."""
+    return bool(_ES_EL_RUP_RE.search(normalizar(texto)[:3000]))
+
+
+def soportes_candidatos(pdfs: dict[str, bytes]) -> list[str]:
+    """Documentos que pueden ser actas o certificaciones, en el orden en que
+    conviene mirarlos.
+
+    El nombre del archivo solo sirve para ordenar la búsqueda, nunca para
+    descartar: un proponente llamó a su certificación de obra "RUP 43 -
+    HOSPITAL DONALDO SAÚL.pdf" (por el número del contrato en su RUP) y se
+    descartaba como si fuera el registro, con lo que su contrato quedaba sin
+    soporte. Lo que decide es el contenido."""
+    def prioridad(a: str) -> tuple[int, int]:
+        nombre = normalizar(a)
+        suena_a_soporte = bool(_PISTA_SOPORTE_RE.search(nombre))
+        suena_a_otra_cosa = bool(_NO_ES_SOPORTE_RE.search(normalizar(a.rsplit("/", 1)[-1])))
+        return (0 if suena_a_soporte and not suena_a_otra_cosa else 1 if suena_a_soporte else
+                2 if not suena_a_otra_cosa else 3), len(a)
+
+    return sorted(pdfs, key=prioridad)
 
 
 _INSTRUCCION_IA = (
@@ -287,7 +309,7 @@ _ES_ACTA_ADENTRO_RE = re.compile(
 
 def _puede_ser_acta(archivo: str, texto: str) -> bool:
     inicio = texto[:1500]
-    if _ES_FORMATO3_RE.search(inicio):
+    if _ES_FORMATO3_RE.search(inicio) or es_el_rup(texto):
         return False
     return bool(_ES_ACTA_RE.search(inicio) or _ES_ACTA_RE.search(normalizar(archivo)) or _ES_ACTA_ADENTRO_RE.search(texto))
 

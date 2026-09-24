@@ -630,3 +630,36 @@ class AreaEnLasActasTests(SimpleTestCase):
         from motor.tecnica.longitud import areas_sin_unidad_en
 
         self.assertEqual(areas_sin_unidad_en("AREA INTERVENIDA 9.999.999,00"), [])
+
+
+class SoportesPorContenidoTests(SimpleTestCase):
+    """El acta de un contrato no se descarta por cómo se llame el archivo. Un
+    proponente llamó a su certificación de obra "RUP 43 - HOSPITAL DONALDO
+    SAÚL.pdf" (por el número del contrato en su RUP) y se descartaba como si
+    fuera el registro: su contrato quedaba sin soporte y, con él, sin área."""
+
+    def test_un_archivo_llamado_rup_puede_ser_una_certificacion(self):
+        from motor.tecnica.longitud import soportes_candidatos
+
+        pdfs = {
+            "3. TECNICO/RUP 43 - HOSPITAL DONALDO SAUL.pdf": b"",
+            "3. TECNICO/RUP/RUP - INVASAR.pdf": b"",
+            "1. JURIDICO/CEDULA.pdf": b"",
+        }
+        # Ninguno se descarta: el nombre solo ordena la búsqueda.
+        self.assertEqual(len(soportes_candidatos(pdfs)), 3)
+
+    def test_el_certificado_del_rup_se_reconoce_por_su_texto(self):
+        from motor.tecnica.longitud import es_el_rup
+
+        self.assertTrue(es_el_rup("CAMARA DE COMERCIO CERTIFICADO DE INSCRIPCION Y CLASIFICACION REGISTRO UNICO DE PROPONENTES"))
+        self.assertFalse(es_el_rup("CERTIFICACION DE OBRA CONTRATO DE OBRA N 001 DE 2013 OBJETO DEL CONTRATO REMODELACION"))
+
+    def test_el_numero_del_contrato_no_es_el_ano(self):
+        """"001 DE 2013" identifica el contrato 1: descartarlo por corto
+        dejaba solo el año, que no identifica nada."""
+        from motor.tecnica.longitud import numeros_del_contrato
+
+        self.assertEqual(numeros_del_contrato("001 de 2013"), ["1"])
+        self.assertEqual(numeros_del_contrato("ICCU-CTO-688 DE 2023"), ["688"])
+        self.assertEqual(numeros_del_contrato("278 DE 2019"), ["278"])
