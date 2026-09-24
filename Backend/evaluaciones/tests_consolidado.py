@@ -75,8 +75,27 @@ class ConsolidadoTests(SimpleTestCase):
         self.assertEqual(filas["P-02"][3], PENDIENTE)
         self.assertEqual(filas["P-02"][5], PENDIENTE)
         self.assertEqual(filas["P-02"][7], PENDIENTE)
-        self.assertEqual(filas["P-01"][7], 1)
+        self.assertEqual(filas["P-01"][7], "1 (empate entre 2)")
+        self.assertEqual(filas["P-03"][7], "1 (empate entre 2)")
         self.assertIn("P-02", [f[0].value for f in pendientes.iter_rows(min_row=2)])
+
+    def test_los_empatados_comparten_puesto_y_el_informe_lo_dice(self):
+        """En ICCU-LP-027 más de veinte proponentes quedaron con 51,50 puntos:
+        el empate es la norma. Inventar un orden entre ellos sería afirmar algo
+        que el programa no sabe; el desempate lo resuelve la entidad con los
+        criterios del pliego."""
+        resultados = {"juridica": {}, "tecnica": {}, "financiera": {}}
+        for hoja, _ in PROPONENTES:
+            resultados["juridica"].update(_area_completa(hoja, [1, 2]))
+            resultados["financiera"].update(_area_completa(hoja, [201, 221]))
+            resultados["tecnica"].update(_area_completa(hoja, [101]))
+            for n, puntos in PUNTOS.items():
+                resultados["tecnica"][(hoja, n)] = _r(hoja, n, True, detalle={"puntaje_maximo": puntos})
+            resultados["tecnica"][(hoja, 130)] = _r(hoja, 130, True)
+        consolidado, _ = self._informe(resultados)
+        filas = {f[0].value: [c.value for c in f] for f in consolidado.iter_rows(min_row=6, max_row=8)}
+        ordenes = {filas[h][7] for h, _ in PROPONENTES}
+        self.assertEqual(ordenes, {"1 (empate entre 3)"})
 
 
 class ConsolidadoNoAplicaTests(SimpleTestCase):

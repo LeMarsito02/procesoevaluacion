@@ -93,12 +93,20 @@ def generar_informe(
             habilitado = NO_APLICA if NO_APLICA in estados else _resultado_del_lote(estados)
             puntaje = _puntaje(resultados.get("tecnica", {}), hoja) if habilitado == "CUMPLE" else ""
             filas.append([hoja, nombre_proponente, *estados, habilitado, puntaje])
-        # El orden de elegibilidad solo entre los habilitados con puntaje en firme.
+        # El orden de elegibilidad solo entre los habilitados con puntaje en
+        # firme. Los que empatan comparten puesto y se marcan: el desempate lo
+        # decide la entidad con los criterios del pliego, no el programa.
         elegibles = sorted(
             [f for f in filas if f[5] == "CUMPLE" and isinstance(f[6], (int, float))],
             key=lambda f: -f[6],
         )
-        orden = {id(f): i + 1 for i, f in enumerate(elegibles)}
+        orden: dict[int, object] = {}
+        puesto = 0
+        for i, f in enumerate(elegibles):
+            if i == 0 or f[6] != elegibles[i - 1][6]:
+                puesto = i + 1
+            empatados = sum(1 for otro in elegibles if otro[6] == f[6])
+            orden[id(f)] = f"{puesto} (empate entre {empatados})" if empatados > 1 else puesto
         for f in filas:
             _fila(hoja_resumen, fila, [*f, orden.get(id(f), PENDIENTE if f[5] == PENDIENTE else "")])
             fila += 1
