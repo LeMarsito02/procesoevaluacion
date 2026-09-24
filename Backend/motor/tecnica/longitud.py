@@ -392,22 +392,33 @@ def longitud_del_contrato(
 def area_del_contrato(
     pdfs: dict[str, bytes], textos: dict[str, str], numero_contrato: str, contratante: str, objeto: str = "",
 ) -> tuple[float | None, str | None, str | None]:
-    """(m², archivo, cita) del área intervenida en los soportes del contrato,
-    cuando no traen la longitud: el evaluador lo reporta y pide aclaración.
-    Usa los textos que ya leyó `longitud_del_contrato`, sin abrir de nuevo
-    ningún PDF."""
+    """(m², archivo, cita) del área intervenida o construida que acredita el
+    contrato en sus soportes.
+
+    En un proceso de edificaciones el pliego exige área en vez de longitud, y
+    entonces nadie ha leído todavía ningún soporte: hay que buscarlos aquí,
+    igual que `soporte_del_contrato`. (Antes esta función solo miraba los
+    textos que hubiera dejado `longitud_del_contrato`, que en esos procesos no
+    se llama nunca, así que no encontraba nada.) La lectura cara solo se
+    intenta si con la normal no aparece."""
     numeros = numeros_del_contrato(numero_contrato)
     palabras = _palabras_contratante(contratante)
     citados: list[tuple[str, str]] = []
-    for clave, texto in textos.items():
-        archivo = clave.split("#")[0]
-        if archivo not in pdfs or not _es_del_contrato(archivo, texto, numeros, palabras, objeto):
-            continue
-        citados.append((archivo, texto))
-        if areas := areas_en(texto):
-            return max(areas), archivo, None
-        if areas := areas_sin_unidad_en(texto):
-            return max(areas), archivo, None
+    for tablas in (False, True):
+        for archivo in soportes_candidatos(pdfs):
+            texto = _texto_soporte(pdfs, textos, archivo, tablas=tablas)
+            if not texto or not _es_del_contrato(archivo, texto, numeros, palabras, objeto):
+                continue
+            if (archivo, texto) not in citados:
+                citados.append((archivo, texto))
+            if areas := areas_en(texto):
+                return max(areas), archivo, None
+            if areas := areas_sin_unidad_en(texto):
+                return max(areas), archivo, None
+        if citados:
+            break  # ya se encontraron los soportes del contrato: no hace falta la lectura cara
+    # Con la regla no aparece: se le pregunta al modelo local por los soportes
+    # del contrato, y la cita se verifica contra el documento.
     for archivo, texto in citados[:3]:
         m2, cita = area_con_ia(texto)
         if m2 is not None:
