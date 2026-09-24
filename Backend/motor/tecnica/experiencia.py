@@ -313,6 +313,13 @@ def cruzar_contrato(
             contrato.problemas.append(f"el RUP de {integrante.nombre} no trae su porcentaje de participación en el contrato")
             contrato.aportes = {}
             return contrato
+        if not 0 < parte <= 1.0001:
+            contrato.problemas.append(
+                f"el RUP de {integrante.nombre} reporta una participación imposible en el contrato "
+                f"({parte * 100:.0f} %): revísalo en el documento"
+            )
+            contrato.aportes = {}
+            return contrato
         participacion_total += parte
         contrato.aportes[integrante.nombre] = contrato.aportes.get(integrante.nombre, 0.0) + contrato.valor_smmlv * parte
     contrato.participacion = participacion_total

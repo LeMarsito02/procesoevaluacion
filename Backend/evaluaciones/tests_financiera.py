@@ -530,3 +530,47 @@ class Matriz2Tests(SimpleTestCase):
 
         umbrales, _ = umbrales_de_la_matriz("INDICE DE LIQUIDEZ\n\n >=1,3\n")
         self.assertEqual(umbrales.liquidez_min, 1.3)
+
+
+class CifrasImposiblesTests(SimpleTestCase):
+    """Cifras que no pueden ser: salen de una lectura mala y, si se usan, dan
+    resultados excelentes con datos inventados."""
+
+    def _umbrales(self):
+        from motor.financiera.parametros import Umbrales
+
+        return Umbrales(1.1, 0.7, 1.0, 0.01, 0.02, fuente="Matriz 2")
+
+    def test_un_rup_con_activos_negativos_no_aprueba(self):
+        """Con activo y pasivo negativos la liquidez sale 2,0 (dos negativos
+        dan positivo) y el proponente quedaba aprobado."""
+        from motor.financiera.capacidad import Indicadores, capacidad_financiera, capacidad_organizacional
+
+        ind = Indicadores(-100, -200, -50, -60, -140, -30, -5)
+        self.assertFalse(ind.creibles)
+        self.assertEqual(ind.liquidez, 2.0)  # el número sale, pero no vale
+        self.assertFalse(capacidad_financiera(ind, self._umbrales(), []).cumple)
+        self.assertFalse(capacidad_organizacional(ind, self._umbrales(), []).cumple)
+
+    def test_un_patrimonio_negativo_si_es_posible(self):
+        """Una empresa puede tener patrimonio negativo y utilidad negativa:
+        eso no es un error de lectura, es su situación."""
+        from motor.financiera.capacidad import Indicadores
+
+        self.assertTrue(Indicadores(5000, 8000, 1000, 9000, -1000, -500, 30).creibles)
+
+    def test_un_plazo_o_un_anticipo_imposibles_no_calculan_capital(self):
+        from motor.financiera.parametros import LoteFinanciero
+
+        # El bueno: el mismo número que exigió el ICCU en LP-027.
+        bueno = LoteFinanciero("ÚNICO", 5_458_954_545, plazo_meses=12, anticipo=0.25)
+        self.assertAlmostEqual(bueno.capital_de_trabajo_demandado, 1_364_738_636.25, places=2)
+
+        for plazo, anticipo in ((-5, 0.2), (0.0, 0.2), (500, 0.2), (8, 1.0), (8, -0.5)):
+            lote = LoteFinanciero("ÚNICO", 1e9, plazo_meses=plazo or None, anticipo=anticipo)
+            self.assertIsNone(lote.capital_de_trabajo_demandado, f"plazo={plazo} anticipo={anticipo}")
+
+    def test_un_presupuesto_en_cero_no_calcula_capital(self):
+        from motor.financiera.parametros import LoteFinanciero
+
+        self.assertIsNone(LoteFinanciero("ÚNICO", 0, plazo_meses=8, anticipo=0.2).capital_de_trabajo_demandado)

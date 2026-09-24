@@ -263,6 +263,9 @@ def _con_roles(personas: list[tuple[str, str | None]], tipo_proponente: str | No
 # certificado dice hasta cuándo vale; sin esa fecha, vale tres meses.
 _REDAM_VALIDA_HASTA_RE = re.compile(r"VALID[OA]\s+HASTA\s*:?\s*(\d{1,2})[/-](\d{1,2})[/-](\d{4})")
 MESES_VALIDEZ_REDAM = 3
+# Un certificado puede ser posterior al cierre si se aportó en subsanación,
+# pero no meses después: pasado este margen, la fecha no es creíble.
+MESES_SUBSANACION = 3
 
 
 def problema_de_vigencia(config: AntecedenteConfig, texto_norm: str, fecha_cierre: date | None) -> str | None:
@@ -293,6 +296,11 @@ def problema_de_vigencia(config: AntecedenteConfig, texto_norm: str, fecha_cierr
         return None
     if expedicion is None:
         return "no se pudo leer su fecha de expedición"
+    if expedicion > fecha_cierre + relativedelta(months=MESES_SUBSANACION):
+        return (
+            f"dice haberse expedido el {expedicion.strftime('%d/%m/%Y')}, mucho después del cierre "
+            f"({fecha_cierre.strftime('%d/%m/%Y')}): revisa si la fecha está mal leída o el documento es de otro proceso"
+        )
     if expedicion < fecha_cierre - relativedelta(months=meses):
         return (
             f"fue expedido el {expedicion.strftime('%d/%m/%Y')}, más de {meses} mes{'es' if meses > 1 else ''} antes del "

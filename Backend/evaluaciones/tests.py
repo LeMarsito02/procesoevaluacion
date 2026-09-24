@@ -1396,6 +1396,59 @@ class AuditoriaNoAplicaTests(TestCase):
         self.assertIsNone(parametros.patrimonio_aplica)
         del leer_parametros
 
+
+class FechasImposiblesTests(TestCase):
+    """Un certificado no puede ser de después del cierre, salvo que venga de
+    una subsanación. Muchos meses después ya no hay subsanación que valga: la
+    fecha está mal leída o el documento es de otro proceso."""
+
+    def _revisar(self, fecha_texto):
+        from datetime import date
+
+        from motor.evaluacion.antecedentes import problema_de_vigencia
+
+        class Config:
+            requisito = 14
+
+        texto = f"CONTRALORIA GENERAL FECHA DE EXPEDICION: {fecha_texto} NO SE ENCUENTRA REPORTADO"
+        return problema_de_vigencia(Config, texto, date(2026, 8, 3))
+
+    def test_un_certificado_de_meses_despues_del_cierre_va_a_revision(self):
+        problema = self._revisar("15/12/2026")
+        self.assertIsNotNone(problema)
+        self.assertIn("mucho después del cierre", problema)
+
+    def test_una_subsanacion_poco_posterior_al_cierre_se_acepta(self):
+        self.assertIsNone(self._revisar("03/09/2026"))
+
+    def test_un_certificado_anterior_al_cierre_se_acepta(self):
+        self.assertIsNone(self._revisar("15/07/2026"))
+
+    def test_un_certificado_viejo_sigue_venciendo(self):
+        problema = self._revisar("15/07/2025")
+        self.assertIsNotNone(problema)
+        self.assertIn("antes del cierre", problema)
+
+
+class ParticipacionImposibleTests(TestCase):
+    """El RUP no puede reportar una participación de 0 % ni negativa en un
+    contrato: con ella el aporte sale falseado."""
+
+    def test_una_participacion_fuera_de_rango_descarta_el_contrato(self):
+        from datetime import date
+
+        from evaluaciones.tests_tecnica import _exp, _fila, _parametros, _rup, Formato3
+        from motor.tecnica.experiencia import IntegranteTecnico, cruzar_contrato
+
+        parametros = _parametros()
+        for participacion in (0.0, -0.5, 1.5):
+            integrante = IntegranteTecnico("ALFA S.A.S.", None, 1.0,
+                                           _rup("ALFA S.A.S.", _exp("12", 3000, participacion=participacion,
+                                                                    celebrado="CONSORCIO")))
+            contrato = cruzar_contrato(_fila(1, "12", "ALFA"), [integrante], parametros,
+                                       parametros.lotes, date(2026, 8, 3))
+            self.assertEqual(contrato.aportes, {}, f"participación {participacion}")
+
 # --- El pliego de cada proceso ---
 def _pagina(numero: int, *lineas: str) -> "object":
     from motor.pliego.lectura import Pagina

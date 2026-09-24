@@ -29,6 +29,20 @@ class Indicadores:
     gastos_intereses: float
 
     @property
+    def creibles(self) -> bool:
+        """Las cifras del RUP tienen sentido.
+
+        Un activo, un pasivo o unos gastos de intereses negativos no existen:
+        salen de una lectura mala (los estados financieros escriben los
+        negativos entre paréntesis y una lectura distraída los convierte en
+        números con signo). Y eso no es inocuo: con activo y pasivo negativos
+        los indicadores salen excelentes —dos negativos dan una liquidez de
+        2,0— y el proponente quedaría aprobado con cifras inventadas. El
+        patrimonio y la utilidad operacional sí pueden ser negativos."""
+        return all(v >= 0 for v in (self.activo_corriente, self.activo_total, self.pasivo_corriente,
+                                    self.pasivo_total, self.gastos_intereses))
+
+    @property
     def liquidez(self) -> float | None:  # None = indeterminado (sin pasivo corriente)
         return self.activo_corriente / self.pasivo_corriente if self.pasivo_corriente else None
 
@@ -81,6 +95,9 @@ def capacidad_financiera(ind: Indicadores | None, umbrales: Umbrales, avisos: li
     """3.6: liquidez, endeudamiento y cobertura de intereses."""
     if ind is None:
         return Revision(False, avisos)
+    if not ind.creibles:
+        return Revision(False, ["la información financiera del RUP tiene cifras imposibles (activos, pasivos o gastos "
+                                "de intereses negativos): no se pudo leer bien, revísala en el documento"])
     detalle = {"liquidez": ind.liquidez, "endeudamiento": ind.endeudamiento, "cobertura": ind.cobertura}
     if not umbrales.completos:
         return Revision(False, [
@@ -108,6 +125,9 @@ def capacidad_organizacional(ind: Indicadores | None, umbrales: Umbrales, avisos
     """3.9: rentabilidad del activo y del patrimonio."""
     if ind is None:
         return Revision(False, avisos)
+    if not ind.creibles:
+        return Revision(False, ["la información financiera del RUP tiene cifras imposibles (activos, pasivos o gastos "
+                                "de intereses negativos): no se pudo leer bien, revísala en el documento"])
     detalle = {"roa": ind.roa, "roe": ind.roe}
     if not umbrales.completos:
         return Revision(False, [
@@ -128,6 +148,8 @@ def capital_de_trabajo(ind: Indicadores | None, lote: LoteFinanciero, avisos: li
     """3.7, por lote: AC − PC ≥ capital de trabajo demandado del lote."""
     if ind is None:
         return Revision(False, avisos)
+    if not ind.creibles:
+        return Revision(False, ["la información financiera del RUP tiene cifras imposibles: revísala en el documento"])
     demandado = lote.capital_de_trabajo_demandado
     detalle = {"capital_de_trabajo": ind.capital_de_trabajo, "demandado": demandado}
     if demandado is None:

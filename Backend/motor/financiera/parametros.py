@@ -33,14 +33,28 @@ class LoteFinanciero:
     anticipo: float | None = None  # fracción del valor del contrato (0,20)
 
     @property
+    def datos_creibles(self) -> bool:
+        """El presupuesto, el plazo y el anticipo tienen sentido. Con un plazo
+        negativo o un anticipo fuera de rango el capital de trabajo exigido
+        sale inventado, y un anticipo del 100 % lo dejaría en cero, con lo que
+        cualquiera pasaría."""
+        if self.presupuesto is not None and self.presupuesto <= 0:
+            return False
+        if self.plazo_meses is not None and not 0 < self.plazo_meses <= 120:
+            return False
+        return not (self.anticipo is not None and not 0 <= self.anticipo <= 0.9)
+
+    @property
     def valor_anticipo(self) -> float | None:
-        if self.presupuesto is None or self.anticipo is None:
+        if self.presupuesto is None or self.anticipo is None or not self.datos_creibles:
             return None
         return self.presupuesto * self.anticipo
 
     @property
     def capital_de_trabajo_demandado(self) -> float | None:
         if self.presupuesto is None or self.anticipo is None or self.plazo_meses is None:
+            return None
+        if not self.datos_creibles:
             return None
         base = self.presupuesto - self.valor_anticipo
         if self.plazo_meses < 12:
