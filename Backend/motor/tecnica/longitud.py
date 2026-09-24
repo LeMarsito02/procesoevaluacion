@@ -40,6 +40,28 @@ _AREA_RE = re.compile(
     rf"|(\d[\d.,]*)\s*(M2|M²|METROS\s+CUADRADOS)\s+(?:DE\s+)?(?:VIA\s+|PAVIMENTO\s+|CALZADA\s+)?{_VERBO}"
     rf"|{_VERBO}[^\n\d]{{0,30}}?(\d[\d.,]*)\s*(M2|M²|METROS\s+CUADRADOS)\b"
 )
+# En las actas de edificación el área va en una tabla y sin unidad:
+# "DISTRIBUCIÓN DE ÁREAS INTERVENIDAS … ÁREA TOTAL INTERVENIDA … 4.450,30".
+# Se exige que el número tenga decimales o separador de miles, que no venga
+# pegado a un "$" (las mismas tablas traen los valores en pesos al lado) y
+# que esté en un rango creíble para metros cuadrados.
+_AREA_SIN_UNIDAD_RE = re.compile(
+    rf"AREA(?:S)?\s+(?:TOTAL\s+)?(?:{_VERBO}|BAJO\s+(?:TECHO|CUBIERTA)|CONSTRUIDA)"
+    r"(?:[^$\n]|\n(?!\s*\n)){0,160}?(?<![$\d.,])(\d{1,3}(?:[.,]\d{3})*[.,]\d{1,2}|\d{2,6})(?![\d.,]*\d)"
+)
+_AREA_MAXIMA_CREIBLE = 500_000.0
+
+
+def areas_sin_unidad_en(texto: str) -> list[float]:
+    """Áreas de una tabla que no repite la unidad en cada fila."""
+    encontradas = []
+    for m in _AREA_SIN_UNIDAD_RE.finditer(normalizar(texto)):
+        valor = numero(m.group(1))
+        if valor is not None and 10 <= valor <= _AREA_MAXIMA_CREIBLE:
+            encontradas.append(valor)
+    return encontradas
+
+
 _PISTA_SOPORTE_RE = re.compile(r"EXPERIENCIA|CONTRATO|CERTIFIC|ACTA|3\.5|TECNIC|HABILITANTE|LIQUIDACION|TERMINACION|RECIBO")
 _NO_ES_SOPORTE_RE = re.compile(r"\bRUP\b|REGISTRO UNICO|FORMATO\s*[1-9]\b|FORMA\s*\d|POLIZA|CEDULA|ANTECEDENTE|FINANCIER|RESIDUAL")
 
@@ -361,6 +383,8 @@ def area_del_contrato(
             continue
         citados.append((archivo, texto))
         if areas := areas_en(texto):
+            return max(areas), archivo, None
+        if areas := areas_sin_unidad_en(texto):
             return max(areas), archivo, None
     for archivo, texto in citados[:3]:
         m2, cita = area_con_ia(texto)

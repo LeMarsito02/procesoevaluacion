@@ -607,3 +607,26 @@ class LecturaDelPliegoTests(SimpleTestCase):
         faltan = _exigencias_sin_cuantificar(lote, texto)
         self.assertEqual(len(faltan), 1)
         self.assertIn("área", faltan[0])
+
+
+class AreaEnLasActasTests(SimpleTestCase):
+    """En las actas de edificación el área va en una tabla que no repite la
+    unidad en cada fila, y al lado están los valores en pesos."""
+
+    def test_se_lee_el_area_de_una_tabla_sin_unidad(self):
+        from motor.tecnica.longitud import areas_sin_unidad_en
+
+        acta = ("DISTRIBUCION DE AREAS INTERVENIDAS EN LA TOTALIDAD DEL PROYECTO: DESCRIPCION AREA TOTAL "
+                "INTERVENIDA CUBIERTA BAJO TECHO 4.200,30 AREA BAJO TECHO DONDE SE REALIZO LA ACTIVIDAD DE "
+                "REMODELACION 250,00")
+        self.assertEqual(max(areas_sin_unidad_en(acta)), 4200.30)
+
+    def test_un_valor_en_pesos_no_se_confunde_con_un_area(self):
+        from motor.tecnica.longitud import areas_sin_unidad_en
+
+        self.assertEqual(areas_sin_unidad_en("VALOR TOTAL AREA INTERVENIDA BAJO CUBIERTA $ 2.642.640.000,00"), [])
+
+    def test_un_area_absurda_se_descarta(self):
+        from motor.tecnica.longitud import areas_sin_unidad_en
+
+        self.assertEqual(areas_sin_unidad_en("AREA INTERVENIDA 9.999.999,00"), [])
