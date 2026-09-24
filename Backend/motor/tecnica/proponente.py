@@ -65,18 +65,30 @@ def leer_rups(pdfs: dict[str, bytes]) -> list[tuple[str, Rup]]:
 def encontrar_formato3(pdfs: dict[str, bytes], excels: dict[str, bytes]) -> Formato3 | None:
     """Primero el Excel (se pide "preferiblemente en Excel" y se lee exacto);
     si no, la tabla del PDF."""
+    return _buscar_formato3(pdfs, excels)[0]
+
+
+def _buscar_formato3(pdfs: dict[str, bytes], excels: dict[str, bytes]) -> tuple[Formato3 | None, str | None]:
+    """(formato leído, archivo que lo contiene pero no se pudo leer). Lo
+    segundo importa: no es lo mismo que el proponente no haya entregado el
+    Formato 3 a que nosotros no hayamos podido leerlo, y el informe no puede
+    pedirle que subsane algo que sí entregó."""
     for archivo in sorted(excels, key=lambda a: not _PISTA_FORMATO3_RE.search(normalizar(a))):
         if (formato := leer_excel(excels[archivo], archivo)) is not None:
-            return formato
+            return formato, None
+    ilegible = None
     candidatos = sorted(pdfs, key=lambda a: not _PISTA_FORMATO3_RE.search(normalizar(a)))
     for archivo in candidatos:
         try:
             texto = buscar_pagina(pdfs[archivo], lambda t: bool(_TITULO_FORMATO3_RE.search(normalizar(t))), max_paginas=2)
         except Exception:  # noqa: BLE001
             continue
-        if texto is not None and (formato := leer_pdf(pdfs[archivo], archivo)) is not None:
-            return formato
-    return None
+        if texto is None:
+            continue
+        if (formato := leer_pdf(pdfs[archivo], archivo)) is not None:
+            return formato, None
+        ilegible = ilegible or archivo
+    return None, ilegible
 
 
 _COMPOSICION_RE = re.compile(
@@ -243,8 +255,13 @@ def evaluar_proponente_tecnico(
     integrantes, avisos = integrantes_del_proponente(pdfs, rups, plural, codigo_proceso)
     resultado.integrantes = integrantes
     resultado.avisos.extend(avisos)
-    formato3 = encontrar_formato3(pdfs, excels)
+    formato3, formato3_ilegible = _buscar_formato3(pdfs, excels)
     resultado.formato3 = formato3.archivo if formato3 else None
+    if formato3 is None and formato3_ilegible:
+        resultado.avisos.append(
+            f"el proponente aportó el Formato 3 ('{formato3_ilegible.rsplit('/', 1)[-1]}') pero no se pudo leer su "
+            "tabla: revísalo a mano, no se lo pidas como subsanación"
+        )
     textos: dict[str, str] = {}
     resultado.lotes = evaluar_experiencia(
         formato3, integrantes, parametros, fecha_cierre, plural,

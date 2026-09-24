@@ -198,7 +198,24 @@ def leer_filas(filas: list[list], archivo: str) -> Formato3 | None:
             valor_afectado=_valor(celda(fila, "valor_afectado")),
             lotes=_texto(celda(fila, "lotes")),
         ))
-    return formato if formato.contratos else None
+    return formato if _es_coherente(formato) else None
+
+
+def _es_coherente(formato: Formato3) -> bool:
+    """La lectura sirve o no sirve.
+
+    Cuando el Formato 3 viene en PDF con el encabezado partido en varios
+    renglones, el mapa de columnas se corre y sale un contrato por fila pero
+    con los datos cambiados de sitio: el número de orden ocupa el lugar del
+    consecutivo del RUP y el consecutivo el del valor. Evaluar con eso da
+    resultados falsos y mensajes que culpan al proponente ("el consecutivo 1
+    no se encontró en el RUP") de un error nuestro. Si la mitad de las filas
+    salen sin contratante y sin objeto, la lectura no sirve y es mejor
+    decirlo: el lote va a revisión."""
+    if not formato.contratos:
+        return False
+    vacios = sum(1 for c in formato.contratos if not c.contratante.strip() and not c.objeto.strip())
+    return vacios * 2 <= len(formato.contratos)
 
 
 def leer_excel(contenido: bytes, archivo: str) -> Formato3 | None:

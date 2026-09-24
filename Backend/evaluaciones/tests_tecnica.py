@@ -663,3 +663,34 @@ class SoportesPorContenidoTests(SimpleTestCase):
         self.assertEqual(numeros_del_contrato("001 de 2013"), ["1"])
         self.assertEqual(numeros_del_contrato("ICCU-CTO-688 DE 2023"), ["688"])
         self.assertEqual(numeros_del_contrato("278 DE 2019"), ["278"])
+
+
+class Formato3IlegibleTests(SimpleTestCase):
+    """Un Formato 3 en PDF con el encabezado partido sale con las columnas
+    corridas: el número de orden ocupa el lugar del consecutivo del RUP.
+    Evaluar con eso produce mensajes que culpan al proponente de un error
+    nuestro ("el consecutivo 1 no se encontró en el RUP")."""
+
+    def test_una_lectura_con_las_columnas_corridas_se_descarta(self):
+        from motor.tecnica.formato3 import ContratoFormato3, Formato3, _es_coherente
+
+        corrida = Formato3(archivo="f3.pdf", contratos=[
+            ContratoFormato3(orden=1, consecutivos=["1"], contratante="", objeto=""),
+            ContratoFormato3(orden=2, consecutivos=["2"], contratante="", objeto=""),
+        ])
+        self.assertFalse(_es_coherente(corrida))
+
+    def test_una_lectura_buena_se_conserva(self):
+        from motor.tecnica.formato3 import ContratoFormato3, Formato3, _es_coherente
+
+        buena = Formato3(archivo="f3.xlsx", contratos=[
+            ContratoFormato3(orden=1, consecutivos=["43"], contratante="HOSPITAL DONALDO SAUL",
+                             objeto="REMODELACION DE LA INFRAESTRUCTURA"),
+            ContratoFormato3(orden=2, consecutivos=["9"], contratante="", objeto=""),
+        ])
+        self.assertTrue(_es_coherente(buena))
+
+    def test_sin_contratos_no_hay_formato(self):
+        from motor.tecnica.formato3 import Formato3, _es_coherente
+
+        self.assertFalse(_es_coherente(Formato3(archivo="f3.pdf")))
