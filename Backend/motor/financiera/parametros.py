@@ -94,9 +94,11 @@ _ANTICIPO_RE = re.compile(r"ANTICIPO\s+(?:Y\s*/\s*O|O)\s+PAGO\s+ANTICIPADO(.{0,1
 # Con el número de sección delante es la sección de verdad y no una
 # mención de paso ("se incluye la forma de pago, anticipo o pago anticipado").
 _ANTICIPO_NUMERADO_RE = re.compile(r"8\.3\.?\s*ANTICIPO\s+(?:Y\s*/\s*O|O)\s+PAGO\s+ANTICIPADO(.{0,1200})", re.S)
-# "(30%)" o "[30%]": el documento tipo deja los corchetes de la plantilla
-# sin reemplazar ("A TITULO DE [ANTICIPO UN VALOR EQUIVALENTE AL [30%]").
-_PORCENTAJE_RE = re.compile(r"[(\[]\s*(\d{1,3}(?:[.,]\d+)?)\s*%\s*[)\]]")
+# El porcentaje del anticipo viene de tres formas: "(20%)", "[30%]" (el
+# documento tipo deja los corchetes de la plantilla sin reemplazar) y sin
+# nada: "un valor equivalente al 25% del valor básico del contrato". Dentro
+# de la sección del anticipo, el primero que aparece es el suyo.
+_PORCENTAJE_RE = re.compile(r"[(\[]\s*(\d{1,3}(?:[.,]\d+)?)\s*%\s*[)\]]|(\d{1,3}(?:[.,]\d+)?)\s*%")
 # "No se entregará anticipo"; un "NO APLICA" suelto no basta: puede ser el de
 # otra fila de la tabla y dejaría el anticipo en cero (inflando el capital de
 # trabajo y la capacidad residual exigidos).
@@ -106,7 +108,9 @@ _SIN_ANTICIPO_RE = re.compile(
 )
 # "(4) MESES", aunque la tabla parta el texto: "(4) MILLONES ... MESES".
 _PLAZO_RE = re.compile(r"\(\s*(\d{1,3})\s*\)(?=[^()$]{0,80}?\bMESES\b)")
-_SECCION_11_RE = re.compile(r"OBJETO, PRESUPUESTO OFICIAL, PLAZO Y UBICACION(.{0,6000}?)\n\s*1\.2\.?\s", re.S)
+_SECCION_11_RE = re.compile(
+    r"OBJETO, PRESUPUESTO OFICIAL, PLAZO Y UBICACION(.{0,6000}?)"
+    r"(?:\n\s*1\.2\.?\s|\n\s*DOCUMENTOS DEL PROCESO|\n\s*COMUNICACIONES Y OBSERVACIONES|\Z)", re.S)
 # El pliego a veces escribe el umbral en porcentaje ("endeudamiento <= 70 %"):
 # se guarda siempre como razón.
 _MAYOR = r"(?:>=|>|MAYOR\s+O\s+IGUAL\s+A|MAYOR\s+A|SUPERIOR\s+A|MINIMO(?:\s+DE)?)"
@@ -131,7 +135,10 @@ def _anticipo(texto_norm: str) -> float | None:
     if _SIN_ANTICIPO_RE.search(cuerpo[:400]):
         return 0.0
     m = _PORCENTAJE_RE.search(cuerpo)
-    return float(m.group(1).replace(",", ".")) / 100 if m else None
+    if m is None:
+        return None
+    valor = float((m.group(1) or m.group(2)).replace(",", ".")) / 100
+    return valor if 0 <= valor <= 1 else None
 
 
 def _plazos(texto_norm: str, lotes: int) -> list[float | None]:
@@ -163,6 +170,20 @@ def _texto_con_simbolos(texto: str) -> str:
     return texto.replace("≥", ">=").replace("≤", "<=").replace("⩾", ">=").replace("⩽", "<=")
 
 
+def _texto_por_filas(contenido_pliego: bytes, paginas: int = 12) -> str:
+    """El pliego leído fila por fila, para recuperar lo que está en tablas.
+    Solo las primeras páginas: ahí están el objeto, el presupuesto, el plazo
+    y la ubicación de cada lote."""
+    from motor.procesamiento.pdf_utils import abrir_pdf, texto_pagina_tabla
+
+    partes = []
+    with abrir_pdf(contenido_pliego) as pdf:
+        for page in pdf.pages[:paginas]:
+            partes.append(texto_pagina_tabla(page))
+            page.flush_cache()
+    return normalizar(_texto_con_simbolos("\n".join(partes)))
+
+
 def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None]], smmlv: float,
                     matriz2: bytes | None = None) -> ParametrosFinancieros:
     """`lotes`: [(nombre, presupuesto)] como los leyó el análisis técnico del
@@ -173,9 +194,20 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
         texto_norm = normalizar(_texto_con_simbolos("\n".join(page.extract_text() or "" for page in pdf.pages)))
     parametros = ParametrosFinancieros(smmlv=smmlv)
     anticipo = _anticipo(texto_norm)
+    plazos = _plazos(texto_norm, len(lotes))
+    if anticipo is None or any(p is None for p in plazos):
+        # El plazo y el anticipo viven en tablas, y la lectura corrida las
+        # desarma ("DOCE (12) MESES" queda partido entre columnas). Se vuelve
+        # a leer el pliego fila por fila, que es como se leen los documentos
+        # difíciles en el resto del motor. No es cuestión de una palabra
+        # distinta: es recuperar la estructura de la tabla.
+        texto_tabla = _texto_por_filas(contenido_pliego)
+        anticipo = anticipo if anticipo is not None else _anticipo(texto_tabla)
+        if any(p is None for p in plazos):
+            otros = _plazos(texto_tabla, len(lotes))
+            plazos = [p if p is not None else o for p, o in zip(plazos, otros)]
     if anticipo is None:
         parametros.avisos.append("no se leyó el porcentaje de anticipo en el pliego (8.3)")
-    plazos = _plazos(texto_norm, len(lotes))
     for (nombre, presupuesto), plazo in zip(lotes, plazos):
         parametros.lotes.append(LoteFinanciero(nombre, presupuesto, plazo, anticipo))
     if any(p is None for p in plazos):

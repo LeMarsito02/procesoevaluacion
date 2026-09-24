@@ -551,3 +551,59 @@ class SoportePorObjetoTests(SimpleTestCase):
         self.assertFalse(_puede_ser_acta("EXPERIENCIA REQUERIDA.pdf", formato3))
         # Un objeto de palabras corrientes no alcanza para dar por suyo un acta.
         self.assertFalse(_objeto_en("MANTENIMIENTO DE VIAS DEL MUNICIPIO", acta))
+
+
+class LecturaDelPliegoTests(SimpleTestCase):
+    """Lo que el pliego exige tiene que leerse sin importar cómo esté escrito,
+    y lo que no se pueda medir tiene que quedar señalado: dar por cumplido un
+    requisito que el pliego pide y que nadie midió es lo único inaceptable."""
+
+    def test_la_longitud_se_lee_en_sus_distintas_redacciones(self):
+        from motor.tecnica.parametros import _longitud
+
+        # "la longitud de la vía ... es de 2,16 KM" (ICCU-LP-022)
+        esp = ("POR LO MENOS UNO DE LOS CONTRATOS DEBE CONTAR CON UNA LONGITUD INTERVENIDA CORRESPONDIENTE A POR LO "
+               "MENOS EL 70% DE LA LONGITUD DE LA VIA A INTERVENIR. LA LONGITUD DE LA VIA A INTERVENIR ES DE 2,16 KM")
+        minima, total, fraccion = _longitud(esp)
+        self.assertAlmostEqual(total, 2.16)
+        self.assertAlmostEqual(fraccion, 0.7)
+        self.assertAlmostEqual(minima, 1.512)
+
+        # "LA LONGITUD A INTERVENIR ES DE 1.520 METROS" (ICCU-LP-013), y la
+        # aclaración vive fuera de la celda del lote.
+        celda = "POR LO MENOS UNO (1) DEBE CONTAR CON UNA LONGITUD INTERVENIDA CORRESPONDIENTE A POR LO MENOS EL 70%"
+        pliego = "PARA DAR CLARIDAD SE INDICA QUE LA LONGITUD A INTERVENIR ES DE 1.520 METROS."
+        minima, total, _ = _longitud(celda, pliego)
+        self.assertAlmostEqual(total, 1.52)
+        self.assertAlmostEqual(minima, 1.064)
+
+    def test_el_area_se_lee_con_igual_y_o_superior(self):
+        from motor.tecnica.parametros import _area
+
+        esp = ("POR LO MENOS UNO (1) DE LOS CONTRATOS DEBE CONTEMPLAR UN AREA CONSTRUIDA IGUAL Y/O SUPERIOR AL 60% "
+               "DEL TOTAL DE METROS CUADRADOS DEL PROCESO, EL CUAL CORRESPONDE A 1682,80 M2")
+        minima, total, fraccion = _area(esp, "")
+        self.assertAlmostEqual(total, 1682.80)
+        self.assertAlmostEqual(fraccion, 0.6)
+        self.assertAlmostEqual(minima, 1009.68)
+
+    def test_nombrar_el_area_en_la_lista_de_documentos_no_es_exigirla(self):
+        """En 3.5.5 el pliego lista qué datos debe traer la certificación
+        ("la magnitud, área intervenida o construida y demás condiciones"):
+        eso no es un requisito con valor mínimo."""
+        from motor.tecnica.parametros import LoteTecnico, _exigencias_sin_cuantificar
+
+        lote = LoteTecnico(nombre="ÚNICO", presupuesto=1e9)
+        texto = ("D. LA MAGNITUD, LONGITUD, VOLUMENES, DIMENSIONES, TIPOLOGIAS, AREA INTERVENIDA O CONSTRUIDA Y DEMAS "
+                 "CONDICIONES DE EXPERIENCIA CONTENIDA EN LA MATRIZ 1")
+        self.assertEqual(_exigencias_sin_cuantificar(lote, texto), [])
+
+    def test_una_exigencia_que_no_se_pudo_medir_queda_señalada(self):
+        from motor.tecnica.parametros import LoteTecnico, _exigencias_sin_cuantificar
+
+        lote = LoteTecnico(nombre="ÚNICO", presupuesto=1e9)
+        texto = ("POR LO MENOS UNO DE LOS CONTRATOS DEBE CONTEMPLAR UN AREA CONSTRUIDA IGUAL O SUPERIOR AL 50% DEL "
+                 "TOTAL DE METROS CUADRADOS")
+        faltan = _exigencias_sin_cuantificar(lote, texto)
+        self.assertEqual(len(faltan), 1)
+        self.assertIn("área", faltan[0])

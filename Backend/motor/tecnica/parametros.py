@@ -82,7 +82,9 @@ class ParametrosTecnicos:
 
 
 _CODIGO_RE = re.compile(r"\b(\d{2})\s+(\d{2})\s+(\d{2})\b")
-_LONGITUD_TOTAL_RE = re.compile(r"LONGITUD DE LA (?:VIA|CARRETERA)[^.]{0,40}?ES DE\s*([\d.,]+)\s*(KM|KILOMETROS|M|ML|METROS)\b")
+_LONGITUD_TOTAL_RE = re.compile(
+    r"LONGITUD\s+(?:DE\s+LA\s+(?:VIA|CARRETERA)|A\s+INTERVENIR|DE\s+LA\s+VIA\s+A\s+INTERVENIR|TOTAL)"
+    r"[^.]{0,60}?ES\s+DE\s*([\d.,]+)\s*(KM|KILOMETROS|M|ML|METROS)\b")
 _FRACCION_LONGITUD_RE = re.compile(r"LONGITUD\s+INTERVENIDA\s+CORRESPONDIENTE\s+A\s+POR\s+LO\s+MENOS\s+EL\s+(\d{1,3})\s*%")
 # "por lo menos el 70% del valor del presupuesto oficial" (licitación) y
 # "debe corresponder mínimo al 30% del presupuesto oficial" (menor cuantía).
@@ -295,14 +297,23 @@ def _area(especifica_norm: str, texto_norm: str) -> tuple[float | None, float | 
     return minima, total, fraccion
 
 
-def _longitud(especifica_norm: str) -> tuple[float | None, float | None, float | None]:
+def _longitud(especifica_norm: str, texto_norm: str = "") -> tuple[float | None, float | None, float | None]:
+    """(mínima, total, fracción) de la longitud intervenida que debe acreditar
+    un contrato. La aclaración de cuántos metros se intervienen suele estar
+    fuera de la celda del lote, así que se busca también en el pliego: quien
+    llama avisa si el proceso tiene varios lotes, porque el dato global puede
+    no ser el de ese lote."""
     total = fraccion = None
-    if m := _LONGITUD_TOTAL_RE.search(especifica_norm):
-        valor = numero(m.group(1))
-        if valor is not None:
-            total = valor if m.group(2).startswith("K") else valor / 1000
-    if m := _FRACCION_LONGITUD_RE.search(especifica_norm):
-        fraccion = int(m.group(1)) / 100
+    for texto in (especifica_norm, texto_norm):
+        if m := _LONGITUD_TOTAL_RE.search(texto):
+            valor = numero(m.group(1))
+            if valor is not None:
+                total = valor if m.group(2).startswith("K") else valor / 1000
+                break
+    for texto in (especifica_norm, texto_norm):
+        if m := _FRACCION_LONGITUD_RE.search(texto):
+            fraccion = int(m.group(1)) / 100
+            break
     minima = total * fraccion if total is not None and fraccion is not None else None
     return minima, total, fraccion
 
@@ -359,6 +370,32 @@ def _puntajes(texto_norm: str) -> tuple[dict[str, float | None], set[str]]:
     return puntajes, nombrados
 
 
+# El pliego menciona la exigencia aunque el número no se pueda leer. Si se
+# menciona y no se cuantifica, el lote va a revisión: dar por cumplido un
+# requisito que el pliego pide y que no se midió es lo único que no se puede
+# hacer.
+_MENCIONA = {
+    "el área intervenida o construida que debe acreditar un contrato":
+        (r"AREA\s+(?:INTERVENIDA|CONSTRUIDA|DISENADA)[^.]{0,120}?"
+         r"(?:IGUAL|SUPERIOR|POR\s+LO\s+MENOS|MINIMO|AL\s+MENOS|\d{1,3}\s*%)", "area_minima_m2"),
+    "la longitud intervenida que debe acreditar un contrato":
+        (r"LONGITUD\s+INTERVENIDA[^.]{0,120}?"
+         r"(?:IGUAL|SUPERIOR|POR\s+LO\s+MENOS|MINIMO|AL\s+MENOS|\d{1,3}\s*%)", "longitud_minima_km"),
+    "el porcentaje del presupuesto que debe alcanzar un contrato":
+        (r"POR\s+LO\s+MENOS\s+UNO[^.]{0,200}?(?:PORCENTAJE|\d{1,3}\s*%)[^.]{0,80}?PRESUPUESTO", "fraccion_un_contrato"),
+}
+
+
+def _exigencias_sin_cuantificar(lote: LoteTecnico, texto_norm: str) -> list[str]:
+    """Lo que el pliego pide de este lote y no se pudo poner en números."""
+    donde = normalizar(f"{lote.experiencia_especifica} {texto_norm}")
+    faltan = []
+    for descripcion, (patron, campo) in _MENCIONA.items():
+        if getattr(lote, campo) is None and re.search(patron, donde):
+            faltan.append(descripcion)
+    return faltan
+
+
 def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None]], smmlv: float) -> ParametrosTecnicos:
     """`lotes`: [(nombre, presupuesto en pesos)] como los leyó el análisis del
     documento base."""
@@ -396,7 +433,7 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
         fraccion_valor = _FRACCION_VALOR_RE.search(esp) or (
             _FRACCION_VALOR_RE.search(texto_norm) if len(lotes) == 1 else None
         )
-        minima, total, fraccion = _longitud(esp)
+        minima, total, fraccion = _longitud(esp, texto_norm)
         area_minima, area_total, area_fraccion = _area(esp, texto_norm)
         parametros.lotes.append(LoteTecnico(
             nombre=nombre,
@@ -412,4 +449,21 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
             fraccion_area=area_fraccion,
             condicion_objeto=_condicion_objeto(general, especifica),
         ))
+    if len(parametros.lotes) > 1:
+        # Cuando el dato no está en la celda del lote sino en el texto del
+        # pliego, los lotes salen con el mismo valor: puede ser correcto, pero
+        # hay que confirmarlo antes de evaluar con él.
+        for campo, como_se_llama in (("longitud_minima_km", "longitud mínima"), ("area_minima_m2", "área mínima")):
+            valores = {getattr(l, campo) for l in parametros.lotes}
+            if len(valores) == 1 and next(iter(valores)) is not None:
+                parametros.sin_confirmar.append(
+                    f"todos los lotes quedaron con la misma {como_se_llama} ({next(iter(valores))}): el pliego la dice "
+                    "una sola vez y puede que cada lote tenga la suya; confírmalo"
+                )
+    for lote in parametros.lotes:
+        for exigencia in _exigencias_sin_cuantificar(lote, texto_norm):
+            parametros.sin_confirmar.append(
+                f"{lote.nombre}: el pliego exige {exigencia} y no se pudo leer el valor; "
+                "revísalo antes de dar por buena la evaluación"
+            )
     return parametros
