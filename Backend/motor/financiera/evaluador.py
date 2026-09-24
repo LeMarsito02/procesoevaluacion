@@ -155,6 +155,15 @@ def evaluar(proponente: Proponente, proceso: ProcesoDocumentoBase, clave: str, n
 def _patrimonio(proponente: Proponente, proceso: ProcesoDocumentoBase, numero: int,
                 resultado: ResultadoFinanciero) -> ResultadoRequisito:
     parametros = parametros_de_dict(proceso.parametros_financieros)
+    if parametros.patrimonio_aplica is None:
+        # No se leyó el plazo o el presupuesto del proceso: no se sabe si el
+        # pliego lo exige, así que no se puede dar por no aplicable.
+        return ResultadoRequisito(
+            **_base(proponente, numero), cumple=False,
+            motivo=("No se pudo determinar si el pliego exige patrimonio mínimo: falta el plazo o el presupuesto del "
+                    "proceso (3.8). Revísalo en el pliego."),
+            detalle={"financiera": {"patrimonio": None}},
+        )
     if not parametros.patrimonio_aplica:
         return ResultadoRequisito(
             **_base(proponente, numero), cumple=True,

@@ -1358,6 +1358,44 @@ class TipoProponenteDesconocidoTests(TestCase):
         self.assertIn("N.A.", resultado.motivo)
 
 
+
+class AuditoriaNoAplicaTests(TestCase):
+    """Auditoría: un dato que no se pudo leer no puede convertirse en un "no
+    aplica" aprobado. Cada caso de aquí se aprobaba sin que nadie mirara el
+    requisito."""
+
+    def test_un_certificado_ilegible_no_significa_que_no_sea_sa(self):
+        """Si el Certificado de Existencia no se pudo leer, no se puede
+        concluir que la sociedad no es S.A.: el requisito 18 va a revisión."""
+        from unittest import mock
+
+        from motor.evaluacion.camara_comercio import evaluar_requisito18
+
+        pdfs = {"certificado.pdf": b"%PDF-1.4 falso"}
+        with mock.patch("motor.evaluacion.camara_comercio.encontrar_documentos", return_value=["certificado.pdf"]), \
+             mock.patch("motor.evaluacion.camara_comercio._texto_completo", return_value="CAMARA DE COMERCIO"):
+            resultado = evaluar_requisito18(pdfs, "persona_juridica")
+        self.assertFalse(resultado.cumple)
+        self.assertIn("no se pudo leer", resultado.motivo)
+
+    def test_sin_plazo_no_se_sabe_si_se_exige_patrimonio(self):
+        """El patrimonio mínimo solo lo pide el pliego con 40.000 SMMLV y 24
+        meses: si no se leyó el plazo, no se puede dar por no aplicable."""
+        from motor.financiera.parametros import LoteFinanciero, ParametrosFinancieros
+
+        completos = ParametrosFinancieros(smmlv=1_750_905, lotes=[LoteFinanciero("ÚNICO", 1e9, plazo_meses=8, anticipo=0.2)])
+        self.assertIs(completos.patrimonio_aplica, False)  # el valor por defecto del dataclass
+
+        from motor.financiera.parametros import leer_parametros
+
+        # Un pliego del que no se pudo leer el plazo deja el patrimonio en
+        # None (no se sabe), y el evaluador manda el requisito a revisión.
+        parametros = ParametrosFinancieros(smmlv=1_750_905,
+                                           lotes=[LoteFinanciero("ÚNICO", 1e9, plazo_meses=None, anticipo=0.2)])
+        parametros.patrimonio_aplica = None
+        self.assertIsNone(parametros.patrimonio_aplica)
+        del leer_parametros
+
 # --- El pliego de cada proceso ---
 def _pagina(numero: int, *lineas: str) -> "object":
     from motor.pliego.lectura import Pagina

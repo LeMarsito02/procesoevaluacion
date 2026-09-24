@@ -76,7 +76,9 @@ class ParametrosFinancieros:
     smmlv: float
     lotes: list[LoteFinanciero] = field(default_factory=list)
     umbrales: Umbrales = field(default_factory=Umbrales)
-    patrimonio_aplica: bool = False
+    # True aplica, False no aplica, None no se pudo saber (falta el plazo o el
+    # presupuesto): entonces el requisito va a revisión, no a "no aplica".
+    patrimonio_aplica: bool | None = False
     avisos: list[str] = field(default_factory=list)
     # Parámetros que solo leyó la IA del pliego, o en los que la IA y las
     # reglas no coinciden. Entran en `avisos` (y por tanto ningún lote se
@@ -214,7 +216,11 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
         parametros.avisos.append("no se leyó el plazo de cada lote en el pliego (1.1)")
     total = sum(l.presupuesto or 0 for l in parametros.lotes)
     plazo_max = max((p for p in plazos if p), default=0)
-    parametros.patrimonio_aplica = total / smmlv >= 40_000 and plazo_max >= 24
+    if not total or not plazo_max:
+        # Sin presupuesto o sin plazo no se puede saber si el pliego lo exige.
+        parametros.patrimonio_aplica = None
+    else:
+        parametros.patrimonio_aplica = total / smmlv >= 40_000 and plazo_max >= 24
     parametros.umbrales = umbrales_del_texto(texto_norm, "pliego")
     if matriz2 is not None and not parametros.umbrales.completos:
         with abrir_pdf(matriz2) as pdf:

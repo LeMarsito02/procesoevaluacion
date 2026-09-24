@@ -762,6 +762,10 @@ DETALLE_SANCION_RE = re.compile(r"ENTIDAD QUE REPORTO LA (?:SANCION|MULTA|INHABI
 # 500 páginas y leerlos completos dispara la memoria.
 PAGINAS_FINALES_RUP = 12
 MINIMO_TEXTO_PAGINAS_FINALES = 500
+# Un certificado de existencia legible tiene miles de caracteres; por debajo
+# de esto no se leyó (escaneado sin OCR, PDF de imagen) y no se puede concluir
+# nada de él.
+MINIMO_TEXTO_CERTIFICADO = 800
 
 
 def _texto_paginas_finales(contenido: bytes) -> str:
@@ -982,8 +986,12 @@ def evaluar_requisito18(pdfs: dict[str, bytes], tipo_proponente: str | None) -> 
         )
 
     faltan, certificaciones = [], []
+    ilegibles = []
     for nombre in encontrados:
         texto_norm = re.sub(r"\s+", " ", _norm(_texto_completo(pdfs, nombre)))
+        if len(texto_norm) < MINIMO_TEXTO_CERTIFICADO:
+            ilegibles.append(nombre.rsplit("/", 1)[-1])
+            continue
         if not es_sociedad_anonima(texto_norm):
             continue
         nit = NIT_CERTIFICADO_RE.search(texto_norm)
@@ -996,6 +1004,15 @@ def evaluar_requisito18(pdfs: dict[str, bytes], tipo_proponente: str | None) -> 
         else:
             faltan.append(razon or (f"la sociedad con NIT {nit}" if nit else nombre.rsplit("/", 1)[-1]))
 
+    if ilegibles and not certificaciones:
+        return ResultadoEvaluacionCamara(
+            cumple=False,
+            motivo=("no se pudo leer el texto del Certificado de Existencia de "
+                    + ", ".join(f"'{i}'" for i in ilegibles)
+                    + ": revisa si alguna sociedad del proponente es S.A. y, en ese caso, su certificación de "
+                      "sociedad abierta o cerrada"),
+            archivo=encontrados[0],
+        )
     if not faltan and not certificaciones:
         return ResultadoEvaluacionCamara(
             cumple=True, motivo="N.A. — el proponente no es una Sociedad Anónima (S.A.)", archivo=None
