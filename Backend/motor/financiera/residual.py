@@ -99,14 +99,25 @@ _SIN_CONTRATOS_RE = re.compile(
     r"NO\s+(?:CUENTA|CUENTO|CONTAMOS|TIENE|TENGO|TENEMOS|POSEE|POSEEMOS|REGISTRA|REGISTRAMOS)\s+(?:CON\s+)?(?:NINGUN\s+)?"
     r"CONTRATOS?\s+(?:DE\s+OBRA\s+)?EN\s+EJECUCION"
     r"|SIN\s+CONTRATOS\s+EN\s+EJECUCION|NO\s+EXISTEN\s+CONTRATOS\s+EN\s+EJECUCION"
+    r"|NO\s+(?:HAY|APLICA|SE\s+TIENEN|PRESENTA|RELACIONA)\s+(?:NINGUN\s+)?CONTRATOS?\s+(?:DE\s+OBRA\s+)?EN\s+EJECUCION"
+    r"|CONTRATOS?\s+EN\s+EJECUCION\s*:?\s*(?:NO\s+APLICA|NINGUNO|CERO|N\s*/\s*A)\b"
 )
 _PROFESION_RE = re.compile(r"\b(INGENIER[OA]\s+[A-Z]{4,}|ARQUITECT[OA]\b|GEOLOG[OA]\b)")
 _INSTRUCCION_SCE = (
     "Este texto es el Formato 5C (o 5.1/5.3) de capacidad residual: el listado de contratos de obra en ejecución de un "
     "proponente, con el saldo por ejecutar en los próximos 12 meses de cada contrato. Di el TOTAL del saldo de los "
     "contratos en ejecución (SCE) en pesos: si el formato trae la fila de total, ese valor; si no, la suma de la "
-    "columna del saldo. Si dice que no tiene contratos en ejecución, 0. Responde JSON: "
-    '{"sce": número o null, "cita": "texto copiado tal cual donde aparece el total"}'
+    "columna del saldo. Si el listado dice que el proponente NO tiene contratos en ejecución, pon sin_contratos en "
+    "true y copia en la cita la frase exacta que lo dice. Responde JSON: "
+    '{"sce": número o null, "sin_contratos": true o false, '
+    '"cita": "texto copiado tal cual del formato donde aparece el total o la frase"}'
+)
+# Una negación junto a la palabra "contrato": así se reconoce que el
+# proponente declara no tener contratos en ejecución, sin depender de una
+# lista de redacciones ("no hay", "no cuenta con", "no se relacionan"…).
+_NIEGA_CONTRATOS_RE = re.compile(
+    r"\b(?:NO|NINGUN\w*|SIN|CERO|N\s*/\s*A)\b[^.]{0,60}?CONTRATOS?"
+    r"|CONTRATOS?[^.]{0,60}?\b(?:NO\s+\w+|NINGUN\w*|CERO|N\s*/\s*A)\b"
 )
 
 
@@ -202,7 +213,7 @@ _TOTAL_SCE_RE = re.compile(
     r"|VALOR\s+TOTAL\s+(?:DE\s+LOS\s+)?CONTRATOS\s+EN\s+EJECUCION[^$\d]{0,40}\$"
     # Resumen del aplicativo de Colombia Compra: "SALDO DE CONTRATOS EN EJECUCION $ 81.408.551".
     r"|SALDO\s+DE\s+(?:LOS\s+)?CONTRATOS\s+EN\s+EJECUCION\s*\$)"
-    r"\s*(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)(?![\d.,]*\d)"
+    r"\s*\(?\s*(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)\)?(?![\d.,]*\d)"
 )
 
 
@@ -310,37 +321,74 @@ def _total_del_tramo(tramo: str, permite_vacio: bool) -> float | None:
     return None
 
 
-def _sce(texto: str, permite_vacio: bool = True) -> tuple[float | None, bool]:
-    """(saldo, se usó IA) del listado de contratos en ejecución. Si el
-    integrante trae varios listados (copias), el mayor (lo prudente), y
-    todos tienen que poder leerse. `permite_vacio`: False con hojas de
-    cálculo, donde una celda con fórmula sin valor guardado se lee vacía."""
-    tramos = _tramos_sce(texto)
-    if tramos:
-        saldos = [_total_del_tramo(t, permite_vacio) for t in tramos]
-        if all(v is not None for v in saldos):
-            return max(saldos), False
-    inicio = texto.find("EJECUCION")
-    tramo = texto[max(0, inicio - 200): inicio + 6000] if inicio >= 0 else texto[:6000]
-    if _SIN_CONTRATOS_RE.search(tramo):
-        return 0.0, False
+def _niega_los_contratos(cita: str, tramo: str) -> bool:
+    """La cita dice, con las palabras del formato, que no hay contratos en
+    ejecución, y está de verdad en el documento. Es el único caso en que un
+    saldo de cero se acepta: no es un silencio, es una declaración."""
+    limpia = re.sub(r"\s+", " ", (cita or "").strip().upper())
+    if len(limpia) < 10 or not _NIEGA_CONTRATOS_RE.search(limpia):
+        return False
+    return limpia in re.sub(r"\s+", " ", tramo.upper())
+
+
+def _sce_con_ia(tramo: str) -> float | None:
+    """El saldo de un listado que las reglas no pudieron leer. El modelo
+    local propone y el texto confirma: un número tiene que estar escrito
+    junto a la palabra TOTAL, y un cero tiene que venir de una frase del
+    formato que niegue los contratos."""
     respuesta = consultar_json(_INSTRUCCION_SCE, tramo)
-    if not isinstance(respuesta, dict) or respuesta.get("sce") is None:
-        return None, False
+    if not isinstance(respuesta, dict):
+        return None
+    cita = str(respuesta.get("cita") or "")
+    if respuesta.get("sin_contratos") is True:
+        return 0.0 if _niega_los_contratos(cita, tramo) else None
+    if respuesta.get("sce") is None:
+        return None
     try:
         valor = float(str(respuesta["sce"]).replace(",", ""))
     except ValueError:
-        return None, False
+        return None
     if valor == 0:
-        return None, False  # un cero solo lo acepta la frase explícita de arriba
+        return 0.0 if _niega_los_contratos(cita, tramo) else None
     # Anti-invención: el total tiene que estar escrito en el formato, como
     # cifra completa y junto a la palabra TOTAL (un saldo parcial inflaría la
     # capacidad residual).
     escrito = _numero_escrito(valor, tramo)
     if escrito is None:
-        return None, False
+        return None
     alrededor = tramo[max(0, escrito.start() - 120): escrito.end() + 40]
-    return (valor, True) if "TOTAL" in alrededor else (None, False)
+    return valor if "TOTAL" in alrededor else None
+
+
+def _sce(texto: str, permite_vacio: bool = True) -> tuple[float | None, bool]:
+    """(saldo, se usó IA) del listado de contratos en ejecución. Si el
+    integrante trae varios listados (copias), el mayor (lo prudente), y todos
+    tienen que poder leerse: el listado de un integrante que no se lee deja
+    todo el saldo en duda. `permite_vacio`: False con hojas de cálculo, donde
+    una celda con fórmula sin valor guardado se lee vacía.
+
+    Lo que las reglas no logran leer se le pregunta al modelo local, listado
+    por listado; lo que el modelo diga se confirma contra el texto."""
+    tramos = _tramos_sce(texto)
+    if tramos:
+        saldos: list[float | None] = []
+        con_ia = False
+        for tramo in tramos:
+            valor = _total_del_tramo(tramo, permite_vacio)
+            if valor is None:
+                valor = _sce_con_ia(tramo)
+                con_ia = con_ia or valor is not None
+            saldos.append(valor)
+        if all(v is not None for v in saldos):
+            return max(saldos), con_ia
+        return None, con_ia
+    # Sin listados reconocibles, se mira el texto alrededor de "EJECUCIÓN".
+    inicio = texto.find("EJECUCION")
+    tramo = texto[max(0, inicio - 200): inicio + 6000] if inicio >= 0 else texto[:6000]
+    if _SIN_CONTRATOS_RE.search(tramo):
+        return 0.0, False
+    valor = _sce_con_ia(tramo)
+    return (valor, True) if valor is not None else (None, False)
 
 
 def _bloques_sce_hoja(contenido: bytes) -> list[tuple[str, float | None]]:

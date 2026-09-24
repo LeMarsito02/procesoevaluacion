@@ -444,3 +444,38 @@ class InformeNoAplicaTests(SimpleTestCase):
                                     [201, 202, 203, 204], {0: [211, 221]}, borrador=True)
         hoja = openpyxl.load_workbook(io.BytesIO(contenido))["Resumen"]
         self.assertEqual([c.value for c in hoja[5]], ["P-01", "UNO", "NO CUMPLE"])
+
+
+class SceSinListaDeFrasesTests(SimpleTestCase):
+    """El saldo de contratos en ejecución no puede depender de una lista de
+    redacciones: cada proponente lo escribe como quiere. Las reglas intentan
+    primero y el modelo local cubre el resto, pero un cero solo se acepta si
+    la frase que lo dice está en el formato."""
+
+    def test_una_negacion_junto_a_contratos_vale_aunque_no_este_en_la_lista(self):
+        from motor.financiera.residual import _niega_los_contratos
+
+        tramo = ("FORMATO 5.3 LISTADO DE LOS CONTRATOS EN EJECUCION OFERENTE: X "
+                 "A la fecha no se relacionan contratos de obra en ejecución.")
+        self.assertTrue(_niega_los_contratos("no se relacionan contratos de obra en ejecución", tramo))
+        self.assertTrue(_niega_los_contratos("NO SE RELACIONAN CONTRATOS DE OBRA EN EJECUCIÓN", tramo))
+
+    def test_una_cita_que_no_esta_en_el_formato_no_vale(self):
+        from motor.financiera.residual import _niega_los_contratos
+
+        tramo = "FORMATO 5.3 LISTADO DE LOS CONTRATOS EN EJECUCION OFERENTE: X CONTRATO 1 $500.000.000"
+        self.assertFalse(_niega_los_contratos("no tiene contratos en ejecución", tramo))
+
+    def test_una_frase_sin_negacion_no_vale(self):
+        from motor.financiera.residual import _niega_los_contratos
+
+        tramo = "LISTADO DE LOS CONTRATOS EN EJECUCION del proponente para el presente proceso"
+        self.assertFalse(_niega_los_contratos("LISTADO DE LOS CONTRATOS EN EJECUCION", tramo))
+
+    def test_el_saldo_entre_parentesis_se_lee(self):
+        """Un proponente lo escribió así: "$ (346.767.713)"."""
+        from motor.financiera.residual import _sce
+
+        texto = ("LISTADO DE LOS CONTRATOS EN EJECUCION OFERENTE: X VALOR DEL CONTRATO SALDO "
+                 "SALDO DE CONTRATOS EN EJECUCION $ (346.767.713) EN CONSTANCIA")
+        self.assertEqual(_sce(texto), (346_767_713.0, False))
