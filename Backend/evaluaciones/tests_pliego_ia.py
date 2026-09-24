@@ -309,3 +309,38 @@ class ConfirmarLoLeidoTests(SimpleTestCase):
         ia = ParametrosIA(presupuesto_lotes={"LOTE 1": Leido(valor=3_542_952_462, cita="c")})
         fusion.aplicar_a_tecnicos(parametros, ia)
         self.assertEqual([l.nombre for l in parametros.lotes], ["ÚNICO"])
+
+
+class ValoresConfirmadosTests(SimpleTestCase):
+    """Lo que una persona escribe en la pantalla llega como texto. Si el
+    parámetro es un número hay que convertirlo: guardarlo como texto rompía
+    la evaluación entera al comparar ("'>=' not supported between float and
+    str")."""
+
+    def _tecnicos(self):
+        from motor.tecnica.parametros import LoteTecnico, ParametrosTecnicos
+
+        return ParametrosTecnicos(smmlv=1_750_905, lotes=[LoteTecnico("ÚNICO", 1e9, fraccion_un_contrato=0.7)])
+
+    def test_un_numero_escrito_como_texto_se_convierte(self):
+        ia = ParametrosIA(fraccion_un_contrato={"ÚNICO": Leido(valor=0.3, cita="c")})
+        for escrito in ("0,5", "0.5", 0.5):
+            parametros = self._tecnicos()
+            fusion.aplicar_a_tecnicos(parametros, ia, {"porcentaje de un contrato ÚNICO": escrito})
+            self.assertEqual(parametros.lotes[0].fraccion_un_contrato, 0.5, f"escrito={escrito!r}")
+
+    def test_un_texto_que_no_es_numero_no_se_guarda(self):
+        ia = ParametrosIA(fraccion_un_contrato={"ÚNICO": Leido(valor=0.3, cita="c")})
+        parametros = self._tecnicos()
+        resultado = fusion.aplicar_a_tecnicos(parametros, ia, {"porcentaje de un contrato ÚNICO": "la mitad"})
+        # Se queda el valor de las reglas y el parámetro sigue sin confirmar.
+        self.assertEqual(parametros.lotes[0].fraccion_un_contrato, 0.7)
+        self.assertEqual(len(resultado.sin_confirmar), 1)
+
+    def test_una_lista_escrita_separada_por_comas(self):
+        from motor.tecnica.parametros import ParametrosTecnicos
+
+        parametros = ParametrosTecnicos(smmlv=1_750_905, clases_unspsc={"721410"})
+        ia = ParametrosIA(clases_unspsc=Leido(valor=["721214"], cita="c"))
+        fusion.aplicar_a_tecnicos(parametros, ia, {"códigos UNSPSC": "721410, 721411"})
+        self.assertEqual(parametros.clases_unspsc, {"721410", "721411"})

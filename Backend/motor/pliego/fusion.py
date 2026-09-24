@@ -92,12 +92,33 @@ def _palabras(texto: str) -> set[str]:
     return set(re.findall(r"[A-Z0-9]{3,}", "".join(c for c in t if not unicodedata.combining(c))))
 
 
+def _del_tipo_de(valor, referencia):
+    """El valor que escribió una persona, con el tipo que corresponde al
+    parámetro. Lo que llega de un formulario es texto ("0,7", "12 meses"), y
+    si el parámetro es un número hay que convertirlo: guardarlo como texto
+    rompe la evaluación al comparar. Si no se puede convertir, se descarta y
+    el parámetro sigue sin confirmar."""
+    if isinstance(referencia, (int, float)) and not isinstance(valor, bool):
+        if isinstance(valor, (int, float)):
+            return float(valor)
+        numero = re.search(r"-?\d+(?:[.,]\d+)?", str(valor))
+        return float(numero.group(0).replace(",", ".")) if numero else None
+    if isinstance(referencia, (list, set, tuple)):
+        if isinstance(valor, (list, set, tuple)):
+            return list(valor)
+        return [v.strip() for v in str(valor).split(",") if v.strip()] or None
+    texto = str(valor).strip()
+    return texto or None
+
+
 def fundir(campo: str, de_la_regla, de_la_ia: Leido | None, confirmados: dict[str, object] | None = None):
     """(valor, procedencia) de un parámetro. `confirmados` trae lo que una
     persona revisó en la plataforma, que manda sobre todo lo demás."""
     if confirmados and campo in confirmados:
-        valor = confirmados[campo]
-        return valor, Procedencia(campo, "persona", valor_regla=valor)
+        valor = _del_tipo_de(confirmados[campo], de_la_regla if de_la_regla is not None else
+                             (de_la_ia.valor if de_la_ia is not None else None))
+        if valor is not None:
+            return valor, Procedencia(campo, "persona", valor_regla=valor)
     valor_ia = de_la_ia.valor if de_la_ia is not None else None
     cita = de_la_ia.cita if de_la_ia is not None else ""
     seccion = de_la_ia.seccion if de_la_ia is not None else ""
