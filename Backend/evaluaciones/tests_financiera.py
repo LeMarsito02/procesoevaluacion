@@ -479,3 +479,54 @@ class SceSinListaDeFrasesTests(SimpleTestCase):
         texto = ("LISTADO DE LOS CONTRATOS EN EJECUCION OFERENTE: X VALOR DEL CONTRATO SALDO "
                  "SALDO DE CONTRATOS EN EJECUCION $ (346.767.713) EN CONSTANCIA")
         self.assertEqual(_sce(texto), (346_767_713.0, False))
+
+
+class Matriz2Tests(SimpleTestCase):
+    """Los umbrales de los indicadores no están en el pliego: están en la
+    Matriz 2, un anexo que llega en Word, Excel o PDF. Sin ella la evaluación
+    financiera entera queda en revisión."""
+
+    def test_se_lee_el_texto_de_un_word(self):
+        import io
+        import zipfile
+
+        from motor.procesamiento.documentos import texto_de_documento
+
+        memoria = io.BytesIO()
+        with zipfile.ZipFile(memoria, "w") as z:
+            z.writestr("word/document.xml",
+                       "<w:document><w:body><w:p><w:t>ÍNDICE DE LIQUIDEZ</w:t></w:p>"
+                       "<w:p><w:t>&gt;= 1,2</w:t></w:p></w:body></w:document>")
+        texto = texto_de_documento(memoria.getvalue())
+        self.assertIn("LIQUIDEZ", texto)
+        self.assertIn("1,2", texto)
+
+    def test_varios_rangos_no_se_adivinan_sino_que_se_ofrecen(self):
+        """La matriz trae una columna por rango de presupuesto y otra tabla
+        para MIPYME: cuál aplica es decisión del proceso. Adivinar sería peor
+        de las dos maneras (aprobar a quien no cumple o rechazar a quien sí),
+        así que el umbral queda sin fijar y se ofrecen las opciones."""
+        from motor.financiera.parametros import umbrales_de_la_matriz
+
+        texto = ("INDICADOR VALOR CONCERTADO RANGO 1 VALOR CONCERTADO RANGO 2\n"
+                 "INDICE DE LIQUIDEZ\n >=1,1\n >=1,2\n"
+                 "INDICE DE ENDEUDAMIENTO\n <= 0,65\n <= 0,70\n")
+        umbrales, opciones = umbrales_de_la_matriz(texto)
+        self.assertIsNone(umbrales.liquidez_min)
+        self.assertEqual(opciones["liquidez_min"], [1.1, 1.2])
+        self.assertEqual(opciones["endeudamiento_max"], [0.65, 0.70])
+
+    def test_si_todos_los_rangos_coinciden_el_umbral_queda_en_firme(self):
+        from motor.financiera.parametros import umbrales_de_la_matriz
+
+        texto = "RENTABILIDAD DEL ACTIVO\n >= 0,01\n >= 0,01\n"
+        umbrales, opciones = umbrales_de_la_matriz(texto)
+        self.assertEqual(umbrales.roa_min, 0.01)
+        self.assertNotIn("roa_min", opciones)
+
+    def test_el_valor_en_el_renglon_siguiente_se_lee(self):
+        """En la matriz el valor no va al lado del indicador sino debajo."""
+        from motor.financiera.parametros import umbrales_de_la_matriz
+
+        umbrales, _ = umbrales_de_la_matriz("INDICE DE LIQUIDEZ\n\n >=1,3\n")
+        self.assertEqual(umbrales.liquidez_min, 1.3)

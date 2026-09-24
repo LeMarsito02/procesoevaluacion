@@ -167,6 +167,58 @@ def umbrales_del_texto(texto_norm: str, fuente: str) -> Umbrales:
     return u
 
 
+# Cada indicador de la Matriz 2: cómo se llama y con qué se compara.
+_INDICADORES_MATRIZ = {
+    "liquidez_min": (r"LIQUIDEZ", _MAYOR),
+    "endeudamiento_max": (r"ENDEUDAMIENTO", _MENOR),
+    "cobertura_min": (r"COBERTURA\s+DE\s+INTERESES", _MAYOR),
+    "roa_min": (r"RENTABILIDAD\s+(?:DEL|SOBRE\s+EL)\s+ACTIVO", _MAYOR),
+    "roe_min": (r"RENTABILIDAD\s+(?:DEL|SOBRE\s+EL)\s+PATRIMONIO", _MAYOR),
+}
+# Donde empieza otro indicador termina la fila del anterior.
+_OTRO_INDICADOR_RE = (r"LIQUIDEZ|ENDEUDAMIENTO|COBERTURA|RENTABILIDAD|CAPITAL\s+DE\s+TRABAJO|PATRIMONIO\b"
+                      r"|INDICADOR\b")
+# Cuál de los dos rangos aplica depende de la cuantía del proceso y la matriz
+# no siempre lo dice: se toma el más exigente de cada indicador, que nunca
+# aprueba a quien no debe, y se avisa para que una persona confirme el rango.
+_MAS_EXIGENTE = {"liquidez_min": max, "endeudamiento_max": min, "cobertura_min": max,
+                 "roa_min": max, "roe_min": max}
+
+
+def umbrales_de_la_matriz(texto_norm: str) -> tuple[Umbrales, dict[str, list[float]]]:
+    """(umbrales, opciones por indicador).
+
+    La Matriz 2 pone una columna por rango de presupuesto ("RANGO 1: >0
+    <4.000 SMMLV, RANGO 2: >= 4.000") y trae una tabla aparte para los
+    proponentes MIPYME, así que de cada indicador salen varios valores. Cuál
+    aplica es una decisión del proceso, no del programa: si todos los valores
+    coinciden se usa ese; si no, el umbral se deja sin fijar y las opciones se
+    devuelven para que una persona escoja en la plataforma.
+
+    Adivinar sería peor de las dos maneras: con el valor menos exigente se
+    aprobaría a quien no cumple, y con el más exigente se rechazaría a quien
+    sí."""
+    u = Umbrales(fuente="Matriz 2")
+    opciones: dict[str, list[float]] = {}
+    for campo, (nombre, comparador) in _INDICADORES_MATRIZ.items():
+        valores: list[float] = []
+        for m in re.finditer(nombre, texto_norm):
+            # Hasta el siguiente indicador de la tabla (o 160 caracteres).
+            resto = texto_norm[m.end(): m.end() + 160]
+            corte = re.search(_OTRO_INDICADOR_RE, resto)
+            ventana = resto[: corte.start()] if corte else resto
+            for v in re.finditer(rf"(?:{comparador})?\s*{_VALOR}", ventana):
+                valor = numero(v.group(1))
+                if valor is not None and 0 < valor <= 100:
+                    valores.append(valor / 100 if v.group(2) else valor)
+        distintos = sorted(set(valores))
+        if len(distintos) == 1:
+            setattr(u, campo, distintos[0])
+        elif distintos:
+            opciones[campo] = distintos
+    return u, opciones
+
+
 def _texto_con_simbolos(texto: str) -> str:
     """normalizar() borra "≥" y "≤" al pasar a ASCII: se cambian antes."""
     return texto.replace("≥", ">=").replace("≤", "<=").replace("⩾", ">=").replace("⩽", "<=")
@@ -223,10 +275,17 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
         parametros.patrimonio_aplica = total / smmlv >= 40_000 and plazo_max >= 24
     parametros.umbrales = umbrales_del_texto(texto_norm, "pliego")
     if matriz2 is not None and not parametros.umbrales.completos:
-        with abrir_pdf(matriz2) as pdf:
-            texto_matriz = normalizar(_texto_con_simbolos("\n".join(page.extract_text() or "" for page in pdf.pages)))
+        from motor.procesamiento.documentos import texto_de_documento
+
+        texto_matriz = normalizar(_texto_con_simbolos(texto_de_documento(matriz2)))
         # La Matriz 2 completa lo que el pliego no dijo; no borra lo ya leído.
-        de_matriz = umbrales_del_texto(texto_matriz, "Matriz 2")
+        de_matriz, opciones = umbrales_de_la_matriz(texto_matriz)
+        for campo, valores in opciones.items():
+            como_se_llama = campo.replace("_min", "").replace("_max", "").replace("_", " ")
+            parametros.sin_confirmar.append(
+                f"la Matriz 2 da varios valores para {como_se_llama} según el rango de presupuesto y si el proponente "
+                f"es MIPYME ({', '.join(f'{v:g}' for v in valores)}): escoge el que aplica a este proceso"
+            )
         for campo in ("liquidez_min", "endeudamiento_max", "cobertura_min", "roa_min", "roe_min"):
             if getattr(parametros.umbrales, campo) is None and getattr(de_matriz, campo) is not None:
                 setattr(parametros.umbrales, campo, getattr(de_matriz, campo))

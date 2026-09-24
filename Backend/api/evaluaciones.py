@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
+from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from ninja import Router, Schema
+from ninja import File, Router, Schema
+from ninja.files import UploadedFile
 from ninja.errors import HttpError
 
 from cuentas.correo import enviar_asignacion
@@ -684,6 +686,37 @@ def parametros_financieros(request: HttpRequest, evaluacion_id: UUID) -> dict | 
             for l, lf in zip(datos.get("lotes", []), parametros.lotes)
         ],
     }
+
+
+@router.post("/{evaluacion_id}/matriz2", response=dict)
+def subir_matriz2(request: HttpRequest, evaluacion_id: UUID, archivo: File[UploadedFile]) -> dict:
+    """Sube la Matriz 2 del proceso (PDF, Word o Excel). De ella salen los
+    umbrales de los indicadores financieros, que el pliego casi nunca trae.
+    Los proponentes ya evaluados vuelven a la fila para que cuente."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    if evaluacion.estado == EstadoEvaluacion.APROBADA:
+        raise HttpError(409, "La evaluación está aprobada: reábrela para cambiar la Matriz 2.")
+    contenido = archivo.read()
+    if len(contenido) > 20 * 1024 * 1024:
+        raise HttpError(400, "El archivo pasa de 20 MB.")
+    from motor.procesamiento.documentos import texto_de_documento
+
+    if len(texto_de_documento(contenido)) < 200:
+        raise HttpError(400, "No se pudo leer el texto del archivo: súbelo en PDF, Word o Excel (no como imagen).")
+    proceso = evaluacion.proceso
+    proceso.matriz2.save(archivo.name or "matriz2", ContentFile(contenido), save=True)
+    # Los umbrales se vuelven a leer del archivo la próxima vez que se pidan.
+    type(proceso).objects.filter(pk=proceso.pk).update(parametros_financieros={})
+    proceso.parametros_financieros = {}
+    auditar(request, "proceso.matriz2_subida", objeto=proceso, archivo=archivo.name or "")
+    parametros = servicios.parametros_financieros_de(proceso) or {}
+    evaluados = list(evaluacion.resultados.values_list("proponente_id", flat=True).distinct())
+    if evaluados:
+        servicios.encolar(evaluacion, evaluados, usuario)
+    return {"umbrales": parametros.get("umbrales", {}), "avisos": parametros.get("sin_confirmar", []),
+            "reevaluados": len(evaluados)}
 
 
 @router.get("/{evaluacion_id}/parametros-pliego", response=list[dict])

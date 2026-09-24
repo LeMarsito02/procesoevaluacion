@@ -548,7 +548,16 @@ def parametros_financieros_de(proceso) -> dict | None:
     except OSError:
         return None
     lotes = [(l["nombre"], l.get("presupuesto")) for l in tecnicos.get("lotes", [])]
-    leidos = leer_parametros(contenido, lotes, salario)
+    # La Matriz 2 del proceso, si la subieron: de ahí salen los umbrales de los
+    # indicadores, que el pliego casi nunca trae.
+    matriz2 = None
+    if getattr(proceso, "matriz2", None):
+        try:
+            with proceso.matriz2.open("rb") as f:
+                matriz2 = f.read()
+        except OSError:
+            matriz2 = None
+    leidos = leer_parametros(contenido, lotes, salario, matriz2)
     _fundir_con_la_ia(leidos, analisis, tecnicos=False)
     parametros = parametros_a_dict(leidos)
     type(proceso).objects.filter(pk=proceso.pk).update(parametros_financieros=parametros)

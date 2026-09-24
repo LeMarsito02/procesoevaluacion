@@ -29,6 +29,10 @@ class Proceso(models.Model):
         "AnalisisPliego", on_delete=models.PROTECT, null=True, blank=True, related_name="procesos"
     )
     ajustes_pliego = models.JSONField(default=list, blank=True)
+    # La Matriz 2 del proceso (indicadores financieros y organizacionales). Es
+    # un anexo aparte del pliego y llega en PDF, Word o Excel; de ella salen
+    # los umbrales que el pliego no trae.
+    matriz2 = models.FileField(upload_to="matrices/", max_length=300, blank=True)
     # Parámetros de la evaluación técnica leídos del pliego (presupuesto de
     # cada lote, experiencia exigida, códigos UNSPSC, tabla de valor mínimo):
     # motor.tecnica.evaluador.parametros_a_dict. Se calculan la primera vez.
