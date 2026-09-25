@@ -54,6 +54,11 @@ class ProcesoDocumentoBase(BaseModel):
     # "obra_transporte", "obra_social", "menor_cuantia"); None si no se
     # reconoció: la carta se compara entonces con el núcleo común del formato.
     modalidad: str | None = None
+    # En qué página del pliego está cada cosa, para poder abrirlo ahí mismo y
+    # comprobar lo que el programa leyó (o corregir lo que no pudo leer) sin
+    # tener que buscar a mano en noventa páginas.
+    pagina_objeto: int | None = None
+    pagina_garantia: int | None = None
     # El pliego permite suplir la tarjeta profesional del ingeniero con el
     # registro del art. 18 del Decreto-Ley 2106 de 2019 (el certificado
     # COPNIA): entonces no se exige la copia de la tarjeta.

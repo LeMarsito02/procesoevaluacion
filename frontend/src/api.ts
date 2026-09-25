@@ -28,6 +28,9 @@ export interface ProcesoDocumentoBase {
   presupuesto_total: number
   garantia_seriedad: GarantiaSeriedad
   advertencias: string[]
+  /** Páginas del pliego donde está cada dato, para abrirlo ahí y comprobarlo. */
+  pagina_objeto?: number | null
+  pagina_garantia?: number | null
 }
 
 export interface Proponente {

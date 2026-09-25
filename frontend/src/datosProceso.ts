@@ -12,6 +12,9 @@ export function useDatosProceso() {
   const [porcentajePct, setPorcentajePct] = useState(10)
   const [baseCalculo, setBaseCalculo] = useState<BaseCalculo>('lote_mayor_valor')
   const [advertencias, setAdvertencias] = useState<string[]>([])
+  // Páginas del pliego donde está cada dato: sirven para abrirlo ahí y
+  // comprobar lo que se leyó.
+  const [paginas, setPaginas] = useState<{ objeto?: number | null; garantia?: number | null }>({})
 
   const cargar = useCallback((proceso: ProcesoDocumentoBase) => {
     setObjetoGeneral(proceso.objeto_general)
@@ -20,6 +23,7 @@ export function useDatosProceso() {
     setPorcentajePct(Math.round(proceso.garantia_seriedad.porcentaje * 1000) / 10)
     setBaseCalculo(proceso.garantia_seriedad.base_calculo)
     setAdvertencias(proceso.advertencias)
+    setPaginas({ objeto: proceso.pagina_objeto, garantia: proceso.pagina_garantia })
   }, [])
 
   const derivados = useMemo(() => {
@@ -67,6 +71,7 @@ export function useDatosProceso() {
     porcentajePct,
     baseCalculo,
     advertencias,
+    paginas,
     derivados,
     cargar,
     construir,

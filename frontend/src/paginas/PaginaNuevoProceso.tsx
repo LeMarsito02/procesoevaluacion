@@ -209,6 +209,16 @@ export default function PaginaNuevoProceso() {
             codigoProceso={codigoProceso}
             fechaCierre={fechaCierre}
             {...propsDatos(datos, fechaCierre)}
+            pliego={
+              pliego
+                ? {
+                    url: `/api/procesos/pliego/${pliego.id}/archivo${esSuper && entidadId ? `?entidad_id=${entidadId}` : ''}`,
+                    nombre: pliego.nombre_archivo,
+                    paginaObjeto: datos.paginas.objeto,
+                    paginaGarantia: datos.paginas.garantia,
+                  }
+                : null
+            }
             proponentes={proponentes}
             noReconocidos={noReconocidos}
             driveError={driveError}

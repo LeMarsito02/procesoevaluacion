@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Lote, Proponente } from '../api'
 import { formatFechaCorta, formatPesos } from '../format'
 import Icono from './Icono'
+import VisorPliego from './VisorPliego'
 
 export type BaseCalculo = 'lote_mayor_valor' | 'presupuesto_total'
 
@@ -14,6 +15,8 @@ interface Props {
   porcentajePct: number
   baseCalculo: BaseCalculo
   advertencias: string[]
+  /** El pliego, para poder verlo aquí mismo y comprobar lo que se leyó. */
+  pliego?: { url: string; nombre: string; paginaObjeto?: number | null; paginaGarantia?: number | null } | null
   derivados: { presupuestoTotal: number; loteMayorNumero: string; valorBase: number; valorAsegurado: number; fechaVencimiento: string }
   proponentes: Proponente[]
   noReconocidos: string[]
@@ -42,6 +45,8 @@ function estimacionMinutos(n: number): number {
 export default function PasoDatos(p: Props) {
   const [editandoLotes, setEditandoLotes] = useState(false)
   const [editandoGarantia, setEditandoGarantia] = useState(false)
+  // Qué parte del pliego se está mirando: null = cerrado.
+  const [viendoPliego, setViendoPliego] = useState<{ pagina?: number | null; buscando: string } | null>(null)
   const [verProponentes, setVerProponentes] = useState(false)
   const n = p.proponentes.length
 
@@ -96,6 +101,23 @@ export default function PasoDatos(p: Props) {
                 <li key={i}>{a}</li>
               ))}
             </ul>
+            {p.pliego && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ marginTop: 8 }}
+                onClick={() =>
+                  setViendoPliego({
+                    pagina: p.pliego?.paginaObjeto,
+                    buscando:
+                      'Esto es lo que el programa no pudo leer del pliego. Compruébelo aquí y corríjalo en el ' +
+                      'formulario: queda registrado que lo confirmó una persona.',
+                  })
+                }
+              >
+                <Icono nombre="ojo" tam={15} /> Ver el pliego
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -122,6 +144,21 @@ export default function PasoDatos(p: Props) {
             <h2>Objeto y lotes</h2>
             <p>Se usan para verificar la carta de presentación y el objeto social.</p>
           </div>
+          {p.pliego && (
+            <button
+              className="btn btn-ghost btn-sm"
+              type="button"
+              onClick={() =>
+                setViendoPliego({
+                  pagina: p.pliego?.paginaObjeto,
+                  buscando: 'La tabla de objeto, presupuesto, plazo y ubicación (numeral 1.1).',
+                })
+              }
+            >
+              <Icono nombre="ojo" tam={15} /> Ver en el pliego
+              {p.pliego.paginaObjeto ? ` (pág. ${p.pliego.paginaObjeto})` : ''}
+            </button>
+          )}
           <button className="btn btn-secondary btn-sm" type="button" onClick={() => setEditandoLotes((v) => !v)}>
             {editandoLotes ? (
               <>
@@ -208,6 +245,21 @@ export default function PasoDatos(p: Props) {
             <h2>Garantía de seriedad exigida</h2>
             <p>Cada póliza se compara contra el valor de los lotes a los que se presenta el proponente.</p>
           </div>
+          {p.pliego && (
+            <button
+              className="btn btn-ghost btn-sm"
+              type="button"
+              onClick={() =>
+                setViendoPliego({
+                  pagina: p.pliego?.paginaGarantia,
+                  buscando: 'El numeral de la Garantía de Seriedad de la Oferta: su vigencia y el porcentaje del valor asegurado.',
+                })
+              }
+            >
+              <Icono nombre="ojo" tam={15} /> Ver en el pliego
+              {p.pliego.paginaGarantia ? ` (pág. ${p.pliego.paginaGarantia})` : ''}
+            </button>
+          )}
           <button className="btn btn-secondary btn-sm" type="button" onClick={() => setEditandoGarantia((v) => !v)}>
             {editandoGarantia ? (
               <>
@@ -328,6 +380,15 @@ export default function PasoDatos(p: Props) {
           </button>
         </div>
       </div>
+      {viendoPliego && p.pliego && (
+        <VisorPliego
+          url={p.pliego.url}
+          nombre={p.pliego.nombre}
+          pagina={viendoPliego.pagina}
+          buscando={viendoPliego.buscando}
+          onCerrar={() => setViendoPliego(null)}
+        />
+      )}
     </main>
   )
 }

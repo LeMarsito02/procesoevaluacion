@@ -204,6 +204,29 @@ def _payload_pliego(analisis, reutilizado: bool) -> dict:
     }
 
 
+@procesos.get("/pliego/{analisis_id}/archivo")
+def ver_pliego_analizado(request: HttpRequest, analisis_id: UUID, entidad_id: UUID | None = None):
+    """El PDF del pliego que se acaba de subir, para verlo dentro de la
+    plataforma.
+
+    Existe para que quien crea el proceso pueda comprobar en el pliego mismo lo
+    que el programa leyó —y corregir lo que no pudo leer— sin buscar a mano en
+    noventa páginas: la pantalla lo abre en la página donde está cada dato."""
+    from django.http import FileResponse
+
+    from evaluaciones.models import AnalisisPliego
+
+    if not puede_crear_procesos(request.auth):
+        raise HttpError(403, "Su rol no permite crear procesos.")
+    usuario = request.auth
+    entidad = usuario.entidad_id if not usuario.es_superadmin else entidad_id
+    analisis = AnalisisPliego.objects.filter(pk=analisis_id, entidad_id=entidad).first()
+    if analisis is None or not analisis.archivo:
+        raise HttpError(404, "No se encontró el pliego.")
+    return FileResponse(analisis.archivo.open("rb"), content_type="application/pdf",
+                        filename=analisis.nombre_archivo)
+
+
 @procesos.get("/pliego/{analisis_id}")
 async def estado_pliego(request: HttpRequest, analisis_id: UUID, entidad_id: UUID | None = None) -> dict:
     """El análisis del pliego con el avance de la lectura con IA: la pantalla

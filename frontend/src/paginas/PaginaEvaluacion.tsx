@@ -392,6 +392,12 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           codigoProceso={codigo}
           fechaCierre={fechaCierre}
           {...propsDatos(datos, fechaCierre)}
+          pliego={{
+            url: `/api/evaluaciones/${id}/pliego`,
+            nombre: 'Pliego del proceso',
+            paginaObjeto: datos.paginas.objeto,
+            paginaGarantia: datos.paginas.garantia,
+          }}
           proponentes={proponentes}
           noReconocidos={inicial.proponentes_no_reconocidos}
           driveError={null}

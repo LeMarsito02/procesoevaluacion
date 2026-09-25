@@ -100,6 +100,8 @@ class ParsedGarantia:
     base_calculo: str
     raw_vigencia: str = ""
     raw_valor: str = ""
+    # Página (desde 1) del numeral, para poder abrir el pliego ahí.
+    pagina: int | None = None
 
 
 @dataclass
@@ -110,6 +112,10 @@ class ParseResult:
     modalidad: str | None = None
     tarjeta_suplible: bool = False
     tarjeta_exigida: bool = False
+    # Páginas (desde 1) donde se encontró cada cosa, para poder abrir el pliego
+    # ahí y comprobarlo.
+    pagina_objeto: int | None = None
+    pagina_garantia: int | None = None
 
 
 # "El requisito de la tarjeta profesional se puede suplir con el registro de
@@ -378,7 +384,7 @@ def _lote_unico_del_texto(texto: str) -> ParsedLote | None:
     )
 
 
-def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str, list[ParsedLote]]:
+def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str, list[ParsedLote], int | None]:
     objeto_general = ""
     lotes: list[ParsedLote] = []
     heading_page_idx = None
@@ -410,8 +416,9 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
         heading_page_idx = fallback_page_idx
 
     if heading_page_idx is None:
-        return objeto_general, lotes
+        return objeto_general, lotes, None
 
+    pagina_tabla: int | None = None
     for i in range(heading_page_idx, min(heading_page_idx + 6, len(pdf.pages))):
         page = pdf.pages[i]
         for table in page.extract_tables():
@@ -430,6 +437,7 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
                 resto = [c for c in celdas if c not in (valor, plazo)]
                 objeto = max(resto, key=len) if resto else ""
                 lugar = next((c for c in resto if c != objeto), None)
+                pagina_tabla = pagina_tabla if pagina_tabla is not None else i
                 lotes.append(
                     ParsedLote(
                         numero=first_cell,
@@ -457,9 +465,13 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
             del_texto = _lotes_del_texto(texto)
             if del_texto:
                 lotes.extend(del_texto)
+                pagina_tabla = i
                 break
     if not lotes:
-        unico = _objeto_unico(pdf, heading_page_idx, escaneado)
+        vista: list[int] = []
+        unico = _objeto_unico(pdf, heading_page_idx, escaneado, vista)
+        if vista:
+            pagina_tabla = vista[0]
         if unico is not None:
             lotes.append(unico)
             objeto_general = objeto_general or unico.objeto
@@ -488,13 +500,14 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
     for lote in lotes:
         lote.lugar_ejecucion = lote.lugar_ejecucion or None
 
-    return objeto_general, lotes
+    return objeto_general, lotes, (pagina_tabla or heading_page_idx) + 1
 
 
 _DINERO_CELDA_RE = re.compile(r"\$\s*\d[\d.,]*")
 
 
-def _objeto_unico(pdf: pdfplumber.PDF, desde: int, escaneado: bool = False) -> ParsedLote | None:
+def _objeto_unico(pdf: pdfplumber.PDF, desde: int, escaneado: bool = False,
+                  donde: list[int] | None = None) -> ParsedLote | None:
     """Pliegos de un solo objeto (sin lotes), como los de obra pública: una
     tabla "Objeto del proyecto | Plazo | Valor presupuesto oficial | Lugar".
     Las columnas de los datos no siempre calzan con las del encabezado, así
@@ -515,6 +528,8 @@ def _objeto_unico(pdf: pdfplumber.PDF, desde: int, escaneado: bool = False) -> P
                 resto = [c for c in celdas if c not in (valor, plazo)]
                 objeto = max(resto, key=len) if resto else ""
                 lugar = next((c for c in resto if c != objeto), None)
+                if donde is not None:
+                    donde.append(i)
                 return ParsedLote(
                     numero="ÚNICO",
                     objeto=objeto,
@@ -533,6 +548,8 @@ def _objeto_unico(pdf: pdfplumber.PDF, desde: int, escaneado: bool = False) -> P
             continue
         unico = _lote_unico_del_texto(texto)
         if unico is not None:
+            if donde is not None:
+                donde.append(i)
             return unico
     return None
 
@@ -738,6 +755,7 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
             base_calculo=base_calculo,
             raw_vigencia=raw_vigencia,
             raw_valor=raw_valor,
+            pagina=page.page_number,
         )
 
     return None
@@ -754,8 +772,9 @@ def parse_documento_base(pdf_bytes: bytes) -> ParseResult:
         # Esto no decide si se hace OCR (eso es por página): decide si conviene
         # acotar la búsqueda, porque en un documento escaneado cada página cuesta.
         escaneado = _es_escaneado(pdf)
-        objeto_general, lotes = _find_budget_rows(pdf, escaneado)
+        objeto_general, lotes, pagina_objeto = _find_budget_rows(pdf, escaneado)
         garantia = _find_garantia_seriedad(pdf, escaneado)
+        pagina_garantia = getattr(garantia, "pagina", None) if garantia else None
         # La modalidad se lee del encabezado de las primeras páginas.
         primeras = [_texto(p, escaneado) for p in pdf.pages[:8]]
         modalidad = modalidad_de(" ".join(primeras[:3]), " ".join(primeras))
@@ -772,6 +791,7 @@ def parse_documento_base(pdf_bytes: bytes) -> ParseResult:
     return ParseResult(
         objeto_general=objeto_general, lotes=lotes, garantia=garantia, modalidad=modalidad,
         tarjeta_suplible=tarjeta_suplible, tarjeta_exigida=_aval_pide_tarjeta(texto),
+        pagina_objeto=pagina_objeto, pagina_garantia=pagina_garantia,
     )
 
 
@@ -879,6 +899,8 @@ def build_proceso(codigo_proceso: str, fecha_cierre: date, pdf_bytes: bytes) -> 
         codigo_proceso=codigo_proceso,
         fecha_cierre=fecha_cierre,
         modalidad=parsed.modalidad,
+        pagina_objeto=parsed.pagina_objeto,
+        pagina_garantia=parsed.pagina_garantia,
         tarjeta_suplible=parsed.tarjeta_suplible,
         tarjeta_exigida=parsed.tarjeta_exigida,
         objeto_general=parsed.objeto_general,
