@@ -118,8 +118,31 @@ _NO_ES_EXIGENCIA_RE = re.compile(
 #   los proponentes y se resuelve una vez por proceso.
 # - encabezado: un título, una celda de tabla o un dato suelto que la lectura
 #   partió de su frase. No le exige nada a nadie.
-EXCLUSION, EXIGENCIA, PERMISO, REGLA_LECTURA, ENCABEZADO = (
-    "exclusion", "exigencia", "permiso", "regla_lectura", "encabezado")
+# - posterior: el pliego dice expresamente que eso no se evalúa con la oferta,
+#   sino después de firmar el contrato. No es un requisito de la evaluación, así
+#   que no frena nada; es el propio pliego el que lo saca de la etapa.
+EXCLUSION, EXIGENCIA, PERMISO, REGLA_LECTURA, ENCABEZADO, POSTERIOR = (
+    "exclusion", "exigencia", "permiso", "regla_lectura", "encabezado", "posterior")
+
+# Lo que el pliego saca de la etapa de selección con todas sus letras. En el
+# documento tipo de interventoría: «durante el desarrollo del Proceso de
+# Contratación no se evaluarán los soportes de los perfiles requeridos, por lo
+# que no serán exigidos como parte de los documentos que conformen la
+# propuesta»; las condiciones del personal clave «serán verificadas posterior a
+# la suscripción del contrato, previo al acta de inicio». Pedir esos soportes al
+# evaluar la oferta es pedir lo que el pliego dice que no se pide.
+#
+# Ojo con el alcance: esto habla de los SOPORTES. El Formato 8, que sí hay que
+# presentar y es causal de rechazo, no trae ninguna de estas frases y sigue
+# frenando la aprobación mientras el motor no lo verifique.
+_SE_VERIFICA_DESPUES_RE = re.compile(
+    r"POSTERIOR\s+A\s+LA\s+(?:SUSCRIPCION|FIRMA)\s+DEL\s+CONTRATO|PREVIO\s+A[LR]?\s+ACTA\s+DE\s+INICIO"
+    r"|NO\s+SE\s+EVALUARAN\s+LOS\s+SOPORTES|NO\s+SE\s+REVISARAN\s+LOS\s+SOPORTES"
+    r"|NO\s+SERAN\s+EXIGIDOS\s+COMO\s+PARTE\s+DE\s+LOS\s+DOCUMENTOS"
+    r"|NO\s+DEBERA\s+ALLEGAR\s+CON\s+SU\s+PROPUESTA|NO\s+SE\s+EXIGIRAN\s+CON\s+LA\s+PROPUESTA"
+    r"|UNA\s+VEZ\s+(?:CELEBRADO|SUSCRITO|FIRMADO)\s+EL\s+CONTRATO"
+)
+
 
 # El pliego dice qué no sirve. Va primero: una prohibición escrita con "podrá"
 # ("solo uno podrá haber iniciado antes de…") sigue siendo una prohibición.
@@ -191,6 +214,9 @@ def clase_de(requisito: str, cita: str = "") -> str:
     cita para la exclusión, donde el riesgo de pasarla por alto es aprobar a
     quien no debe."""
     texto = _norm(requisito)
+    if _SE_VERIFICA_DESPUES_RE.search(f"{texto} {_norm(cita)}"):
+        # Lo dice el pliego, no el programa: esto no se evalúa con la oferta.
+        return POSTERIOR
     if _EXCLUSION_RE.search(texto) or _EXCLUSION_RE.search(_norm(cita)):
         return EXCLUSION
     if _DEBER_RE.search(texto):

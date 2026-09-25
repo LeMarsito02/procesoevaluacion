@@ -376,6 +376,32 @@ class ClaseDeRequisitoTests(SimpleTestCase):
         ):
             self.assertIsNone(verificacion_de(texto, cita), texto)
 
+    def test_lo_que_el_pliego_deja_para_despues_del_contrato_no_frena_la_oferta(self):
+        """El documento tipo de interventoría dice con todas sus letras que los
+        soportes del personal clave no se evalúan con la oferta, sino después de
+        firmar el contrato. Pedirlos al evaluar es pedir lo que el pliego dice
+        que no se pide."""
+        self.assertEqual(
+            self.clase("Las condiciones de formación académica y experiencia de los perfiles del Personal Clave Evaluable "
+                       "serán verificadas posterior a la suscripción del contrato, previo al acta de inicio"),
+            "posterior")
+        self.assertEqual(
+            self.clase("El proponente en la etapa de selección no deberá allegar con su propuesta documentos soporte, "
+                       "hojas de vida, ni certificaciones de los profesionales"),
+            "posterior")
+
+    def test_el_formato_8_si_hay_que_presentarlo_y_sigue_frenando(self):
+        """El alcance de lo anterior son los SOPORTES. El Formato 8 se presenta
+        con la oferta y no presentarlo es causal de rechazo: el motor no lo
+        verifica, así que tiene que seguir frenando."""
+        from motor.pliego.catalogo_tecnico import cobertura
+
+        requisito = ("Aportar y diligenciar en forma clara, completa, correcta y legible el «Formato 8 - Aceptación y "
+                     "cumplimiento de la formación académica y la experiencia del Personal Clave Evaluable»")
+        self.assertEqual(self.clase(requisito), "exigencia")
+        _, faltantes = cobertura([(requisito, requisito)])
+        self.assertEqual(len(faltantes), 1)
+
     def test_el_rango_financiero_de_las_mipymes_no_se_da_por_aplicado(self):
         """El pliego les aplica otro rango de la matriz; el motor usa un solo
         conjunto de umbrales para todos."""
