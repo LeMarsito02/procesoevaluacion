@@ -868,3 +868,47 @@ class GuardarYLeerLosUmbralesDeMipymeTests(SimpleTestCase):
 
         vuelto = parametros_de_dict(parametros_a_dict(ParametrosFinancieros(smmlv=1_000_000)))
         self.assertIsNone(vuelto.umbrales_mipyme)
+
+
+class CertificadoDeLaJuntaVencidoTests(SimpleTestCase):
+    """Criterio del abogado (25/09/2026): el certificado de la Junta Central de
+    Contadores tiene que estar vigente al cierre, y si no lo está el requisito va
+    **a revisión**, no a rechazo. Quien revisa decide, así que el motivo tiene que
+    traer todo lo que necesita para decidir sin volver a abrir la oferta."""
+
+    def _certificado(self, expedicion, meses=3, archivo="p1/anexos/jcc.pdf"):
+        from motor.financiera.contadores import CertificadoJCC
+
+        return CertificadoJCC(archivo=archivo, tarjeta="52754", nombre="RAFAEL VEGA",
+                              expedicion=expedicion, vigencia_meses=meses)
+
+    def test_un_certificado_vigente_al_cierre_cumple(self):
+        cert = self._certificado(date(2026, 6, 1))
+        self.assertTrue(cert.vigente(date(2026, 7, 24)))
+
+    def test_uno_vencido_al_cierre_no_cumple(self):
+        """Expedido el 17/04, vigencia 3 meses: venció el 17/07, antes del cierre
+        del 24/07."""
+        cert = self._certificado(date(2026, 4, 17))
+        self.assertFalse(cert.vigente(date(2026, 7, 24)))
+
+    def test_el_motivo_dice_cuando_vencio_y_donde_esta(self):
+        """Lo que hace que revisarlo cueste segundos: la tarjeta, de quién es,
+        cuándo venció, cuántos días le faltaron y en qué archivo está."""
+        from motor.financiera.contadores import DocumentosFinancieros, validez_capacidad_organizacional
+        from motor.tecnica.experiencia import IntegranteTecnico
+
+        docs = DocumentosFinancieros(
+            estados={"p1/estados.pdf": "ESTADOS FINANCIEROS firmados por el contador T.P. 52754-T"},
+            certificados=[self._certificado(date(2026, 4, 17))],
+            dictamenes={}, completos={},
+        )
+        integrante = IntegranteTecnico("INVERSIONES ALFA S.A.S", "900111222", 1.0, None)
+        revision = validez_capacidad_organizacional([integrante], docs, date(2026, 7, 24))
+        self.assertFalse(revision.cumple)  # a revisión, no rechazo: quien revisa decide
+        motivo = " ".join(revision.motivos)
+        self.assertIn("52754", motivo)
+        self.assertIn("17/04/2026", motivo)
+        self.assertIn("17/07/2026", motivo)   # cuándo venció
+        self.assertIn("día(s) antes del cierre", motivo)
+        self.assertIn("jcc.pdf", motivo)      # dónde está

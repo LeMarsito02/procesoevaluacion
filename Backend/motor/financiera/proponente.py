@@ -107,6 +107,13 @@ def evaluar_proponente_financiero(
     resultado.organizacional = capacidad_organizacional(ind, umbrales, faltas)
     docs = documentos_financieros(pdfs)
     resultado.validez = validez_capacidad_organizacional(integrantes, docs, fecha_cierre)
+    # Cada cosa que falta de la validez es su propio punto de revisión, con su
+    # evidencia: así quien revisa mira ese certificado y no la oferta entera.
+    if not resultado.validez.cumple:
+        for i, motivo in enumerate(resultado.validez.motivos):
+            if "vigentes al cierre" in motivo:
+                continue  # lo que sí está bien no es un punto por revisar
+            resultado.revisiones.append(PuntoDeRevision(f"validez_{i}", "oferta", motivo))
     for lote in lotes:
         resultado.capital_por_lote[lote.nombre] = capital_de_trabajo(ind, lote, faltas)
     resultado.residual = residual_del_proponente(pdfs, excels, integrantes, lotes, parametros.smmlv, plural, docs.estados, docs.completos)

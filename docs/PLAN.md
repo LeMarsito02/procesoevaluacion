@@ -159,9 +159,13 @@ Las causas de lo que quedó a revisión, ya en el registro:
   descartar (1), experiencia de un socio (1).
 - **financiera**: el ingreso operacional que no se lee de los estados financieros
   (4 ofertas, es la causa mayor), el RUP de un integrante que no aparece (2), y
-  certificados de la Junta Central de Contadores vencidos al cierre (3) —ahí
-  rechazamos con evidencia y el ICCU aprobó: **falta que el abogado diga el
-  criterio**, porque rechazar de más también es riesgo—.
+  certificados de la Junta Central de Contadores vencidos al cierre (3). **Criterio
+  resuelto** (25/09/2026): tiene que estar vigente al cierre y, si no lo está, va a
+  revisión, no a rechazo —que es lo que el motor ya hacía—. Lo que se arregló es el
+  costo de revisarlo: el motivo dice de quién es la tarjeta, cuándo venció, cuántos
+  días antes del cierre y en qué archivo está, y cada certificado es su propio punto
+  de revisión. Consultarlo en línea no serviría: uno expedido después del cierre no
+  prueba que estuviera vigente al cierre.
 
 ## 3 ter. La lectura del pliego, comprobada contra lo publicado
 

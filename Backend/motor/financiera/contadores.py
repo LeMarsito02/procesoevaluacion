@@ -212,13 +212,32 @@ def validez_capacidad_organizacional(
             if certs:
                 c = max(certs, key=lambda x: x.expedicion or date.min)
                 estado_tarjetas[tp] = "vencido"
-                motivos.append(
-                    f"{integrante.nombre}: el certificado de la Junta Central de Contadores de la T.P. {tp}"
-                    f"{' (' + c.nombre + ')' if c.nombre else ''} se expidió el "
-                    f"{c.expedicion:%d/%m/%Y} con vigencia de {c.vigencia_meses} meses: no está vigente al cierre"
-                    if c.expedicion and c.vigencia_meses else
-                    f"{integrante.nombre}: no se leyó la fecha o la vigencia del certificado de la T.P. {tp}"
-                )
+                if c.expedicion and c.vigencia_meses:
+                    # El criterio es que esté vigente al cierre, y esto va a
+                    # revisión, no a rechazo: así que se le deja a quien revisa
+                    # todo lo que necesita para decidir en segundos —de quién es
+                    # la tarjeta, hasta cuándo estuvo vigente, cuántos días le
+                    # faltaron y en qué archivo está— sin volver a abrir la
+                    # oferta. Un certificado nuevo no arregla este caso: uno
+                    # expedido después del cierre no prueba que estuviera vigente
+                    # al cierre.
+                    from motor.tecnica.puntaje import _mas_meses
+
+                    vence = _mas_meses(c.expedicion, c.vigencia_meses)
+                    falto = (fecha_cierre - vence).days if vence else None
+                    motivos.append(
+                        f"{integrante.nombre}: el certificado de la Junta Central de Contadores de la T.P. {tp}"
+                        f"{' (' + c.nombre + ')' if c.nombre else ''} se expidió el "
+                        f"{c.expedicion:%d/%m/%Y} con vigencia de {c.vigencia_meses} meses, así que venció el "
+                        f"{vence:%d/%m/%Y}"
+                        + (f", {falto} día(s) antes del cierre" if falto and falto > 0 else "")
+                        + f": no está vigente al cierre. Está en «{c.archivo.rsplit('/', 1)[-1]}»"
+                    )
+                else:
+                    motivos.append(
+                        f"{integrante.nombre}: no se leyó la fecha o la vigencia del certificado de la T.P. {tp}"
+                        f" (está en «{c.archivo.rsplit('/', 1)[-1]}»)"
+                    )
             else:
                 estado_tarjetas[tp] = "sin certificado"
                 motivos.append(f"{integrante.nombre}: no se encontró el certificado de la Junta Central de Contadores de la T.P. {tp}")
