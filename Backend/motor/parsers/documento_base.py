@@ -139,11 +139,16 @@ def _es_escaneado(pdf: pdfplumber.PDF) -> bool:
 
 
 def _texto(page, escaneado: bool) -> str:
-    """El texto de la página: con OCR si el documento está escaneado. Se usa el
-    de tablas porque lee fila por fila, que es como hay que leer la tabla de
-    objeto y presupuesto y la de características de la garantía."""
-    if not escaneado:
-        return page.extract_text() or ""
+    """El texto de la página, con OCR si esa página lo necesita.
+
+    La decisión es por página, no por documento: hay pliegos con la portada y el
+    índice en texto y el cuerpo escaneado, y mirando solo el principio se
+    concluiría que no hace falta OCR justo en las páginas que sí. De eso ya se
+    encarga `texto_pagina_tabla`, que usa el texto propio de la página cuando lo
+    tiene y solo hace OCR —fila por fila, que es como hay que leer una tabla—
+    cuando la página es una imagen. `escaneado` no cambia lo que se lee: solo
+    acota dónde se busca, porque el OCR cuesta.
+    """
     from motor.procesamiento.pdf_utils import texto_pagina_tabla
 
     return texto_pagina_tabla(page)
@@ -348,16 +353,6 @@ def _objeto_unico(pdf: pdfplumber.PDF, desde: int, escaneado: bool = False) -> P
     por los meses, el objeto como el texto más largo y el lugar, lo que queda."""
     # Se empieza en la primera página que nombra la sección (puede ser el índice).
     for i in range(desde, min(desde + 8, len(pdf.pages))):
-        if escaneado:
-            # La página es una imagen: no hay tabla que extraer, así que la fila
-            # se reconoce en el texto que devolvió el OCR.
-            texto = _texto(pdf.pages[i], True)
-            sin_tildes = _strip_accents(texto.upper())
-            if "OBJETO" in sin_tildes and "PRESUPUESTO" in sin_tildes:
-                unico = _lote_unico_del_texto(texto)
-                if unico is not None:
-                    return unico
-            continue
         for table in pdf.pages[i].extract_tables():
             texto = _strip_accents(" ".join(c or "" for fila in table for c in fila).upper())
             if "OBJETO" not in texto or "PRESUPUESTO" not in texto:
@@ -378,6 +373,17 @@ def _objeto_unico(pdf: pdfplumber.PDF, desde: int, escaneado: bool = False) -> P
                     valor_presupuesto=_parse_money(_DINERO_CELDA_RE.search(valor).group(0)),
                     lugar_ejecucion=lugar,
                 )
+    # Las tablas no dieron la fila: o la página es una imagen (y no hay tabla que
+    # extraer) o la tabla existe y viene vacía. En ambos casos la fila se reconoce
+    # en el texto, que con OCR llega con las columnas entremezcladas.
+    for i in range(desde, min(desde + 8, len(pdf.pages))):
+        texto = _texto(pdf.pages[i], escaneado)
+        sin_tildes = _strip_accents(texto.upper())
+        if "OBJETO" not in sin_tildes or "PRESUPUESTO" not in sin_tildes:
+            continue
+        unico = _lote_unico_del_texto(texto)
+        if unico is not None:
+            return unico
     return None
 
 
@@ -434,17 +440,6 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
         raw_valor = ""
 
         for p in window_pages:
-            if escaneado:
-                # La tabla de características es una imagen: sus filas se leen
-                # del texto del OCR, que las trae con la etiqueta delante.
-                de_texto = _garantia_del_texto(_texto(p, True))
-                if vigencia_meses is None and de_texto[0] is not None:
-                    vigencia_meses, raw_vigencia = de_texto[0], de_texto[1]
-                if porcentaje is None and de_texto[2] is not None:
-                    porcentaje, raw_valor = de_texto[2], de_texto[3]
-                if vigencia_meses is not None and porcentaje is not None:
-                    break
-                continue
             for table in p.extract_tables():
                 for row in table:
                     if not row or row[0] is None:
@@ -464,6 +459,15 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
                             porcentaje = float(m.group(1).replace(",", ".")) / 100
                             raw_valor = condicion
 
+            if vigencia_meses is None or porcentaje is None:
+                # La tabla de características puede ser una imagen, o venir vacía
+                # aunque exista: sus filas también se leen del texto, que las trae
+                # con la etiqueta delante.
+                de_texto = _garantia_del_texto(_texto(p, escaneado))
+                if vigencia_meses is None and de_texto[0] is not None:
+                    vigencia_meses, raw_vigencia = de_texto[0], de_texto[1]
+                if porcentaje is None and de_texto[2] is not None:
+                    porcentaje, raw_valor = de_texto[2], de_texto[3]
             if vigencia_meses is not None and porcentaje is not None:
                 break
 
@@ -491,9 +495,11 @@ def parse_documento_base(pdf_bytes: bytes) -> ParseResult:
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         # Se decide una vez: el OCR cuesta, y solo hace falta si el cuerpo del
         # documento es una imagen.
+        # La huella permite cachear el OCR de cada página entre corridas.
+        pdf._huella_contenido = hashlib.sha256(pdf_bytes).hexdigest()
+        # Esto no decide si se hace OCR (eso es por página): decide si conviene
+        # acotar la búsqueda, porque en un documento escaneado cada página cuesta.
         escaneado = _es_escaneado(pdf)
-        if escaneado:
-            pdf._huella_contenido = hashlib.sha256(pdf_bytes).hexdigest()  # para la caché del OCR
         objeto_general, lotes = _find_budget_rows(pdf, escaneado)
         garantia = _find_garantia_seriedad(pdf, escaneado)
         # La modalidad se lee del encabezado de las primeras páginas.
