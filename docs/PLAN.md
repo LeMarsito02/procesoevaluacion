@@ -163,6 +163,29 @@ Las causas de lo que quedó a revisión, ya en el registro:
   rechazamos con evidencia y el ICCU aprobó: **falta que el abogado diga el
   criterio**, porque rechazar de más también es riesgo—.
 
+## 3 ter. La lectura del pliego, comprobada contra lo publicado
+
+La entidad publica en el SECOP el presupuesto oficial y el plazo de cada proceso, y
+eso está en el portal de datos abiertos. Comparar esas dos cifras con las que sale
+del PDF es la forma más barata de saber si un pliego se leyó mal:
+
+    manage.py verificar_lectura_pliegos
+
+Al 25/09/2026, con 20 pliegos en el dataset: **18 coinciden al peso**, uno no tiene
+datos publicados con ese código (LP-035) y uno no corresponde (LP-010-2025: el PDF
+del dataset dice 2.392 millones a 5 meses y lo publicado son 36.539 a 21, así que
+el archivo no es de la versión final de ese proceso).
+
+Esa comparación encontró tres pliegos por lotes que se leían como si tuvieran uno
+solo —LP-035 («Lote No. 1»), LP-038 (la columna trae solo el número)— y en todos el
+presupuesto del proceso quedaba siendo el del primer lote, con el que se calculan el
+capital de trabajo, la capacidad residual y la experiencia exigida. Es el tipo de
+error que no se ve en una prueba con texto inventado.
+
+Los procesos se descubren con `manage.py buscar_procesos_secop`. Los documentos no
+se pueden bajar por comandos: el portal responde con un reCAPTCHA a lo que no venga
+de un navegador, y eso no se fuerza.
+
 ## 4. Verificación continua
 
 1. Ofertas de 3 o 4 procesos más.
