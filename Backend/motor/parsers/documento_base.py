@@ -15,7 +15,10 @@ from motor.esquemas.proceso import GarantiaSeriedad, Lote, ProcesoDocumentoBase
 MONEY_RE = re.compile(r"\$\s*([\d.,]+)")
 MONTHS_RE = re.compile(r"\((\d+)\)\s*MES", re.IGNORECASE)
 PERCENT_RE = re.compile(r"\((\d+(?:[.,]\d+)?)\s*%\)")
-LOTE_ROW_RE = re.compile(r"^(LOTE\s*\d+|SEGMENTO\s*\d+)", re.IGNORECASE)
+# "Lote 1", "Lote No. 1", "Lote N° 1", "Segmento 2". Sin el "No." de por medio,
+# un proceso de dos lotes se leía como uno solo y su presupuesto salía siendo el
+# del primer lote.
+LOTE_ROW_RE = re.compile(r"^(LOTE|SEGMENTO)\s*(?:N[O°ºª]?\s*\.?\s*)?\d+", re.IGNORECASE)
 
 DEFAULT_VIGENCIA_MESES = 3
 DEFAULT_PORCENTAJE = 0.10
@@ -46,6 +49,30 @@ def _parse_money(text: str | None) -> float | None:
         return None
 
 
+_MESES_EN_LETRAS = {
+    "ENERO": 1, "FEBRERO": 2, "MARZO": 3, "ABRIL": 4, "MAYO": 5, "JUNIO": 6, "JULIO": 7,
+    "AGOSTO": 8, "SEPTIEMBRE": 9, "SETIEMBRE": 9, "OCTUBRE": 10, "NOVIEMBRE": 11, "DICIEMBRE": 12,
+}
+# "HASTA EL 31 DE DICIEMBRE DE 2026": el plazo dicho como la fecha en que termina.
+_FECHA_LIMITE_RE = re.compile(
+    r"HASTA\s+EL\s+(\d{1,2})\s+DE\s+(" + "|".join(_MESES_EN_LETRAS) + r")\s+DE\s+(\d{4})",
+    re.IGNORECASE)
+
+
+def _fecha_limite(texto: str | None) -> date | None:
+    """La fecha en que termina el contrato, cuando el pliego la da en vez de los
+    meses de plazo."""
+    if not texto:
+        return None
+    m = _FECHA_LIMITE_RE.search(re.sub(r"\s+", " ", _strip_accents(texto.upper())))
+    if m is None:
+        return None
+    try:
+        return date(int(m.group(3)), _MESES_EN_LETRAS[m.group(2).upper()], int(m.group(1)))
+    except ValueError:
+        return None
+
+
 def _parse_months(text: str | None) -> int | None:
     if not text:
         return None
@@ -60,6 +87,10 @@ class ParsedLote:
     plazo_meses: int | None
     valor_presupuesto: float | None
     lugar_ejecucion: str | None
+    # Hay pliegos que no dan el plazo en meses sino la fecha en que termina
+    # ("HASTA EL 31 DE DICIEMBRE DE 2026"). Los meses se calculan después, que es
+    # cuando se sabe la fecha de cierre del proceso.
+    plazo_hasta: date | None = None
 
 
 @dataclass
@@ -390,13 +421,23 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
                 first_cell = _norm(row[0])
                 if not LOTE_ROW_RE.match(first_cell):
                     continue
+                # Cada dato se reconoce por su forma, no por su posición: hay
+                # pliegos con una columna de más (o de menos) y con el orden
+                # cambiado, y tomando la posición el presupuesto salía en cero.
+                celdas = [_norm(c) for c in row[1:] if c and _norm(c)]
+                valor = next((c for c in celdas if _cifra_del_texto(c)), None)
+                plazo = next((c for c in celdas if re.search(r"\bMES", _strip_accents(c.upper()))), None)
+                resto = [c for c in celdas if c not in (valor, plazo)]
+                objeto = max(resto, key=len) if resto else ""
+                lugar = next((c for c in resto if c != objeto), None)
                 lotes.append(
                     ParsedLote(
                         numero=first_cell,
-                        objeto=_norm(row[1]) if len(row) > 1 else "",
-                        plazo_meses=_parse_months(row[2] if len(row) > 2 else None),
-                        valor_presupuesto=_parse_money(row[3] if len(row) > 3 else None),
-                        lugar_ejecucion=_norm(row[4]) if len(row) > 4 else None,
+                        objeto=objeto,
+                        plazo_meses=_parse_months(plazo) or _plazo_del_texto(" ".join(celdas)),
+                        valor_presupuesto=_cifra_del_texto(valor) if valor else None,
+                        lugar_ejecucion=lugar,
+                        plazo_hasta=_fecha_limite(" ".join(celdas)),
                     )
                 )
         if i > heading_page_idx and re.search(
@@ -428,10 +469,17 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
     # capital de trabajo ni saber si el pliego exige patrimonio mínimo. Se busca
     # entonces en el texto de la página de la tabla.
     if lotes and all(l.plazo_meses is None for l in lotes) and heading_page_idx is not None:
-        for i in range(heading_page_idx, min(heading_page_idx + 3, len(pdf.pages))):
+        # La página donde se nombra la sección puede ser la del índice, con la
+        # tabla varias páginas más allá: la de verdad es la que trae la cifra del
+        # presupuesto que ya se leyó.
+        cifras = {l.valor_presupuesto for l in lotes if l.valor_presupuesto}
+        for i in range(heading_page_idx, min(heading_page_idx + 10, len(pdf.pages))):
+            texto = _texto(pdf.pages[i], escaneado)
+            if cifras and _cifra_del_texto(texto) not in cifras:
+                continue
             # Solo en la zona de la tabla: más allá está la vigencia de la
             # garantía, que también se cuenta en meses y pondría un plazo falso.
-            plazo = _plazo_del_texto(_zona_de_la_tabla(_texto(pdf.pages[i], escaneado)))
+            plazo = _plazo_del_texto(_zona_de_la_tabla(texto))
             if plazo:
                 for lote in lotes:
                     lote.plazo_meses = plazo
@@ -473,6 +521,7 @@ def _objeto_unico(pdf: pdfplumber.PDF, desde: int, escaneado: bool = False) -> P
                     plazo_meses=_parse_months(plazo),
                     valor_presupuesto=_parse_money(_DINERO_CELDA_RE.search(valor).group(0)),
                     lugar_ejecucion=lugar,
+                    plazo_hasta=_fecha_limite(" ".join(celdas)),
                 )
     # Las tablas no dieron la fila: o la página es una imagen (y no hay tabla que
     # extraer) o la tabla existe y viene vacía. En ambos casos la fila se reconoce
@@ -726,6 +775,17 @@ def parse_documento_base(pdf_bytes: bytes) -> ParseResult:
     )
 
 
+def _meses_hasta(desde: date, hasta: date) -> int | None:
+    """Meses entre dos fechas, redondeando hacia arriba: un plazo de cinco meses
+    y medio son seis, y así el capital de trabajo que se exige no queda corto."""
+    if hasta <= desde:
+        return None
+    meses = (hasta.year - desde.year) * 12 + (hasta.month - desde.month)
+    if hasta.day > desde.day:
+        meses += 1
+    return max(1, meses)
+
+
 def build_proceso(codigo_proceso: str, fecha_cierre: date, pdf_bytes: bytes) -> ProcesoDocumentoBase:
     parsed = parse_documento_base(pdf_bytes)
     advertencias: list[str] = []
@@ -738,6 +798,18 @@ def build_proceso(codigo_proceso: str, fecha_cierre: date, pdf_bytes: bytes) -> 
 
     lotes: list[Lote] = []
     for pl in parsed.lotes:
+        if pl.plazo_meses is None and pl.plazo_hasta is not None:
+            # El pliego no da meses sino la fecha en que termina el contrato: los
+            # meses se cuentan desde el cierre, que es lo más cercano que se sabe
+            # (el plazo corre en realidad desde el acta de inicio). Se dice de
+            # dónde salió para que quien evalúa lo confirme.
+            pl.plazo_meses = _meses_hasta(fecha_cierre, pl.plazo_hasta)
+            if pl.plazo_meses:
+                advertencias.append(
+                    f"El pliego no da el plazo de {pl.numero} en meses sino hasta el "
+                    f"{pl.plazo_hasta.strftime('%d/%m/%Y')}: se contaron {pl.plazo_meses} meses desde el cierre. "
+                    "Confírmelo, porque el plazo corre desde el acta de inicio."
+                )
         if pl.valor_presupuesto is None:
             advertencias.append(f"No se pudo leer el valor del Presupuesto Oficial de {pl.numero}; revíselo manualmente.")
         if pl.plazo_meses is None:

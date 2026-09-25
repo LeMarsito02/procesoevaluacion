@@ -1951,6 +1951,40 @@ Asegurado Contratación"""
         self.assertFalse(_es_escaneado(Pdf([])))
 
 
+class LoteConNumeroYPlazoPorFechaTests(SimpleTestCase):
+    """Dos cosas que salieron de revisar los dos pliegos del dataset que no
+    quedaban completos."""
+
+    def test_lote_no_1_es_un_lote(self):
+        """Un pliego que escribe "Lote No. 1" se leía como si tuviera un solo
+        lote, y su presupuesto pasaba a ser el del primero: un proceso de tres
+        lotes se habría evaluado con las cifras de uno."""
+        from motor.parsers.documento_base import LOTE_ROW_RE
+
+        for texto in ("Lote No. 1", "LOTE No 2", "Lote N° 3", "Lote 1", "LOTE1", "Segmento 2", "SEGMENTO No. 1"):
+            self.assertTrue(LOTE_ROW_RE.match(texto), texto)
+        for texto in ("Lote o segmento", "Número de lote", "El proponente"):
+            self.assertIsNone(LOTE_ROW_RE.match(texto), texto)
+
+    def test_el_plazo_dado_como_fecha_se_convierte_en_meses(self):
+        """Hay pliegos que no dan meses sino "HASTA EL 31 DE DICIEMBRE DE 2026"."""
+        from motor.parsers.documento_base import _fecha_limite, _meses_hasta
+
+        self.assertEqual(_fecha_limite("HASTA EL 31 DE DICIEMBRE DE 2026"), date(2026, 12, 31))
+        self.assertEqual(_fecha_limite("hasta el 1 de marzo de 2027"), date(2027, 3, 1))
+        self.assertIsNone(_fecha_limite("DOCE (12) MESES"))
+        # Se redondea hacia arriba, para que el capital de trabajo exigido no
+        # quede corto.
+        self.assertEqual(_meses_hasta(date(2026, 7, 1), date(2026, 12, 31)), 6)
+        self.assertEqual(_meses_hasta(date(2026, 7, 1), date(2026, 12, 1)), 5)
+        self.assertIsNone(_meses_hasta(date(2026, 7, 1), date(2026, 6, 30)))
+
+    def test_una_fecha_de_otro_ano_no_pasa_por_plazo(self):
+        from motor.parsers.documento_base import _fecha_limite
+
+        self.assertIsNone(_fecha_limite("expedido el 31 de diciembre de 2026"))
+
+
 class DocumentoBaseSinSignoDePesosTests(SimpleTestCase):
     """Un escaneo pierde el signo de pesos y parte las celdas, así que el
     presupuesto y el plazo hay que reconocerlos por su forma. Es lo que hacía que
