@@ -98,14 +98,53 @@ def evaluar_proponente_financiero(
     resultado.lotes_presentados = [l.nombre for l in lotes]
     ind, faltas = indicadores_del_proponente(integrantes)
     resultado.indicadores = ind
-    resultado.financiera = capacidad_financiera(ind, parametros.umbrales, faltas)
-    resultado.organizacional = capacidad_organizacional(ind, parametros.umbrales, faltas)
+    umbrales = _umbrales_del_proponente(parametros, integrantes, plural, resultado)
+    resultado.financiera = capacidad_financiera(ind, umbrales, faltas)
+    resultado.organizacional = capacidad_organizacional(ind, umbrales, faltas)
     docs = documentos_financieros(pdfs)
     resultado.validez = validez_capacidad_organizacional(integrantes, docs, fecha_cierre)
     for lote in lotes:
         resultado.capital_por_lote[lote.nombre] = capital_de_trabajo(ind, lote, faltas)
     resultado.residual = residual_del_proponente(pdfs, excels, integrantes, lotes, parametros.smmlv, plural, docs.estados, docs.completos)
     return resultado
+
+
+def _umbrales_del_proponente(parametros: ParametrosFinancieros, integrantes: list[IntegranteTecnico],
+                             plural: bool, resultado: ResultadoFinanciero):
+    """Los indicadores que le aplican a ESTE proponente.
+
+    La Matriz 2 reserva unos más laxos a quien acredite ser Mipyme, y eso no es
+    del proceso sino del proponente: lo dice el tamaño de empresa de su RUP. En
+    proponentes plurales basta con un integrante Mipyme que tenga al menos el
+    10 % de participación, que es la misma regla del puntaje del documento tipo
+    (4.7).
+
+    Los dos errores cuestan: aplicárselos a todos aprueba a quien no cumple; no
+    aplicárselos a quien los tiene rechaza a quien sí cumplía. Así que se decide
+    con el RUP y se deja dicho por qué."""
+    if parametros.umbrales_mipyme is None:
+        return parametros.umbrales
+    for i in integrantes:
+        if i.rup is None or not i.rup.es_mipyme:
+            continue
+        if plural and (i.participacion is None or i.participacion < 0.10 - 1e-9):
+            continue
+        resultado.avisos.append(
+            f"se evalúa con los indicadores que la Matriz 2 reserva a los proponentes Mipyme porque "
+            f"{i.nombre} es {i.rup.tamano_empresa.lower()} según su RUP"
+            + (f" y tiene el {i.participacion * 100:.0f} % de participación" if plural and i.participacion else "")
+        )
+        return parametros.umbrales_mipyme
+    sin_rup = [i.nombre for i in integrantes if i.rup is None]
+    if sin_rup:
+        # Sin el RUP no se sabe el tamaño de empresa. Se usan los indicadores
+        # generales, que son los más exigentes, y se dice: si resulta que era
+        # Mipyme, se le estaría exigiendo más de lo que el pliego le exige.
+        resultado.avisos.append(
+            "no se leyó el RUP de " + ", ".join(sin_rup) + ", así que no se sabe si acredita ser Mipyme: se evalúa con "
+            "los indicadores de los demás proponentes, que son los más exigentes"
+        )
+    return parametros.umbrales
 
 
 def cumple_lote(resultado: ResultadoFinanciero, lote: str) -> bool | None:

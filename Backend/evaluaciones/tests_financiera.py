@@ -750,3 +750,73 @@ class Matriz2PorRangoTests(SimpleTestCase):
         umbrales, fuente = matriz.umbrales(999999)
         self.assertEqual(umbrales.liquidez_min, 1.2)
         self.assertIn("un solo juego", fuente)
+
+
+class UmbralesSegunElProponenteTests(SimpleTestCase):
+    """La Matriz 2 reserva indicadores más laxos a quien acredite ser Mipyme, y
+    eso es del proponente, no del proceso: lo dice el tamaño de empresa de su
+    RUP. Los dos errores cuestan —aplicárselos a todos aprueba a quien no
+    cumple; negárselos a quien los tiene rechaza a quien sí cumplía—, así que se
+    decide con el RUP."""
+
+    def _parametros(self):
+        from motor.financiera.parametros import LoteFinanciero, ParametrosFinancieros, Umbrales
+
+        p = ParametrosFinancieros(smmlv=1_000_000)
+        p.lotes = [LoteFinanciero("LOTE 1", 2_000_000_000, 12, 0.25)]
+        p.umbrales = Umbrales(1.2, 0.70, 1.0, 0.02, 0.04, fuente="Matriz 2, los demás")
+        p.umbrales_mipyme = Umbrales(1.1, 0.70, 1.0, 0.01, 0.02, fuente="Matriz 2, Mipyme")
+        return p
+
+    def _integrante(self, tamano, participacion=1.0):
+        from datetime import date
+
+        from motor.tecnica.experiencia import IntegranteTecnico
+        from motor.tecnica.rup import Rup
+
+        rup = Rup(nombre="ALFA S.A.S.", nit="1", fecha_constitucion=date(2015, 1, 1), tamano_empresa=tamano)
+        return IntegranteTecnico("ALFA S.A.S.", "1", participacion, rup)
+
+    def _elegir(self, integrantes, plural=False):
+        from motor.financiera.proponente import ResultadoFinanciero, _umbrales_del_proponente
+
+        resultado = ResultadoFinanciero()
+        umbrales = _umbrales_del_proponente(self._parametros(), integrantes, plural, resultado)
+        return umbrales, resultado.avisos
+
+    def test_una_pequena_empresa_usa_los_indicadores_de_mipyme(self):
+        umbrales, avisos = self._elegir([self._integrante("PEQUENA EMPRESA")])
+        self.assertEqual(umbrales.liquidez_min, 1.1)
+        self.assertTrue(any("Mipyme" in a for a in avisos))
+
+    def test_una_gran_empresa_usa_los_generales(self):
+        umbrales, _ = self._elegir([self._integrante("GRAN EMPRESA")])
+        self.assertEqual(umbrales.liquidez_min, 1.2)
+
+    def test_en_plural_hace_falta_el_diez_por_ciento(self):
+        """Misma regla que el puntaje de MIPYME del documento tipo (4.7)."""
+        umbrales, _ = self._elegir([self._integrante("PEQUENA EMPRESA", 0.05),
+                                    self._integrante("GRAN EMPRESA", 0.95)], plural=True)
+        self.assertEqual(umbrales.liquidez_min, 1.2)
+        umbrales, _ = self._elegir([self._integrante("PEQUENA EMPRESA", 0.10),
+                                    self._integrante("GRAN EMPRESA", 0.90)], plural=True)
+        self.assertEqual(umbrales.liquidez_min, 1.1)
+
+    def test_sin_rup_se_usan_los_mas_exigentes_y_se_avisa(self):
+        """No se sabe el tamaño de empresa: se exige lo más alto, pero se dice,
+        porque si era Mipyme se le estaría exigiendo más de lo que el pliego le
+        exige."""
+        from motor.tecnica.experiencia import IntegranteTecnico
+
+        umbrales, avisos = self._elegir([IntegranteTecnico("BETA S.A.S.", "2", 1.0, None)])
+        self.assertEqual(umbrales.liquidez_min, 1.2)
+        self.assertTrue(any("no se leyó el RUP" in a for a in avisos))
+
+    def test_sin_tabla_de_mipyme_no_cambia_nada(self):
+        from motor.financiera.proponente import ResultadoFinanciero, _umbrales_del_proponente
+
+        parametros = self._parametros()
+        parametros.umbrales_mipyme = None
+        umbrales = _umbrales_del_proponente(parametros, [self._integrante("PEQUENA EMPRESA")], False,
+                                            ResultadoFinanciero())
+        self.assertEqual(umbrales.liquidez_min, 1.2)

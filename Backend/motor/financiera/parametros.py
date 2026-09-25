@@ -102,6 +102,10 @@ class ParametrosFinancieros:
     # Requisitos que el pliego exige y el motor no sabe verificar: mientras
     # haya alguno, el lote va a revisión (motor/pliego/catalogo_tecnico.py).
     requisitos_sin_verificar: list[str] = field(default_factory=list)
+    # Los indicadores que la Matriz 2 reserva a los proponentes que acrediten
+    # ser Mipyme. Son más laxos, así que no se aplican por defecto: solo a quien
+    # lo acredite con su RUP (motor/financiera/proponente.py).
+    umbrales_mipyme: Umbrales | None = None
     # Lo que el pliego PERMITE y el motor no sabe aprovechar (acreditar algo con
     # un documento alterno, por ejemplo). No frena ninguna aprobación —ignorarlo
     # no aprueba a nadie de más—, pero sí puede hacer que se rechace a quien
@@ -348,10 +352,9 @@ def _de_la_matriz_por_rango(matriz2: bytes, parametros: ParametrosFinancieros, s
     umbrales, fuente = elegido
     parametros.umbrales = umbrales
     de_mipyme = matriz.umbrales(max(presupuestos) / smmlv, mipyme=True)
+    # Se guardan aparte para poder aplicarlos a quien acredite ser Mipyme con su
+    # RUP. Aplicárselos a todos aprobaría a quien no cumple; no aplicárselos a
+    # quien sí lo acredita rechazaría a quien sí cumplía, que es el otro riesgo.
     if de_mipyme is not None and de_mipyme[0] != umbrales:
-        parametros.avisos.append(
-            "la Matriz 2 trae indicadores más laxos para los proponentes que acrediten ser Mipyme "
-            f"(liquidez {de_mipyme[0].liquidez_min:g} en vez de {umbrales.liquidez_min:g}): se evalúa con los de los "
-            "demás proponentes, así que revisa si alguno acredita esa condición con su RUP"
-        )
+        parametros.umbrales_mipyme = de_mipyme[0]
     return umbrales
