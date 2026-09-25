@@ -109,7 +109,7 @@ Ya está garantizado en cinco frentes:
 | El saldo de contratos en ejecución (Formato 5C) | 48 de 98 en LP-022, 21 de 32 en MC-019 |
 | El acta de un contrato que aún no se encuentra | 6 de 11 en LP-027 |
 | El Formato 3 en PDF con el encabezado partido | hoy va a revisión con el motivo correcto |
-| Elegir el rango de la Matriz 2 con el criterio que ella misma da (SMMLV) | 13 procesos |
+| ~~Elegir el rango de la Matriz 2 con el criterio que ella misma da (SMMLV)~~ **Hecho** (24/09/2026) | 13 de 13 matrices se resuelven solas: el rango sale del presupuesto del lote en SMMLV y se usa la tabla de «los demás proponentes», no la de Mipyme, que es más laxa. Ya no hay que registrar los umbrales a mano. Las mediciones anteriores de LP-027 usaban por error los de Mipyme (liquidez 1,1 en vez de 1,2) |
 | Tiempo por oferta | mediana 49 s, picos de 332 s |
 
 ## 4. Verificación continua

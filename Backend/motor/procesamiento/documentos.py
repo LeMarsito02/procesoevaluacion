@@ -15,10 +15,15 @@ import zipfile
 def _texto_de_xml(xml: bytes) -> str:
     """El texto de un XML de Office, respetando los saltos de párrafo y de
     celda para que las tablas no queden pegadas en una sola línea."""
+    import html
+
     texto = xml.decode("utf-8", "ignore")
     texto = re.sub(r"</(?:w:p|w:tr|a:p|row)>", "\n", texto)
     texto = re.sub(r"</(?:w:tc|c)>", " ", texto)
-    return re.sub(r"<[^>]+>", "", texto)
+    # En el XML los símbolos van escapados, así que sin esto los rangos de la
+    # Matriz 2 ("&gt;0 &lt;4.000 SMMLV") llegan sin sus comparadores y no se
+    # puede saber a qué presupuesto aplica cada columna.
+    return html.unescape(re.sub(r"<[^>]+>", "", texto))
 
 
 def es_zip_de_office(contenido: bytes) -> bool:

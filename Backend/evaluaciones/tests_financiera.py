@@ -662,3 +662,91 @@ class LotesALosQueSePresentaTests(SimpleTestCase):
              mock.patch("motor.financiera.capacidad._lotes_de_la_poliza", return_value={"2"}):
             elegidos, avisos = lotes_de_la_oferta({}, ["1", "2"])
         self.assertEqual((elegidos, avisos), ({"2"}, []))
+
+
+class Matriz2PorRangoTests(SimpleTestCase):
+    """La Matriz 2 dice ella misma qué indicadores aplican: los rangos van en
+    SMMLV y se escoge por el presupuesto del lote. Antes había que pedirle a una
+    persona que eligiera entre los cuatro valores de cada indicador (dos tablas
+    × dos rangos), y elegir mal la tabla aprueba a quien no cumple: la de Mipyme
+    es más laxa."""
+
+    MATRIZ = """MATRIZ 2 - INDICADORES FINANCIEROS Y ORGANIZACIONALES
+    Rango 1 Rango 2
+    >0 <4.000 >= 4.000 -
+    (Cifras expresadas en SMMLV)
+    Índices de capacidad financiera y organizacionales para Mipyme.
+    Indicador Valor concertado Rango 1 Valor concertado Rango 2
+    Índice de liquidez ≥ 1,1 ≥ 1,2
+    Índice de endeudamiento ≤ 0,70 ≤ 0,75
+    Razón de cobertura de intereses ≥1 ≥0,5
+    Rentabilidad del patrimonio ≥0,02 ≥0,02
+    Rentabilidad del activo ≥0,01 ≥0,01
+    Índices de capacidad financiera y organizacionales para los demás Proponentes
+    Indicador Valor concertado Rango 1 Valor concertado Rango 2
+    Índice de liquidez ≥ 1,2 ≥ 1,3
+    Índice de endeudamiento ≤ 0,70 ≤ 0,75
+    Razón de cobertura de intereses ≥1 ≥1
+    Rentabilidad del patrimonio ≥0,04 ≥0,04
+    Rentabilidad del activo ≥0,02 ≥0,02
+    """
+
+    def _matriz(self):
+        from motor.financiera.matriz2 import leer_matriz2
+
+        return leer_matriz2(self.MATRIZ)
+
+    def test_el_rango_sale_del_presupuesto_en_smmlv(self):
+        matriz = self._matriz()
+        self.assertEqual(matriz.desde_smmlv, {1: 0.0, 2: 4000.0})
+        self.assertEqual(matriz.rango_de(3117), 1)
+        self.assertEqual(matriz.rango_de(4000), 2)
+        self.assertEqual(matriz.rango_de(40000), 2)
+
+    def test_se_usa_la_tabla_de_los_demas_no_la_de_mipyme(self):
+        """La de Mipyme es más laxa y solo aplica a quien acredite esa condición,
+        que es algo del proponente. Usarla con todos aprueba a quien no cumple."""
+        umbrales, fuente = self._matriz().umbrales(3117)
+        self.assertEqual(umbrales.liquidez_min, 1.2)
+        self.assertEqual(umbrales.roe_min, 0.04)
+        self.assertIn("los demás proponentes", fuente)
+        self.assertIn("rango 1", fuente)
+
+    def test_la_tabla_de_mipyme_se_puede_pedir_aparte(self):
+        umbrales, _ = self._matriz().umbrales(3117, mipyme=True)
+        self.assertEqual((umbrales.liquidez_min, umbrales.roe_min), (1.1, 0.02))
+
+    def test_el_rango_2_es_mas_exigente_en_liquidez(self):
+        umbrales, _ = self._matriz().umbrales(5000)
+        self.assertEqual((umbrales.liquidez_min, umbrales.endeudamiento_max), (1.3, 0.75))
+
+    def test_sin_los_limites_en_smmlv_no_se_adivina(self):
+        from motor.financiera.matriz2 import leer_matriz2
+
+        sin_rangos = self.MATRIZ.replace("(Cifras expresadas en SMMLV)", "").replace(">0 <4.000 >= 4.000 -", "")
+        matriz = leer_matriz2(sin_rangos)
+        self.assertEqual(matriz.desde_smmlv, {})
+        self.assertIsNone(matriz.umbrales(3117))
+
+    def test_una_matriz_de_un_solo_juego_no_tiene_nada_que_escoger(self):
+        """Las matrices de menor cuantía no van por rangos."""
+        from motor.financiera.matriz2 import leer_matriz2
+
+        texto = """Índices de capacidad financiera y organizacionales para Mipyme.
+        Índice de liquidez ≥ 1,1
+        Índice de endeudamiento ≤ 0,70
+        Razón de cobertura de intereses ≥1
+        Rentabilidad del patrimonio ≥0,02
+        Rentabilidad del activo ≥0,01
+        Índices de capacidad financiera y organizacionales para los demás Proponentes
+        Índice de liquidez ≥ 1,2
+        Índice de endeudamiento ≤ 0,70
+        Razón de cobertura de intereses ≥1
+        Rentabilidad del patrimonio ≥0,04
+        Rentabilidad del activo ≥0,02
+        """
+        matriz = leer_matriz2(texto)
+        self.assertTrue(matriz.un_solo_juego)
+        umbrales, fuente = matriz.umbrales(999999)
+        self.assertEqual(umbrales.liquidez_min, 1.2)
+        self.assertIn("un solo juego", fuente)

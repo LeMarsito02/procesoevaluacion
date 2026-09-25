@@ -297,6 +297,13 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
         from motor.procesamiento.documentos import texto_de_documento
 
         texto_matriz = normalizar(_texto_con_simbolos(texto_de_documento(matriz2)))
+        # Primero se intenta entender la matriz como lo que es: dos tablas
+        # (Mipyme y los demás) con una columna por rango de presupuesto. Si se
+        # entiende, ella misma dice cuál aplica —el rango del presupuesto del
+        # lote en SMMLV— y no hay nada que preguntar.
+        elegidos = _de_la_matriz_por_rango(matriz2, parametros, smmlv)
+        if elegidos is not None:
+            return parametros
         # La Matriz 2 completa lo que el pliego no dijo; no borra lo ya leído.
         de_matriz, opciones = umbrales_de_la_matriz(texto_matriz)
         for campo, valores in opciones.items():
@@ -313,3 +320,38 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
         ):
             parametros.umbrales.fuente = "pliego y Matriz 2"
     return parametros
+
+
+def _de_la_matriz_por_rango(matriz2: bytes, parametros: ParametrosFinancieros, smmlv: float) -> Umbrales | None:
+    """Los umbrales que la Matriz 2 misma señala para este proceso, o None si no
+    se pudo entender (entonces se sigue preguntando a una persona).
+
+    El rango sale del presupuesto del lote en SMMLV, que es el criterio que da
+    la matriz. Entre sus dos tablas se toma la de los demás proponentes: la de
+    Mipyme es más laxa y solo aplica a quien acredite esa condición, que es algo
+    del proponente y no del proceso. Aplicarla a todos aprobaría a quien no
+    cumple."""
+    from motor.financiera.matriz2 import leer_matriz2
+    from motor.procesamiento.documentos import texto_de_documento
+
+    matriz = leer_matriz2(texto_de_documento(matriz2))
+    if matriz is None:
+        return None
+    presupuestos = [l.presupuesto for l in parametros.lotes if l.presupuesto]
+    if not presupuestos:
+        return None
+    # Con varios lotes, el más caro: es el que fija el rango más exigente de los
+    # que puede tocarle a un proponente que se presente a uno solo.
+    elegido = matriz.umbrales(max(presupuestos) / smmlv)
+    if elegido is None:
+        return None
+    umbrales, fuente = elegido
+    parametros.umbrales = umbrales
+    de_mipyme = matriz.umbrales(max(presupuestos) / smmlv, mipyme=True)
+    if de_mipyme is not None and de_mipyme[0] != umbrales:
+        parametros.avisos.append(
+            "la Matriz 2 trae indicadores más laxos para los proponentes que acrediten ser Mipyme "
+            f"(liquidez {de_mipyme[0].liquidez_min:g} en vez de {umbrales.liquidez_min:g}): se evalúa con los de los "
+            "demás proponentes, así que revisa si alguno acredita esa condición con su RUP"
+        )
+    return umbrales
