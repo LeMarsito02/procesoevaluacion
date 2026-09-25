@@ -65,7 +65,11 @@ Ya está garantizado en cinco frentes:
 
 ### Huecos por cerrar
 
-1. **El "no se presentó a este lote" se deduce por ausencia.** Si se lee mal
+1. ~~**El "no se presentó a este lote" se deduce por ausencia.**~~ **Cerrado**
+   (24/09/2026): se toma la unión de la carta de presentación y la garantía de
+   seriedad, hace falta que fallen las dos lecturas, y cuando discrepan se
+   evalúan todos los lotes y se avisa. El N.A. dice de dónde salió y a qué
+   lotes sí se presenta. Antes: si se lee mal
    la carta, ese lote sale N/A y se aprueba sin evaluar. Debe exigir cita.
 2. **El catálogo puede dar por cubierto un requisito que en realidad no
    verificamos** (falso positivo del emparejamiento por palabras). Revisar una

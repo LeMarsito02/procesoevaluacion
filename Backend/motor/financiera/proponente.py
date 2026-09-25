@@ -85,9 +85,11 @@ def evaluar_proponente_financiero(
         *(PuntoDeRevision(f"permiso_{i}", "proceso", a) for i, a in enumerate(avisos_permisos)),
     ]
     numeros = [m.group(0) for l in parametros.lotes if (m := re.search(r"\d+", l.nombre))]
-    elegidos = lotes_de_la_oferta(pdfs, numeros) if len(parametros.lotes) > 1 else None
+    elegidos, avisos_lotes = lotes_de_la_oferta(pdfs, numeros) if len(parametros.lotes) > 1 else (None, [])
+    resultado.avisos.extend(avisos_lotes)
+    resultado.revisiones.extend(PuntoDeRevision(f"lotes_{i}", "oferta", a) for i, a in enumerate(avisos_lotes))
     if len(parametros.lotes) > 1 and elegidos is None:
-        resultado.avisos.append("no se identificó en la carta a qué lotes se presenta: se evalúan todos")
+        resultado.avisos.append("no se identificó en la carta ni en la garantía a qué lotes se presenta: se evalúan todos")
     def _numero_del_lote(nombre: str) -> str | None:
         m = re.search(r"\d+", nombre)
         return m.group(0) if m else None

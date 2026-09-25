@@ -149,10 +149,16 @@ def evaluar(proponente: Proponente, proceso: ProcesoDocumentoBase, clave: str, n
         return ResultadoRequisito(**_base(proponente, numero), error="El pliego no tiene ese lote.")
     nombre = lotes[indice].nombre
     if nombre not in resultado.lotes_presentados:
+        # Un "no se presenta" se da por cumplido sin mirar nada, así que se dice
+        # de dónde salió y a qué lotes sí se presenta: si la lectura se equivocó,
+        # que se vea en el informe y no haya que ir a buscarlo.
+        presentados = ", ".join(resultado.lotes_presentados).lower() or "ninguno que se pudiera identificar"
         return ResultadoRequisito(
             **_base(proponente, numero), cumple=True,
-            motivo=f"N.A. — el proponente no se presenta al {nombre.lower()}",
-            detalle={"financiera": {"no_aplica": True, "lote": nombre}},
+            motivo=(f"N.A. — el proponente no se presenta al {nombre.lower()}. Según la carta de presentación y la "
+                    f"garantía de seriedad se presenta a: {presentados}"),
+            detalle={"financiera": {"no_aplica": True, "lote": nombre,
+                                    "lotes_presentados": resultado.lotes_presentados}},
         )
     if clave == "capital_trabajo":
         return _resultado(proponente, numero, resultado.capital_por_lote.get(nombre), resultado, {"lote": nombre})

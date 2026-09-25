@@ -408,7 +408,7 @@ class UmbralesYAnticipoTests(SimpleTestCase):
         with mock.patch("motor.financiera.proponente.leer_rups", return_value=[]), \
                 mock.patch("motor.financiera.proponente.integrantes_formato2", return_value=[]), \
                 mock.patch("motor.financiera.proponente.integrantes_del_proponente", return_value=([], [])), \
-                mock.patch("motor.financiera.proponente.lotes_de_la_oferta", return_value={"2"}), \
+                mock.patch("motor.financiera.proponente.lotes_de_la_oferta", return_value=({"2"}, [])), \
                 mock.patch("motor.financiera.proponente.documentos_financieros") as docs, \
                 mock.patch("motor.financiera.proponente.residual_del_proponente", return_value=Revision(False, [])):
             docs.return_value.estados = {}
@@ -623,3 +623,42 @@ class RevisionDirigidaFinancieraTests(SimpleTestCase):
         r, acreditada = self._resultado(avisos_del_pliego=["falta confirmar el anticipo"])
         r.financiera = Revision(False, ["liquidez 0,8: el pliego exige 1,2"])
         self.assertFalse(acreditada(r, "LOTE 1"))
+
+
+class LotesALosQueSePresentaTests(SimpleTestCase):
+    """Un lote que no se identifica se marca «N.A. — no se presenta» y se da por
+    cumplido sin mirar nada. Así que no puede depender de una sola lectura: se
+    toma la unión de la carta de presentación y la garantía de seriedad, y si
+    discrepan se dice."""
+
+    def test_se_usa_la_union_de_la_carta_y_la_poliza(self):
+        from unittest import mock
+
+        from motor.financiera.capacidad import lotes_de_la_oferta
+
+        with mock.patch("motor.financiera.capacidad._lotes_de_la_carta", return_value={"1"}), \
+             mock.patch("motor.financiera.capacidad._lotes_de_la_poliza", return_value={"2"}):
+            elegidos, avisos = lotes_de_la_oferta({}, ["1", "2", "3"])
+        self.assertEqual(elegidos, {"1", "2"})
+        self.assertTrue(avisos and "confirma a cuáles se presenta" in avisos[0])
+
+    def test_sin_ninguna_fuente_se_evaluan_todos(self):
+        from unittest import mock
+
+        from motor.financiera.capacidad import lotes_de_la_oferta
+
+        with mock.patch("motor.financiera.capacidad._lotes_de_la_carta", return_value=set()), \
+             mock.patch("motor.financiera.capacidad._lotes_de_la_poliza", return_value=set()):
+            elegidos, avisos = lotes_de_la_oferta({}, ["1", "2"])
+        self.assertIsNone(elegidos)  # None = se evalúan todos
+        self.assertEqual(avisos, [])
+
+    def test_cuando_las_dos_fuentes_coinciden_no_hay_aviso(self):
+        from unittest import mock
+
+        from motor.financiera.capacidad import lotes_de_la_oferta
+
+        with mock.patch("motor.financiera.capacidad._lotes_de_la_carta", return_value={"2"}), \
+             mock.patch("motor.financiera.capacidad._lotes_de_la_poliza", return_value={"2"}):
+            elegidos, avisos = lotes_de_la_oferta({}, ["1", "2"])
+        self.assertEqual((elegidos, avisos), ({"2"}, []))

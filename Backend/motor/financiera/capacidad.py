@@ -160,23 +160,59 @@ def capital_de_trabajo(ind: Indicadores | None, lote: LoteFinanciero, avisos: li
     return Revision(True, [texto], detalle)
 
 
-def lotes_de_la_oferta(pdfs: dict[str, bytes], numeros: list[str]) -> set[str] | None:
-    """Números de lote a los que se presenta: los que copia el objeto de la
-    carta de presentación (quien se presenta a un solo lote copia solo ese).
-    None si no se encontró la carta."""
+def _lotes_de_la_carta(pdfs: dict[str, bytes], numeros: set[str]) -> set[str]:
+    """Los lotes que copia el objeto de la carta de presentación (quien se
+    presenta a un solo lote copia solo ese)."""
     from motor.evaluacion.formato1 import encontrar_formato1
     from motor.evaluacion.garantia import _numeros_de_lote
     from motor.procesamiento.pdf_utils import extraer_texto
 
     encontrado = encontrar_formato1(pdfs)
     if encontrado is None:
-        return None
+        return set()
     texto = normalizar(" ".join(extraer_texto(encontrado[1], max_paginas=2).split()))
     inicio = texto.find("OBJETO")
     if inicio < 0:
-        return None
+        return set()
     fin = texto.find("SENORES", inicio)
     tramo = texto[inicio: fin if fin > inicio else inicio + 2500]
     tramo = re.sub(r"LOTE(\d)", r"LOTE \1", tramo)  # "LOTE2:"
-    elegidos = _numeros_de_lote(tramo) & set(numeros)
-    return elegidos or None
+    return _numeros_de_lote(tramo) & numeros
+
+
+def _lotes_de_la_poliza(pdfs: dict[str, bytes], numeros: set[str]) -> set[str]:
+    """Los lotes que nombra la garantía de seriedad de la oferta."""
+    from motor.evaluacion.garantia import _numeros_de_lote, encontrar_poliza
+
+    try:
+        encontrada = encontrar_poliza(pdfs)
+    except Exception:  # noqa: BLE001 — una póliza ilegible no puede tumbar la evaluación
+        return set()
+    if encontrada is None:
+        return set()
+    return _numeros_de_lote(normalizar(" ".join(encontrada[1].split()))) & numeros
+
+
+def lotes_de_la_oferta(pdfs: dict[str, bytes], numeros: list[str]) -> tuple[set[str] | None, list[str]]:
+    """(números de lote a los que se presenta, avisos). None si no se pudo
+    identificar con ninguna fuente: entonces se evalúan todos.
+
+    Se toma la UNIÓN de lo que dicen la carta de presentación y la garantía de
+    seriedad, no solo la carta. La razón es cuál es el daño de equivocarse: un
+    lote que no se identifica se marca «N.A. — no se presenta a este lote» y se
+    da por cumplido sin mirar nada, así que una sola lectura fallida aprobaría
+    un lote entero sin verificarlo. Con la unión, eso exige que fallen las dos
+    fuentes, y cuando discrepan se dice."""
+    del_proceso = set(numeros)
+    carta = _lotes_de_la_carta(pdfs, del_proceso)
+    poliza = _lotes_de_la_poliza(pdfs, del_proceso)
+    avisos: list[str] = []
+    solo_en_la_poliza = poliza - carta
+    if carta and solo_en_la_poliza:
+        avisos.append(
+            "la carta de presentación nombra el lote " + ", ".join(sorted(carta))
+            + " y la garantía de seriedad el " + ", ".join(sorted(solo_en_la_poliza))
+            + ": se evalúan todos, confirma a cuáles se presenta"
+        )
+    elegidos = carta | poliza
+    return (elegidos or None), avisos
