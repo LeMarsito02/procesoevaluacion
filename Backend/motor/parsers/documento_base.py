@@ -547,6 +547,24 @@ def _porcentaje_a_fondo(page) -> tuple[float | None, str]:
     return mejor, votos[mejor]
 
 
+def _porcentaje_del_presupuesto(texto: str) -> tuple[float | None, str]:
+    """Un porcentaje dicho sobre el Presupuesto Oficial, en cifra o en letras.
+
+    Tiene que ser del presupuesto: las garantías del contrato (cumplimiento,
+    salarios, estabilidad) traen sus propios 20 % y 30 % "del valor del
+    contrato", y tomar uno de esos pondría un valor asegurado equivocado."""
+    plano = re.sub(r"\s+", " ", _strip_accents(texto))
+    for m in re.finditer(r"(\d{1,3}(?:[.,]\d+)?)\s*%[^.]{0,60}?PRESUPUESTO\s+OFICIAL", plano, re.IGNORECASE):
+        valor = float(m.group(1).replace(",", ".")) / 100
+        if 0 < valor <= 1:
+            return valor, _norm(plano[max(0, m.start() - 60): m.end() + 20])
+    for m in re.finditer(r"POR\s*CIENTO[^.]{0,60}?PRESUPUESTO\s+OFICIAL", plano, re.IGNORECASE):
+        valor = _porcentaje_en_letras(plano[max(0, m.start() - 40): m.end()])
+        if valor is not None:
+            return valor, _norm(plano[max(0, m.start() - 40): m.end() + 20])
+    return None, ""
+
+
 def _garantia_del_texto(texto: str) -> tuple[int | None, str, float | None, str]:
     """(vigencia en meses, su frase, porcentaje, su frase) leídos del texto de la
     tabla de características de la garantía, para cuando esa tabla es una imagen.
@@ -644,6 +662,19 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
                     raw_valor = dice
             if vigencia_meses is not None and porcentaje is not None:
                 break
+
+        if porcentaje is None:
+            # El numeral dice el porcentaje en su texto casi siempre, aunque la
+            # tabla de características no se haya podido leer: "por una cuantía
+            # equivalente al diez por ciento (10%) del Presupuesto Oficial". Se
+            # busca en las dos páginas de la ventana, exigiendo que sea del
+            # presupuesto y no "del valor del contrato", que es lo que dicen las
+            # garantías del contrato.
+            for p in window_pages:
+                porcentaje, raw = _porcentaje_del_presupuesto(_texto(p, escaneado))
+                if porcentaje is not None:
+                    raw_valor = raw_valor or raw
+                    break
 
         if vigencia_meses is None and porcentaje is None:
             # Likely the table-of-contents entry; keep looking.

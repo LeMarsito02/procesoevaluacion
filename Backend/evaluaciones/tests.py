@@ -2144,6 +2144,124 @@ class OfertasSubidasAManoTests(SimpleTestCase):
         self.assertIn("Vuelve a subirla", str(caso.exception))
 
 
+class UnZipConTodasLasOfertasTests(SimpleTestCase):
+    """Hay entidades que publican un solo archivo con todas las ofertas adentro,
+    cada una en su propio zip o cada una en su carpeta. Se reparte antes de
+    tratarlas, porque si no se evaluaría "el proceso" como si fuera un
+    proponente."""
+
+    def _oferta(self, nombre: str) -> bytes:
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as z:
+            z.writestr("carta.pdf", f"oferta de {nombre}")
+            z.writestr("rup.pdf", "rup")
+        return buffer.getvalue()
+
+    def _contenedor(self, entradas: dict[str, bytes]) -> bytes:
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as z:
+            for nombre, contenido in entradas.items():
+                z.writestr(nombre, contenido)
+        return buffer.getvalue()
+
+    def test_un_zip_con_un_zip_por_proponente(self):
+        from motor.integrations import ofertas_locales
+
+        contenedor = self._contenedor({
+            "p1 ALFA S.A.S.zip": self._oferta("alfa"),
+            "p2 CONSORCIO BETA.zip": self._oferta("beta"),
+        })
+        r = ofertas_locales.desde_archivos([("ofertas del proceso.zip", contenedor)])
+        self.assertEqual([(p.hoja, p.nombre_proponente) for p in r.proponentes],
+                         [("P-01", "ALFA S.A.S"), ("P-02", "CONSORCIO BETA")])
+
+    def test_un_zip_con_una_carpeta_por_proponente(self):
+        """Cada carpeta se vuelve el zip de su proponente, con sus documentos."""
+        import io
+        import zipfile
+
+        from motor.integrations import ofertas_locales
+
+        contenedor = self._contenedor({
+            "p1 ALFA S.A.S/carta.pdf": b"carta de alfa",
+            "p1 ALFA S.A.S/rup.pdf": b"rup de alfa",
+            "p2 CONSORCIO BETA/carta.pdf": b"carta de beta",
+        })
+        r = ofertas_locales.desde_archivos([("ICCU-CM-039-2026.zip", contenedor)])
+        self.assertEqual([p.nombre_proponente for p in r.proponentes], ["ALFA S.A.S", "CONSORCIO BETA"])
+        # Los documentos quedan en la raíz del zip de cada proponente, sin la
+        # carpeta de más: es lo que el motor espera encontrar.
+        with zipfile.ZipFile(io.BytesIO(ofertas_locales.leer(r.proponentes[0].drive_file_id))) as z:
+            self.assertEqual(sorted(z.namelist()), ["carta.pdf", "rup.pdf"])
+            self.assertEqual(z.read("carta.pdf"), b"carta de alfa")
+
+    def test_la_oferta_de_un_proponente_no_se_reparte(self):
+        """Una oferta trae carpetas dentro (jurídica, técnica, financiera) y no por
+        eso son proponentes distintos: sus nombres no dicen de quién es la oferta."""
+        from motor.integrations import ofertas_locales
+
+        oferta = self._contenedor({
+            "1. JURIDICA/carta.pdf": b"carta",
+            "2. TECNICA/formato3.pdf": b"f3",
+            "3. FINANCIERA/estados.pdf": b"estados",
+        })
+        r = ofertas_locales.desde_archivos([("p5 GAMMA LTDA.zip", oferta)])
+        self.assertEqual([(p.hoja, p.nombre_proponente) for p in r.proponentes], [("P-05", "GAMMA LTDA")])
+
+    def test_las_secciones_de_una_oferta_no_son_proponentes_ni_con_nombre_neutro(self):
+        """El caso peligroso: un zip que no dice de quién es y que dentro trae las
+        carpetas en que el proponente organizó su oferta. Confundirlas convertiría
+        una oferta en tres."""
+        from motor.integrations import ofertas_locales
+
+        oferta = self._contenedor({
+            "1. JURIDICA/carta.pdf": b"carta",
+            "2. TECNICA/formato3.pdf": b"f3",
+            "3. FINANCIERA/estados.pdf": b"estados",
+        })
+        r = ofertas_locales.desde_archivos([("oferta.zip", oferta)])
+        self.assertEqual(len(r.proponentes), 1)
+        self.assertIn("no dice el número", r.proponentes[0].advertencia)
+
+    def test_un_zip_con_los_documentos_sueltos_es_una_oferta(self):
+        from motor.integrations import ofertas_locales
+
+        r = ofertas_locales.desde_archivos([("p3 DELTA S.A.S.zip", self._oferta("delta"))])
+        self.assertEqual([p.nombre_proponente for p in r.proponentes], ["DELTA S.A.S"])
+
+
+class PorcentajeDeLaGarantiaEnElTextoTests(SimpleTestCase):
+    """El numeral de la garantía dice el porcentaje en su propio texto casi
+    siempre, aunque la tabla de características no se pueda leer."""
+
+    def test_se_lee_del_texto_del_numeral(self):
+        from motor.parsers.documento_base import _porcentaje_del_presupuesto
+
+        for texto, esperado in (
+            ("por una cuantía equivalente al diez por ciento (10%) del Presupuesto Oficial del Proceso", 0.10),
+            ("equivalente al 10% del Presupuesto Oficial", 0.10),
+            ("cinco por ciento del Presupuesto Oficial estimado", 0.05),
+        ):
+            self.assertEqual(_porcentaje_del_presupuesto(texto)[0], esperado, texto)
+
+    def test_no_se_toma_el_de_las_garantias_del_contrato(self):
+        """Cumplimiento, salarios y estabilidad traen sus propios porcentajes
+        "del valor del contrato": tomar uno de esos pondría un valor asegurado
+        equivocado en la garantía de seriedad."""
+        from motor.parsers.documento_base import _porcentaje_del_presupuesto
+
+        for texto in ("el veinte por ciento (20%) del valor del contrato",
+                      "cumplimiento: 20% del valor del contrato; estabilidad 30%",
+                      "treinta por ciento del valor del contrato principal"):
+            self.assertIsNone(_porcentaje_del_presupuesto(texto)[0], texto)
+
+
 class SubirOfertasPorHttpTests(BaseEvaluaciones):
     """El cableado que usa el navegador: el Documento Base y las ofertas en .zip
     en la misma carga, sin carpeta compartida."""

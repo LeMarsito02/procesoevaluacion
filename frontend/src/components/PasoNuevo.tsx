@@ -175,8 +175,9 @@ export default function PasoNuevo(props: Props) {
             </ul>
           )}
           <span className="hint">
-            Nómbrelos “P1 Nombre del proponente” o “1. Nombre”. Si el nombre no dice el número, se numera por el orden
-            en que los elija y queda anotado. Súbalas por tandas si pesan mucho.
+            Un .zip por proponente, nombrado “P1 Nombre del proponente” o “1. Nombre”. También sirve un solo .zip que
+            traiga todas las ofertas dentro, cada una en su propio .zip o en su carpeta. Si un nombre no dice el
+            número, se numera por el orden en que lo elija y queda anotado. Súbalas por tandas si pesan mucho.
           </span>
         </div>
 
