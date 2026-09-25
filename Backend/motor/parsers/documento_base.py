@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import unicodedata
@@ -101,7 +102,177 @@ def _aval_pide_tarjeta(texto: str) -> bool:
     return False
 
 
-def _find_budget_rows(pdf: pdfplumber.PDF) -> tuple[str, list[ParsedLote]]:
+# ---------------------------------------------------------------- escaneados
+#
+# Hay entidades que publican el Documento Base escaneado: el PDF solo trae como
+# texto el encabezado y el pie, y todo el cuerpo es una imagen. Ahí
+# extract_text() devuelve el mismo encabezado en las 95 páginas y no se
+# encuentra ni la tabla de objeto y presupuesto ni el numeral de la garantía, así
+# que el proceso se crea sin lotes y con la garantía por defecto —que es
+# exactamente el aviso que veía el usuario—.
+#
+# El motor ya sabe leer páginas escaneadas (motor/procesamiento/pdf_utils, con
+# tesseract y caché por página); lo que faltaba era usarlo aquí. Como cada página
+# cuesta unos dos segundos la primera vez, se hace OCR solo si el documento lo
+# necesita y solo en las páginas donde puede estar lo que se busca.
+
+# Cuántas páginas del principio se miran para decidir si está escaneado, y
+# cuánto texto propio debería traer una página que no lo esté.
+_PAGINAS_DE_MUESTRA = 6
+_TEXTO_MINIMO_POR_PAGINA = 400
+# Hasta dónde se busca la tabla de objeto y presupuesto en un escaneado: es el
+# numeral 1.1, siempre al principio.
+_MAX_PAGINAS_ENCABEZADO = 25
+
+
+def _es_escaneado(pdf: pdfplumber.PDF) -> bool:
+    """Si el cuerpo del documento es una imagen. Se mide con las primeras
+    páginas: si apenas traen texto y sí traen imágenes, está escaneado."""
+    paginas = pdf.pages[:_PAGINAS_DE_MUESTRA]
+    if not paginas:
+        return False
+    textos, con_imagen = [], 0
+    for page in paginas:
+        textos.append(len((page.extract_text() or "").strip()))
+        con_imagen += bool(page.images)
+    return sum(textos) / len(textos) < _TEXTO_MINIMO_POR_PAGINA and con_imagen >= len(paginas) / 2
+
+
+def _texto(page, escaneado: bool) -> str:
+    """El texto de la página: con OCR si el documento está escaneado. Se usa el
+    de tablas porque lee fila por fila, que es como hay que leer la tabla de
+    objeto y presupuesto y la de características de la garantía."""
+    if not escaneado:
+        return page.extract_text() or ""
+    from motor.procesamiento.pdf_utils import texto_pagina_tabla
+
+    return texto_pagina_tabla(page)
+
+
+# El encabezado y el pie del documento tipo, que se repiten en cada página.
+_ENCABEZADO_RE = re.compile(
+    r"DOCUMENTOS?\s+(?:BASE|TIPO)|VERSION\s*\d|CCE-EICP|PAGINA\s*\d|CODIGO\s+CCE")
+
+
+# Las palabras con que un pliego escribe una cifra en letras. Sirven para
+# separar el objeto del valor cuando el OCR los pega.
+_CIFRA_EN_LETRAS_RE = re.compile(
+    r"\b(?:UNO|DOS|TRES|CUATRO|CINCO|SEIS|SIETE|OCHO|NUEVE|DIEZ|ONCE|DOCE|TRECE|CATORCE|QUINCE|DIECISEIS"
+    r"|DIECISIETE|DIECIOCHO|DIECINUEVE|VEINTE|TREINTA|CUARENTA|CINCUENTA|SESENTA|SETENTA|OCHENTA|NOVENTA"
+    r"|CIEN|CIENTO|DOSCIENTOS|TRESCIENTOS|CUATROCIENTOS|QUINIENTOS|SEISCIENTOS|SETECIENTOS|OCHOCIENTOS"
+    r"|NOVECIENTOS|MIL|MILLON|MILLONES|PESOS|M/?CTE)\b",
+    re.IGNORECASE,
+)
+
+
+def _orden_de_busqueda(pdf: pdfplumber.PDF, titulo: str, escaneado: bool):
+    """Las páginas en el orden en que conviene buscar un numeral.
+
+    Sin OCR, de la primera a la última, como siempre. Con OCR, el orden importa
+    porque cada página cuesta: el propio documento dice dónde está lo que se
+    busca —su índice trae el numeral y el número de página—, así que se empieza
+    por ahí y se sigue con las de alrededor. Si el índice no ayuda, se recorre
+    normal. En ningún caso se deja de mirar una página: solo cambia el orden."""
+    if not escaneado:
+        return list(pdf.pages)
+    total = len(pdf.pages)
+    pistas: list[int] = []
+    # El índice está en las primeras páginas y ya se le hizo OCR al detectar el
+    # tipo de documento, así que mirarlo es gratis.
+    for page in pdf.pages[:_PAGINAS_DE_MUESTRA]:
+        texto = _strip_accents(_texto(page, True).upper())
+        for m in re.finditer(re.escape(titulo) + r"[^\n\d]{0,90}?(\d{1,3})", texto):
+            pagina = int(m.group(1))
+            if 1 <= pagina <= total:
+                pistas.append(pagina - 1)
+    orden: list[int] = []
+    for p in pistas:
+        # El número del índice es el del pie de página, que puede ir corrido
+        # respecto al del PDF por las portadas: se mira alrededor.
+        for i in range(max(0, p - 3), min(total, p + 4)):
+            if i not in orden:
+                orden.append(i)
+    orden += [i for i in range(total) if i not in orden]
+    return [pdf.pages[i] for i in orden]
+
+
+def _objeto_de_las_lineas(texto: str) -> str:
+    """El objeto del proyecto, reconstruido renglón por renglón.
+
+    En una tabla escaneada el OCR lee cada renglón completo, así que en una misma
+    línea queda el pedazo del objeto junto al pedazo del valor en letras y del
+    lugar: «ADMINISTRATIVA, FINANCIERA, TRESCIENTOS TREINTA Y». El objeto es la
+    primera columna, así que de cada línea se toma lo que va antes de que empiece
+    otra: la cifra en letras, el plazo en meses, el signo $ o el nombre del lugar
+    (que va en minúsculas)."""
+    plano = _strip_accents(texto.upper())
+    # Por orden de precisión: la frase que presenta la tabla, luego su fila de
+    # encabezados. El título del numeral («1.1 OBJETO, PRESUPUESTO OFICIAL…») no
+    # sirve como ancla: dejaría dentro su propio texto.
+    desde = (re.search(r"SIGUIENTE\s+TABLA\s*:?", plano)
+             or re.search(r"OBJETO\s+DEL\s+PROYECTO[^\n]*\n", plano))
+    cuerpo = texto[desde.end():] if desde else texto
+    partes: list[str] = []
+    for linea in cuerpo.splitlines():
+        linea = linea.strip()
+        if not linea:
+            if partes:
+                break  # la tabla terminó
+            continue
+        sin_tildes = _strip_accents(linea.upper())
+        if _ENCABEZADO_RE.search(sin_tildes):
+            continue
+        # La fila de encabezados de la propia tabla.
+        if "OBJETO DEL PROYECTO" in sin_tildes or ("PLAZO" in sin_tildes and "PRESUPUESTO" in sin_tildes):
+            continue
+        # Solo la parte en mayúsculas del principio de la línea.
+        m = re.match(r"[\"“”'(]?[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9\s,.\-\"“”'()]*", linea)
+        if m is None:
+            if partes:
+                break
+            continue
+        tramo = _CIFRA_EN_LETRAS_RE.split(m.group(0), maxsplit=1)[0]
+        tramo = re.split(r"\bMES(?:ES)?\b|\$|\(\d", tramo, maxsplit=1)[0].strip(" ,.-")
+        if len(tramo) >= 3:
+            partes.append(tramo)
+        if len(partes) >= 12:
+            break
+    return _norm(" ".join(partes))
+
+
+def _lote_unico_del_texto(texto: str) -> ParsedLote | None:
+    """La fila de objeto y presupuesto leída del texto, cuando no hay tabla que
+    extraer porque la página es una imagen. Cada dato se reconoce por su forma,
+    igual que en la tabla: el valor por el signo $, el plazo por los meses y el
+    objeto por ser la parte larga en mayúsculas."""
+    dinero = _DINERO_CELDA_RE.search(texto)
+    if dinero is None:
+        return None
+    valor = _parse_money(dinero.group(0))
+    if not valor:
+        return None
+    # El OCR mezcla las columnas de la tabla, así que entre el número del plazo y
+    # la palabra "meses" se cuela texto de la columna de al lado: "SIETE (7)
+    # OCHOCIENTOS SESENTA / MESES Y SIETE MIL". Se admite ese ruido, pero poco, y
+    # solo con el número entre paréntesis (de 1 a 3 dígitos, para no confundirlo
+    # con una cifra de dinero).
+    plano = re.sub(r"\s+", " ", _strip_accents(texto.upper()))
+    plazo = (re.search(r"\((\d{1,3})\)[^()]{0,70}?MES(?:ES)?", plano)
+             or re.search(r"MES(?:ES)?[^()]{0,70}?\((\d{1,3})\)", plano)
+             or re.search(r"(\d{1,3})\s+MES(?:ES)?", plano))
+    # El objeto: el tramo largo en mayúsculas de la tabla (los pliegos lo
+    # escriben así), sin los números ni el encabezado de las columnas.
+    objeto = _objeto_de_las_lineas(texto)
+    return ParsedLote(
+        numero="ÚNICO",
+        objeto=_norm(objeto),
+        plazo_meses=int(plazo.group(1)) if plazo else None,
+        valor_presupuesto=valor,
+        lugar_ejecucion=None,
+    )
+
+
+def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str, list[ParsedLote]]:
     objeto_general = ""
     lotes: list[ParsedLote] = []
     heading_page_idx = None
@@ -110,8 +281,11 @@ def _find_budget_rows(pdf: pdfplumber.PDF) -> tuple[str, list[ParsedLote]]:
     # A table-of-contents entry also contains the heading text (with a dot
     # leader and page number), so prefer a page where the "OBJETO:" paragraph
     # itself can be found; only fall back to the first heading match otherwise.
-    for i, page in enumerate(pdf.pages):
-        text = page.extract_text() or ""
+    # En un escaneado cada página cuesta un OCR, así que se para en el numeral
+    # 1.1, que está siempre al principio.
+    hasta = min(_MAX_PAGINAS_ENCABEZADO, len(pdf.pages)) if escaneado else len(pdf.pages)
+    for i, page in enumerate(pdf.pages[:hasta]):
+        text = _texto(page, escaneado)
         if "OBJETO, PRESUPUESTO OFICIAL" not in _strip_accents(text.upper()):
             continue
         if fallback_page_idx is None:
@@ -147,12 +321,12 @@ def _find_budget_rows(pdf: pdfplumber.PDF) -> tuple[str, list[ParsedLote]]:
                     )
                 )
         if i > heading_page_idx and re.search(
-            r"1\.2\.?\s+DOCUMENTOS DEL PROCESO", page.extract_text() or "", re.IGNORECASE
+            r"1\.2\.?\s+DOCUMENTOS DEL PROCESO", _texto(page, escaneado), re.IGNORECASE
         ):
             break
 
     if not lotes:
-        unico = _objeto_unico(pdf, heading_page_idx)
+        unico = _objeto_unico(pdf, heading_page_idx, escaneado)
         if unico is not None:
             lotes.append(unico)
             objeto_general = objeto_general or unico.objeto
@@ -166,7 +340,7 @@ def _find_budget_rows(pdf: pdfplumber.PDF) -> tuple[str, list[ParsedLote]]:
 _DINERO_CELDA_RE = re.compile(r"\$\s*\d[\d.,]*")
 
 
-def _objeto_unico(pdf: pdfplumber.PDF, desde: int) -> ParsedLote | None:
+def _objeto_unico(pdf: pdfplumber.PDF, desde: int, escaneado: bool = False) -> ParsedLote | None:
     """Pliegos de un solo objeto (sin lotes), como los de obra pública: una
     tabla "Objeto del proyecto | Plazo | Valor presupuesto oficial | Lugar".
     Las columnas de los datos no siempre calzan con las del encabezado, así
@@ -174,6 +348,16 @@ def _objeto_unico(pdf: pdfplumber.PDF, desde: int) -> ParsedLote | None:
     por los meses, el objeto como el texto más largo y el lugar, lo que queda."""
     # Se empieza en la primera página que nombra la sección (puede ser el índice).
     for i in range(desde, min(desde + 8, len(pdf.pages))):
+        if escaneado:
+            # La página es una imagen: no hay tabla que extraer, así que la fila
+            # se reconoce en el texto que devolvió el OCR.
+            texto = _texto(pdf.pages[i], True)
+            sin_tildes = _strip_accents(texto.upper())
+            if "OBJETO" in sin_tildes and "PRESUPUESTO" in sin_tildes:
+                unico = _lote_unico_del_texto(texto)
+                if unico is not None:
+                    return unico
+            continue
         for table in pdf.pages[i].extract_tables():
             texto = _strip_accents(" ".join(c or "" for fila in table for c in fila).upper())
             if "OBJETO" not in texto or "PRESUPUESTO" not in texto:
@@ -202,19 +386,47 @@ def _row_condicion(row: list[str | None]) -> str:
     return _norm(non_empty[0]) if non_empty else ""
 
 
-def _find_garantia_seriedad(pdf: pdfplumber.PDF) -> ParsedGarantia | None:
+def _garantia_del_texto(texto: str) -> tuple[int | None, str, float | None, str]:
+    """(vigencia en meses, su frase, porcentaje, su frase) leídos del texto de la
+    tabla de características de la garantía, para cuando esa tabla es una imagen.
+
+    Se busca por la etiqueta de cada fila, como en la tabla, pero admitiendo que
+    el OCR mezcle las columnas: entre la etiqueta y su dato puede colarse texto
+    del renglón de al lado."""
+    plano = re.sub(r"\s+", " ", _strip_accents(texto))
+    vigencia = porcentaje = None
+    raw_vigencia = raw_valor = ""
+    m = re.search(r"VIGENCIA[^.]{0,120}?(\d{1,2})\s*MES", plano, re.IGNORECASE)
+    if m is None:
+        # También al revés: "3 meses contados a partir del cierre" en la fila de
+        # vigencia, con la etiqueta antes de lo que el OCR pegó del lado.
+        m = re.search(r"(\d{1,2})\s*MESES?\s+CONTADOS", plano, re.IGNORECASE)
+    if m is not None:
+        vigencia = int(m.group(1))
+        raw_vigencia = _norm(plano[max(0, m.start() - 40): m.end() + 80])
+    v = re.search(r"VALOR\s+ASEGURADO[^.]{0,200}?(\d{1,3}(?:[.,]\d+)?)\s*%", plano, re.IGNORECASE)
+    if v is None:
+        v = re.search(r"(\d{1,3}(?:[.,]\d+)?)\s*%\s*DEL\s+(?:VALOR\s+DEL\s+)?PRESUPUESTO", plano, re.IGNORECASE)
+    if v is not None:
+        porcentaje = float(v.group(1).replace(",", ".")) / 100
+        raw_valor = _norm(plano[max(0, v.start() - 60): v.end() + 60])
+    return vigencia, raw_vigencia, porcentaje, raw_valor
+
+
+def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> ParsedGarantia | None:
     # The heading text also shows up as a table-of-contents entry earlier in
     # the document, which has no characteristics table. Check every page
     # that mentions the heading and keep the first one that actually yields
     # a "Vigencia" and/or "Valor Asegurado" row.
-    for i, page in enumerate(pdf.pages):
-        text = page.extract_text() or ""
+    for i, page in enumerate(_orden_de_busqueda(pdf, "GARANTIA DE SERIEDAD DE LA OFERTA", escaneado)):
+        text = _texto(page, escaneado)
         if "GARANTIA DE SERIEDAD DE LA OFERTA" not in _strip_accents(text.upper()):
             continue
 
         window_pages = [page]
-        if i + 1 < len(pdf.pages):
-            window_pages.append(pdf.pages[i + 1])
+        siguiente = page.page_number  # page_number es 1-based: esto es el índice del siguiente
+        if siguiente < len(pdf.pages):
+            window_pages.append(pdf.pages[siguiente])
 
         vigencia_meses: int | None = None
         raw_vigencia = ""
@@ -222,6 +434,17 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF) -> ParsedGarantia | None:
         raw_valor = ""
 
         for p in window_pages:
+            if escaneado:
+                # La tabla de características es una imagen: sus filas se leen
+                # del texto del OCR, que las trae con la etiqueta delante.
+                de_texto = _garantia_del_texto(_texto(p, True))
+                if vigencia_meses is None and de_texto[0] is not None:
+                    vigencia_meses, raw_vigencia = de_texto[0], de_texto[1]
+                if porcentaje is None and de_texto[2] is not None:
+                    porcentaje, raw_valor = de_texto[2], de_texto[3]
+                if vigencia_meses is not None and porcentaje is not None:
+                    break
+                continue
             for table in p.extract_tables():
                 for row in table:
                     if not row or row[0] is None:
@@ -248,7 +471,7 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF) -> ParsedGarantia | None:
             # Likely the table-of-contents entry; keep looking.
             continue
 
-        combined_text = _strip_accents("\n".join((p.extract_text() or "") for p in window_pages)).lower()
+        combined_text = _strip_accents("\n".join(_texto(p, escaneado) for p in window_pages)).lower()
         base_calculo = "lote_mayor_valor" if "mayor valor" in combined_text else "presupuesto_total"
 
         return ParsedGarantia(
@@ -266,13 +489,22 @@ def parse_documento_base(pdf_bytes: bytes) -> ParseResult:
     from motor.evaluacion.formato1_contenido import modalidad_de
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        objeto_general, lotes = _find_budget_rows(pdf)
-        garantia = _find_garantia_seriedad(pdf)
+        # Se decide una vez: el OCR cuesta, y solo hace falta si el cuerpo del
+        # documento es una imagen.
+        escaneado = _es_escaneado(pdf)
+        if escaneado:
+            pdf._huella_contenido = hashlib.sha256(pdf_bytes).hexdigest()  # para la caché del OCR
+        objeto_general, lotes = _find_budget_rows(pdf, escaneado)
+        garantia = _find_garantia_seriedad(pdf, escaneado)
         # La modalidad se lee del encabezado de las primeras páginas.
-        primeras = [(p.extract_text() or "") for p in pdf.pages[:8]]
+        primeras = [_texto(p, escaneado) for p in pdf.pages[:8]]
         modalidad = modalidad_de(" ".join(primeras[:3]), " ".join(primeras))
         paginas = []
         for page in pdf.pages:
+            # El texto completo (para las cláusulas del aval) se lee sin OCR: son
+            # 95 páginas y ya se hizo OCR de las que importan. Si el documento
+            # está escaneado, lo que se pierde es una comprobación de detalle,
+            # no los lotes ni la garantía.
             paginas.append(re.sub(r"\s+", " ", page.extract_text() or ""))
             page.flush_cache()
         texto = " ".join(paginas)

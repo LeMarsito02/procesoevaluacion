@@ -9,7 +9,7 @@ from asgiref.sync import async_to_sync
 
 from django.core import mail
 from django.db import ProgrammingError, transaction
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from cuentas.aislamiento import NINGUNA, SISTEMA, fijar_entidad
@@ -1829,6 +1829,126 @@ class NombresOfertasDriveTests(TestCase):
             r = drive.list_proponentes("1k6QaO1v0bEbnhKnT2edkavswCpK3zzYc_prueba")
         self.assertEqual([p.drive_file_id for p in r.proponentes], ["a", "b"])
         self.assertIn("SOBRE ECONOMICO/1. OBRAS SAS.zip (subcarpeta: no se usa)", r.no_reconocidos)
+
+
+class DocumentoBaseEscaneadoTests(SimpleTestCase):
+    """Documentos Base publicados como imagen: el PDF solo trae de texto el
+    encabezado y el pie, y todo el cuerpo es un escaneo. Ahí no hay tabla que
+    extraer, así que la fila de objeto y presupuesto y la de la garantía se leen
+    del texto que devuelve el OCR, que trae los renglones enteros con las
+    columnas entremezcladas.
+
+    El texto de estas pruebas es el que devolvió tesseract en un pliego real de
+    interventoría (ICCU-CM-016), con sus errores de lectura incluidos: es lo que
+    hay que saber leer."""
+
+    TABLA = """1.1. OBJETO, PRESUPUESTO OFICIAL, PLAZO Y UBICACIÓN
+El objeto, Presupuesto Oficial, plazo y ubicación del proyecto de este Proceso de
+Contratación se identifican en la siguiente tabla:
+Objeto del proyecto, lote o Plazo del Valor Presupuesto Oficial Lygar(gs) de
+INTERVENTORÍA TÉCNICA,
+ADMINISTRATIVA, FINANCIERA, TRESCIENTOS TREINTA Y
+JURÍDICA, SOCIAL Y AMBIENTAL SIETE MILLONES Municipio de La
+AL PROYECTO " MEJORAMIENTO SIETE (7) OCHOCIENTOS SESENTA C;º|era
+DEL TRAMO VIAL SAN JOSE DEL MESES Y SIETE MIL departamento de
+TRIUNFO - EL MARQUEZ EN EL TRESCIENTOS DIECISÉIS Cp ndinamarca
+MUNICIPIO DE LA CALERA, PESOS M/CTE u
+DEPARTAMENTO DE ($337.867.316,00)
+CUNDINAMARCA”
+
+La interventoría de la obra tiene las especificaciones descritas en el “Anexo 1"""
+
+    GARANTIA = """8.1 GARANTÍA DE SERIEDAD DE LA OFERTA
+Las características de la Garantía son las siguientes:
+Característica Condición
+beneficiario 900.258.711-1
+3 meses contados a partir de la fecha de cierre del Proceso de
+Vigencia proceso, se tendrá como referencia para establecer el plazo de
+Asegurado Contratación"""
+
+    def test_se_lee_el_lote_con_su_presupuesto_y_su_plazo(self):
+        from motor.parsers.documento_base import _lote_unico_del_texto
+
+        lote = _lote_unico_del_texto(self.TABLA)
+        self.assertEqual(lote.numero, "ÚNICO")
+        self.assertEqual(lote.valor_presupuesto, 337867316.0)
+        # "SIETE (7) OCHOCIENTOS SESENTA / MESES" — el número y la palabra
+        # quedan separados por la columna de al lado.
+        self.assertEqual(lote.plazo_meses, 7)
+
+    def test_el_objeto_se_reconstruye_sin_la_columna_del_valor(self):
+        """El objeto se compara después con el de la carta de presentación, así
+        que no puede llevar dentro la cifra en letras del presupuesto."""
+        from motor.parsers.documento_base import _objeto_de_las_lineas
+
+        objeto = _objeto_de_las_lineas(self.TABLA)
+        self.assertIn("MEJORAMIENTO", objeto)
+        self.assertIn("SAN JOSE DEL TRIUNFO", objeto)
+        self.assertIn("CALERA", objeto)
+        for cifra in ("TRESCIENTOS", "MILLONES", "PESOS", "DIECISÉIS"):
+            self.assertNotIn(cifra, objeto, objeto)
+
+    def test_no_se_toma_el_encabezado_del_documento_tipo_como_objeto(self):
+        from motor.parsers.documento_base import _objeto_de_las_lineas
+
+        con_encabezado = ("DOCUMENTO BASE\nINTERVENTORÍA DE OBRA PÚBLICA DE INFRAESTRUCTURA DE TRANSPORTE "
+                          "- VERSIÓN 3\nCódigo CCE-EICP-GI-11 Página 7 de 95\n" + self.TABLA)
+        objeto = _objeto_de_las_lineas(con_encabezado)
+        self.assertNotIn("CCE-EICP", objeto)
+        self.assertNotIn("VERSIÓN", objeto)
+        self.assertIn("MEJORAMIENTO", objeto)
+
+    def test_se_lee_la_vigencia_de_la_garantia_del_texto(self):
+        from motor.parsers.documento_base import _garantia_del_texto
+
+        vigencia, raw, porcentaje, _ = _garantia_del_texto(self.GARANTIA)
+        self.assertEqual(vigencia, 3)
+        self.assertIn("3 meses", raw.lower())
+        # En este escaneo la celda del valor asegurado quedó ilegible ("Asegurado
+        # Contratación"): no se inventa, se deja sin leer para que el proceso avise
+        # y asuma el 10 % del documento tipo.
+        self.assertIsNone(porcentaje)
+
+    def test_el_porcentaje_se_lee_cuando_el_ocr_lo_alcanza(self):
+        from motor.parsers.documento_base import _garantia_del_texto
+
+        texto = self.GARANTIA.replace("Asegurado Contratación",
+                                      "Valor Asegurado 10% del Presupuesto Oficial del Proceso de Contratación")
+        _, _, porcentaje, raw = _garantia_del_texto(texto)
+        self.assertEqual(porcentaje, 0.10)
+        self.assertIn("10%", raw)
+
+    def test_un_porcentaje_de_otra_garantia_no_se_confunde_con_la_de_seriedad(self):
+        """Las garantías del contrato (cumplimiento, salarios, estabilidad) traen
+        sus propios porcentajes —20 %, 30 %— en las páginas siguientes. Tomar uno
+        de esos pondría un valor asegurado equivocado."""
+        from motor.parsers.documento_base import _garantia_del_texto
+
+        texto = self.GARANTIA + "\nAmparos cumplimiento veinte por ciento (20%) del valor del contrato"
+        _, _, porcentaje, _ = _garantia_del_texto(texto)
+        self.assertIsNone(porcentaje)
+
+    def test_un_documento_con_texto_no_se_trata_como_escaneado(self):
+        """El OCR cuesta dos segundos por página: solo se hace si hace falta."""
+        from motor.parsers.documento_base import _es_escaneado
+
+        class Pagina:
+            def __init__(self, texto, imagenes):
+                self._texto, self.images = texto, imagenes
+
+            def extract_text(self):
+                return self._texto
+
+        class Pdf:
+            def __init__(self, paginas):
+                self.pages = paginas
+
+        con_texto = Pdf([Pagina("x" * 3000, []) for _ in range(6)])
+        self.assertFalse(_es_escaneado(con_texto))
+        # Solo el encabezado como texto y una imagen por página: escaneado.
+        escaneado = Pdf([Pagina("DOCUMENTO BASE INTERVENTORÍA", ["img"]) for _ in range(6)])
+        self.assertTrue(_es_escaneado(escaneado))
+        self.assertFalse(_es_escaneado(Pdf([])))
 
 
 class DocumentoBaseObjetoUnicoTests(TestCase):
