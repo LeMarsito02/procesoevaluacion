@@ -71,7 +71,16 @@ Ya está garantizado en cinco frentes:
    evalúan todos los lotes y se avisa. El N.A. dice de dónde salió y a qué
    lotes sí se presenta. Antes: si se lee mal
    la carta, ese lote sale N/A y se aprueba sin evaluar. Debe exigir cita.
-2. **El catálogo puede dar por cubierto un requisito que en realidad no
+2. ~~**El catálogo puede dar por cubierto un requisito que en realidad no
+   está cubierto.**~~ **Cerrado** (24/09/2026): se revisaron los 448 requisitos
+   que el catálogo declaraba cubiertos en los 14 pliegos. Se encontraron 55
+   falsos positivos, todos aprobaciones indebidas potenciales: el personal clave
+   (39) lo tapaba la regla del puntaje porque el pliego lo describe en ese
+   capítulo; el rango financiero de las mipymes; y el reparto de actividades del
+   proponente plural. Hay una lista explícita de temas que el motor no verifica
+   y que ganan sobre todas las reglas. Los requisitos que frenan subieron de 408
+   a 463: el número creció porque el sistema dejó de mentirse. Texto anterior:
+   el catálogo puede dar por cubierto un requisito que en realidad no
    verificamos** (falso positivo del emparejamiento por palabras). Revisar una
    vez, contra los 14 pliegos, lo que dice cubrir.
 3. **La medición solo cubre 3 procesos con ofertas.** Cero indebidas en 417

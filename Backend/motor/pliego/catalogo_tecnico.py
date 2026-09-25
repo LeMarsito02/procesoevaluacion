@@ -226,6 +226,27 @@ def _norm(texto: str) -> str:
 # apostillados. El motor no sabe verificar nada de eso, y sus reglas hablan de
 # los mismos temas (estados financieros, códigos de clasificación), así que sin
 # esto quedaría tapado por una verificación que en su caso no se hizo.
+# Temas que el motor no verifica en absoluto y que, sin esto, quedarían tapados
+# por una regla que habla del mismo asunto. Ganan sobre todas las reglas.
+#
+# El personal clave (director, residente, los profesionales del equipo: su
+# formación, su experiencia, el acta de grado, la tarjeta profesional) se
+# describe en el capítulo del puntaje, así que la regla del puntaje lo daba por
+# verificado. El motor calcula los factores del documento tipo —calidad,
+# industria nacional, mujeres, mipyme, discapacidad—, no el personal: eran 39
+# requisitos dados por cumplidos sin mirarlos.
+_SIN_VERIFICACION_RE = re.compile(
+    r"PERSONAL\s+CLAVE|EQUIPO\s+DE\s+TRABAJO|FORMACION\s+ACADEMICA|TARJETA\s+PROFESIONAL|MATRICULA\s+PROFESIONAL"
+    r"|ACTA\s+DE\s+GRADO|DIPLOMA|CONVALIDACION|HOJAS?\s+DE\s+VIDA|POSGRADO|PENSUM|EXPERIENCIA\s+PROFESIONAL"
+    r"|PORCENTAJE\s+DE\s+DEDICACION|DIRECTOR\s+DE\s+OBRA|RESIDENTE\s+DE\s+OBRA"
+    # El pliego le aplica a las mipymes otro rango de la matriz financiera; el
+    # motor usa un solo conjunto de umbrales para todos.
+    r"|MIPYME[^.]{0,120}(?:CAPACIDAD\s+(?:FINANCIERA|ORGANIZACIONAL))"
+    # El motor lee del Formato 2 los integrantes y sus porcentajes, no el
+    # reparto de actividades entre ellos.
+    r"|DISCRIMINE\s+LAS\s+ACTIVIDADES"
+)
+
 _EXTRANJERO_SIN_SUCURSAL_RE = re.compile(
     r"EXTRANJER\w+(?:[^.]{0,80}?)(?:SIN\s+DOMICILIO|SIN\s+SUCURSAL)|LEGISLACION\s+(?:PROPIA\s+)?DEL?\s+PAIS"
     r"|PAIS\s+DE\s+ORIGEN|APOSTILL|CONSULARIZ"
@@ -240,6 +261,8 @@ def verificacion_de(requisito: str, cita: str = "") -> str | None:
         return ""  # no es una exigencia al proponente: ni se verifica ni falta
     if _EXTRANJERO_SIN_SUCURSAL_RE.search(texto):
         return None  # el motor no verifica lo de los proponentes extranjeros
+    if _SIN_VERIFICACION_RE.search(texto):
+        return None  # temas que el motor no verifica: no los tapa ninguna regla
     for clave, patron in _REGLAS:
         if patron.search(texto):
             return clave

@@ -358,6 +358,44 @@ class ClaseDeRequisitoTests(SimpleTestCase):
                          "tecnica.experiencia_general")
         self.assertEqual(verificacion_de("Acta de Inicio o la orden de inicio"), "tecnica.soporte")
 
+    def test_el_personal_clave_no_lo_tapa_la_regla_del_puntaje(self):
+        """Hallazgo de la revisión de los 14 pliegos: el personal clave se
+        describe en el capítulo del puntaje, así que la regla del puntaje lo daba
+        por verificado. El motor calcula los factores del documento tipo, no el
+        personal: eran 39 requisitos dados por cumplidos sin mirarlos, y el
+        personal clave es el corazón de los concursos de méritos."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        cita = "capítulo IV, puntaje del factor de calidad"
+        for texto in (
+            "El proponente debe diligenciar el Formato 9 – Experiencia y formación académica adicional del Personal Clave Evaluable",
+            "Los integrantes del equipo de trabajo deberán acreditar la experiencia del Personal Clave Evaluable",
+            "El proponente debe acreditar la formación académica con copia del acta de grado",
+            "Acreditar la convalidación de títulos académicos obtenidos en el exterior",
+            "Acreditar como mínimo el porcentaje de dedicación para el cargo respectivo",
+        ):
+            self.assertIsNone(verificacion_de(texto, cita), texto)
+
+    def test_el_rango_financiero_de_las_mipymes_no_se_da_por_aplicado(self):
+        """El pliego les aplica otro rango de la matriz; el motor usa un solo
+        conjunto de umbrales para todos."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertIsNone(verificacion_de(
+            "El Proponente que demuestre la condición de Mipyme domiciliada en Colombia acreditará la Capacidad "
+            "Financiera de acuerdo con el rango 1 de la matriz"))
+        # Lo que sí verifica sobre mipymes —la condición, con el RUP— sigue cubierto.
+        self.assertEqual(verificacion_de("El Proponente acreditará la calidad de Mipyme con copia del certificado del RUP"),
+                         "tecnica.puntaje")
+
+    def test_el_reparto_de_actividades_del_plural_no_lo_tapa_el_formato_2(self):
+        """El motor lee del Formato 2 los integrantes y sus porcentajes, no qué
+        actividades hace cada uno."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertIsNone(verificacion_de(
+            "Se deberá allegar el documento de conformación de Proponente Plural que discrimine las actividades a cargo de cada uno"))
+
     def test_los_permisos_no_entran_en_lo_que_frena_pero_se_listan(self):
         from motor.pliego.catalogo_tecnico import cobertura, permisos
 
