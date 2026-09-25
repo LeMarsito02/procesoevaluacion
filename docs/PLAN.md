@@ -84,7 +84,7 @@ Ya está garantizado en cinco frentes:
 | Fase | Qué | Cuánto pesa |
 |---|---|---|
 | A | ~~Filtrar el ruido del catálogo~~ **Hecho** (24/09/2026) | 498 → 410 frenan. Cada frase del pliego se clasifica por el riesgo de ignorarla: exclusión (48), exigencia (324), regla de lectura (38) frenan; permiso (39) y encabezado no. Los permisos se muestran antes de rechazar. Lo de proponentes extranjeros nunca se da por verificado |
-| B | El 50 % de experiencia de un integrante del proponente plural | 34 casos |
+| B | ~~El 50 % de experiencia de un integrante del proponente plural~~ **Hecho** (24/09/2026) | El motor ya lo verificaba (50 %, 5 % y uno sin aportar); el catálogo no lo reconocía escrito en plural. La regla exige que el aporte sea de experiencia o un porcentaje, para no tapar «los integrantes deben aportar el certificado de antecedentes» |
 | C | **Personal clave** (director, residente, profesionales: formación, experiencia, acta de grado, tarjeta) | 39+ casos, área nueva completa; es el corazón de los concursos de méritos |
 | D | Huecos de lectura del pliego: CM-016 no se leyó, plazo falta en 5 de 14, lotes en 0 en 2, CM-045 lee 31 meses | — |
 | E | Extranjeros y apostilla | 34 casos; propuesta: dejarlo siempre en revisión |
@@ -126,7 +126,7 @@ Ya está garantizado en cinco frentes:
 3. ~~Filtrar el ruido del catálogo.~~ **Hecho**: ver la fase A. Lo que bajó el
    conteo no fue borrar requisitos, fue clasificarlos por riesgo; y quien de
    verdad baja el costo es la palanca 1 (una vez por proceso).
-4. El 50 % de experiencia del integrante.
+4. ~~El 50 % de experiencia del integrante.~~ **Hecho**: ver la fase B.
 5. Los tres huecos de la garantía.
 
 **Después:** personal clave, el SCE, el Formato 3 en PDF.

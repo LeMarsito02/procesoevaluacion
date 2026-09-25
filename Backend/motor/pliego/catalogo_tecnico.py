@@ -55,7 +55,19 @@ REGLAS: tuple[tuple[str, str], ...] = (
                         r"|DOCUMENTOS\s+VALIDOS\s+PARA\s+LA\s+ACREDITACION"),
     ("tecnica.formato3", r"FORMATO\s*3\b|NUMERO\s+CONSECUTIVO\s+DEL\s+CONTRATO"),
     ("tecnica.socio", r"SOCIO|ACCIONISTA|MENOS\s+DE\s+TRES\s+\(?3\)?\s+ANOS"),
-    ("tecnica.plural", r"PROPONENTE\s+PLURAL|CONSORCIO|UNION\s+TEMPORAL|CADA\s+INTEGRANTE|PORCENTAJE\s+DE\s+PARTICIPACION"),
+    # El motor verifica, del proponente plural, lo que el pliego pide sobre el
+    # aporte de experiencia: que uno aporte el mínimo (50 % en el documento
+    # tipo), que los demás lleguen al suyo (5 %) y que no haya más de un
+    # integrante sin aportar nada. Los pliegos lo escriben de muchas maneras
+    # ("En Proponentes Plurales…", "Uno de los integrantes…", "Los demás
+    # integrantes…"), y con la forma en singular se quedaban 34 requisitos
+    # pidiendo revisión de algo que sí se verifica.
+    # Lo que el aporte tiene que ser es experiencia o un porcentaje: "los
+    # integrantes deben aportar el certificado de antecedentes" habla de otra
+    # cosa que el motor técnico no verifica, y no puede quedar tapada aquí.
+    ("tecnica.plural", r"(?:PROPONENTES?\s+PLURALES?|CONSORCIO|UNION\s+TEMPORAL|INTEGRANTES?)"
+                       r"[^.]{0,120}?(?:APORT|ACREDIT)\w*[^.]{0,60}?(?:EXPERIENCIA|POR\s+CIENTO|%|SMMLV)"
+                       r"|PORCENTAJE\s+DE\s+PARTICIPACION"),
     ("tecnica.obras_inconclusas", r"OBRAS?\s+(?:CIVILES\s+)?INCONCLUSAS"),
     ("tecnica.puntaje", r"PUNTAJE|PUNTOS|FACTOR\s+DE\s+CALIDAD|INDUSTRIA\s+NACIONAL|EMPRENDIMIENTO|MIPYME|DISCAPACIDAD"
                         r"|CRITERIOS?\s+AMBIENTAL|PLAN\s+DE\s+CALIDAD|GERENCIA\s+DE\s+PROYECTOS|DESEMPATE"),

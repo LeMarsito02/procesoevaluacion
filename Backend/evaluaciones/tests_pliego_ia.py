@@ -323,6 +323,31 @@ class ClaseDeRequisitoTests(SimpleTestCase):
         self.assertIsNone(verificacion_de(
             "Las personas jurídicas extranjeras sin domicilio en Colombia deberán indicar los códigos de clasificación"))
 
+    def test_las_condiciones_del_proponente_plural_ya_no_piden_revision(self):
+        """El motor verifica que uno de los integrantes aporte el 50 %, que los
+        demás lleguen al 5 % y que no haya más de uno sin aportar. El catálogo
+        no lo reconocía cuando el pliego lo escribía en plural, y eran 34
+        requisitos pidiendo revisión de algo que sí se verifica."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        for texto in (
+            "En Proponentes Plurales, uno de los integrantes debe aportar como mínimo el cincuenta por ciento (50 %) de la experiencia",
+            "Los demás integrantes deben acreditar al menos el cinco por ciento (5 %) de la experiencia solicitada",
+            "Solo uno (1) de los integrantes, si así lo considera pertinente, podrá no acreditar experiencia",
+        ):
+            self.assertEqual(verificacion_de(texto), "tecnica.plural", texto)
+
+    def test_un_requisito_del_plural_que_no_es_de_experiencia_no_queda_tapado(self):
+        """El riesgo de ampliar la regla: que "los integrantes deben aportar el
+        certificado de antecedentes" se dé por verificado con las condiciones de
+        aporte de experiencia, que es otra cosa."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertIsNone(verificacion_de(
+            "Los integrantes del proponente plural deben aportar el certificado de antecedentes disciplinarios"))
+        self.assertIsNone(verificacion_de(
+            "Cada integrante del consorcio debe aportar su certificado de existencia y representación legal"))
+
     def test_lo_que_el_motor_si_verifica_deja_de_pedir_revision(self):
         """Falsos negativos que se encontraron en los 14 pliegos del ICCU: el
         motor sí lo verifica y el catálogo no lo reconocía."""
