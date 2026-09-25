@@ -116,8 +116,13 @@ Ya está garantizado en cinco frentes:
    `RequisitosPliego.tsx`. La clave del requisito aguanta que la IA lo lea con
    otras palabras pero no que cambie una cifra, para que asumir «5 años» no dé
    por revisado «8 años».
-2. Revisión dirigida: que un requisito sin verificar sea su propio punto del
-   informe y no tumbe el lote entero.
+2. ~~Revisión dirigida: que un requisito sin verificar sea su propio punto del
+   informe y no tumbe el lote entero.~~ **Hecho** (24/09/2026). `PuntoDeRevision`
+   con ámbito («proceso» = del pliego, igual para todos; «oferta» = de esta
+   oferta), `experiencia_acreditada` en técnica y `capacidad_acreditada()` en
+   financiera, expuestos en el detalle del requisito y en `QueFaltaRevisar.tsx`.
+   Un lote cuya experiencia está acreditada y solo espera algo del pliego lo
+   dice así, en vez de parecer un incumplimiento. Sigue sin aprobarse solo.
 3. Filtrar el ruido del catálogo.
 4. El 50 % de experiencia del integrante.
 5. Los tres huecos de la garantía.

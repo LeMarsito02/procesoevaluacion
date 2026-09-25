@@ -574,3 +574,52 @@ class CifrasImposiblesTests(SimpleTestCase):
         from motor.financiera.parametros import LoteFinanciero
 
         self.assertIsNone(LoteFinanciero("ÚNICO", 0, plazo_meses=8, anticipo=0.2).capital_de_trabajo_demandado)
+
+
+class RevisionDirigidaFinancieraTests(SimpleTestCase):
+    """Lo mismo que en técnica: lo que falta del pliego no desacredita lo que la
+    oferta sí demostró, pero tampoco la aprueba."""
+
+    def _resultado(self, avisos_de_la_oferta=(), avisos_del_pliego=()):
+        from motor.financiera.proponente import ResultadoFinanciero, capacidad_acreditada
+        from motor.tecnica.experiencia import PuntoDeRevision
+
+        r = ResultadoFinanciero()
+        r.lotes_presentados = ["LOTE 1"]
+        r.financiera = Revision(True, [])
+        r.organizacional = Revision(True, [])
+        r.validez = Revision(True, [])
+        r.capital_por_lote = {"LOTE 1": Revision(True, [])}
+        r.residual = Revision(True, [])
+        r.avisos = [*avisos_de_la_oferta, *avisos_del_pliego]
+        r.revisiones = [
+            *(PuntoDeRevision(f"o{i}", "oferta", a) for i, a in enumerate(avisos_de_la_oferta)),
+            *(PuntoDeRevision(f"p{i}", "proceso", a) for i, a in enumerate(avisos_del_pliego)),
+        ]
+        return r, capacidad_acreditada
+
+    def test_sin_pendientes_cumple_y_queda_acreditada(self):
+        from motor.financiera.proponente import cumple_lote
+
+        r, acreditada = self._resultado()
+        self.assertTrue(cumple_lote(r, "LOTE 1"))
+        self.assertTrue(acreditada(r, "LOTE 1"))
+
+    def test_lo_que_falta_del_pliego_no_desacredita_la_capacidad(self):
+        from motor.financiera.proponente import cumple_lote
+
+        r, acreditada = self._resultado(avisos_del_pliego=["falta confirmar el anticipo leído con IA"])
+        self.assertFalse(cumple_lote(r, "LOTE 1"))  # sigue sin aprobarse solo
+        self.assertTrue(acreditada(r, "LOTE 1"))
+
+    def test_un_aviso_de_la_oferta_si_deja_la_capacidad_sin_acreditar(self):
+        from motor.financiera.proponente import cumple_lote
+
+        r, acreditada = self._resultado(avisos_de_la_oferta=["no se encontró el RUP de BETA S.A.S."])
+        self.assertFalse(cumple_lote(r, "LOTE 1"))
+        self.assertFalse(acreditada(r, "LOTE 1"))
+
+    def test_una_verificacion_que_no_pasa_no_se_acredita_por_mas_que_falte_el_pliego(self):
+        r, acreditada = self._resultado(avisos_del_pliego=["falta confirmar el anticipo"])
+        r.financiera = Revision(False, ["liquidez 0,8: el pliego exige 1,2"])
+        self.assertFalse(acreditada(r, "LOTE 1"))

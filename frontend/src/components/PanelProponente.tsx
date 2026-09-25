@@ -6,6 +6,7 @@ import { fuenteDe } from '../historico'
 import Icono from './Icono'
 import DetalleFinanciero from './DetalleFinanciero'
 import DetalleTecnico from './DetalleTecnico'
+import QueFaltaRevisar from './QueFaltaRevisar'
 
 const TIPO: Record<string, string> = {
   persona_natural: 'Persona natural',
@@ -158,6 +159,9 @@ export default function PanelProponente(p: Props) {
                         )}
                         {r.detalle?.contratos && <DetalleTecnico detalle={r.detalle} />}
                         {r.detalle?.financiera && <DetalleFinanciero detalle={r.detalle} />}
+                        {esPendiente(estado) && (
+                          <QueFaltaRevisar revisiones={r.detalle?.revisiones} acreditada={r.detalle?.experiencia_acreditada} />
+                        )}
                         {p.onConsultarCopnia && r.matricula_profesional && fuente(info.numero)?.clave === 'copnia' && esPendiente(estado) && (
                           <div className="acciones">
                             <span className="small muted">

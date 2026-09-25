@@ -83,6 +83,20 @@ class ContratoEvaluado:
 
 
 @dataclass
+class PuntoDeRevision:
+    """Una cosa concreta que una persona tiene que mirar, con el ámbito al que
+    pertenece. El ámbito es lo que decide cuánto cuesta: lo que sale del pliego
+    es igual para todos los proponentes y se revisa una vez; lo que sale de la
+    oferta hay que mirarlo en esa oferta. Separarlos es lo que permite revisar
+    poco sin dar por cumplido nada."""
+
+    clave: str
+    ambito: str  # "proceso" (del pliego, igual para todos) | "oferta"
+    que: str
+    donde: str = ""
+
+
+@dataclass
 class ResultadoLote:
     lote: str
     cumple: bool | None = None
@@ -95,11 +109,24 @@ class ResultadoLote:
     longitud_minima_km: float | None = None
     area: bool | None = None
     area_minima_m2: float | None = None
-    area: bool | None = None
-    area_minima_m2: float | None = None
     condiciones_plural: bool | None = None
     aporte_por_integrante: dict[str, float] = field(default_factory=dict)
     motivos: list[str] = field(default_factory=list)
+    # Lo que falta por mirar, uno por uno y con su ámbito.
+    revisiones: list[PuntoDeRevision] = field(default_factory=list)
+    # La experiencia en sí (valor, contrato del 70 %, longitud, área, aportes
+    # del plural, soportes) quedó acreditada con lo que hay en la oferta. Si
+    # esto es True y el lote no cumple, lo que falta es del proceso: quien
+    # revisa no tiene que volver a mirar los contratos.
+    experiencia_acreditada: bool = False
+
+    @property
+    def revisiones_del_proceso(self) -> list[PuntoDeRevision]:
+        return [r for r in self.revisiones if r.ambito == "proceso"]
+
+    @property
+    def revisiones_de_la_oferta(self) -> list[PuntoDeRevision]:
+        return [r for r in self.revisiones if r.ambito == "oferta"]
 
 
 # ---------------------------------------------------------------- objeto
@@ -434,6 +461,11 @@ def evaluar_lote(
                     f"contrato {c.orden}: no se encontró su acta o certificación entre los documentos de la oferta (3.5.6); "
                     "verifica que el proponente la haya aportado"
                 )
+                resultado.revisiones.append(PuntoDeRevision(
+                    f"soporte_contrato_{c.orden}", "oferta",
+                    f"el acta o certificación del contrato {c.orden} ({c.contratante or 'sin contratante'}, "
+                    f"{c.numero_contrato or 'sin número'}): no se encontró en la oferta (3.5.6)",
+                ))
     exigencias = [cumple_valor, resultado.un_contrato_70 is not False, resultado.condiciones_plural is not False]
     if lote.condicion_objeto and validos:
         # El pliego pide, además de la experiencia general, que al menos un
@@ -444,15 +476,24 @@ def evaluar_lote(
         palabras = {p for p in re.findall(r"[A-ZÑ]{5,}", lote.condicion_objeto) if p not in ("COMO", "BIENES")}
         parecidos = [str(c.orden) for c in validos
                      if palabras & set(re.findall(r"[A-ZÑ]{5,}", normalizar(c.objeto)))]
+        detalle = (f"revisa el contrato {', '.join(parecidos)} y el documento que acredita esa condición"
+                   if parecidos else "ningún contrato lo dice en su objeto; revisa los documentos aportados")
         resultado.motivos.append(
-            f"la experiencia específica exige que al menos un contrato sea «{lote.condicion_objeto.lower()}»: "
-            + (f"revisa el contrato {', '.join(parecidos)} y el documento que acredita esa condición"
-               if parecidos else "ningún contrato lo dice en su objeto; revisa los documentos aportados")
+            f"la experiencia específica exige que al menos un contrato sea «{lote.condicion_objeto.lower()}»: {detalle}"
         )
+        resultado.revisiones.append(PuntoDeRevision(
+            "condicion_objeto", "oferta",
+            f"que al menos un contrato sea «{lote.condicion_objeto.lower()}»: {detalle}",
+        ))
     if not parametros.clases_unspsc:
         resultado.motivos.append(
             "no se leyeron en el pliego los códigos UNSPSC exigidos: no se verificó la clasificación de los contratos"
         )
+        resultado.revisiones.append(PuntoDeRevision(
+            "unspsc", "proceso",
+            "los códigos UNSPSC que exige el pliego no se pudieron leer: confírmalos una vez en «Lo que se entendió "
+            "del pliego» y la clasificación de los contratos se verifica sola para todos los proponentes",
+        ))
     if parametros.requisitos_sin_verificar:
         # El pliego exige cosas que el motor no sabe comprobar: se dicen, y el
         # lote no se aprueba solo (nunca se da por cumplido lo que no se miró).
@@ -461,6 +502,10 @@ def evaluar_lote(
             "revísalos: " + "; ".join(parametros.requisitos_sin_verificar[:3])
             + (" …" if len(parametros.requisitos_sin_verificar) > 3 else "")
         )
+        for i, requisito in enumerate(parametros.requisitos_sin_verificar):
+            resultado.revisiones.append(PuntoDeRevision(
+                f"requisito_pliego_{i}", "proceso", requisito,
+            ))
     if parametros.sin_confirmar:
         # Se evalúa con lo que la IA leyó del pliego, pero no se aprueba solo
         # hasta que alguien confirme esos parámetros en la plataforma.
@@ -468,19 +513,49 @@ def evaluar_lote(
             "del pliego se leyó con IA y falta confirmar: " + "; ".join(parametros.sin_confirmar[:4])
             + (f" (y {len(parametros.sin_confirmar) - 4} más)" if len(parametros.sin_confirmar) > 4 else "")
         )
-    dudas = [
-        bool(parametros.requisitos_sin_verificar),
-        bool(parametros.sin_confirmar),
-        bool(lote.condicion_objeto),
-        not parametros.clases_unspsc,
-        any(objeto[id(c)] is None or (c.de_un_socio and not socio_ok.get(id(c))) for c in validos),
-        lote.longitud_minima_km is not None and resultado.longitud is not True,
-        lote.area_minima_m2 is not None and resultado.area is not True,
-        lote.area_minima_m2 is not None and resultado.area is not True,
-        plural and resultado.condiciones_plural is None,
-        bool(sin_soporte),
-    ]
-    resultado.cumple = all(exigencias) and not any(dudas)
+        for i, parametro in enumerate(parametros.sin_confirmar):
+            resultado.revisiones.append(PuntoDeRevision(
+                f"parametro_pliego_{i}", "proceso",
+                f"confirma lo que se leyó del pliego: {parametro}",
+            ))
+    # El objeto de un contrato que no se pudo clasificar, o el aporte de un
+    # socio que no se pudo verificar, se miran en esta oferta.
+    for c in validos:
+        if objeto[id(c)] is None:
+            resultado.revisiones.append(PuntoDeRevision(
+                f"objeto_contrato_{c.orden}", "oferta",
+                f"el objeto del contrato {c.orden} no se parece a la experiencia que pide el pliego ni se puede "
+                f"descartar: «{(c.objeto or '')[:120]}»",
+            ))
+        elif c.de_un_socio and not socio_ok.get(id(c)):
+            resultado.revisiones.append(PuntoDeRevision(
+                f"socio_contrato_{c.orden}", "oferta",
+                f"el contrato {c.orden} se aporta como experiencia de un socio: verifica la composición societaria",
+            ))
+    if lote.longitud_minima_km is not None and resultado.longitud is not True:
+        resultado.revisiones.append(PuntoDeRevision(
+            "longitud", "oferta",
+            f"la longitud intervenida que exige el pliego ({lote.longitud_minima_km:g} km) no se pudo dar por cumplida "
+            "con los soportes de la oferta",
+        ))
+    if lote.area_minima_m2 is not None and resultado.area is not True:
+        resultado.revisiones.append(PuntoDeRevision(
+            "area", "oferta",
+            f"el área intervenida que exige el pliego ({lote.area_minima_m2:g} m²) no se pudo dar por cumplida con "
+            "los soportes de la oferta",
+        ))
+    if plural and resultado.condiciones_plural is None:
+        resultado.revisiones.append(PuntoDeRevision(
+            "condiciones_plural", "oferta",
+            "no se pudo verificar el aporte de experiencia de cada integrante del proponente plural",
+        ))
+    # Dos listas distintas a propósito: lo que no se cumple (con evidencia) y
+    # lo que no se pudo mirar. Ambas frenan la aprobación automática, pero solo
+    # la primera habla del proponente.
+    dudas_de_la_oferta = bool(resultado.revisiones_de_la_oferta)
+    dudas_del_proceso = bool(resultado.revisiones_del_proceso)
+    resultado.experiencia_acreditada = all(exigencias) and not dudas_de_la_oferta
+    resultado.cumple = resultado.experiencia_acreditada and not dudas_del_proceso
     return resultado
 
 

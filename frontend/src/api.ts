@@ -235,6 +235,16 @@ export interface DetalleFinanciero {
   validez?: Record<string, { estados: string[]; tarjetas: Record<string, string> }>
 }
 
+/** Una cosa concreta por revisar. El ámbito es lo que dice cuánto cuesta:
+ * "proceso" sale del pliego y se resuelve una vez para todos los proponentes,
+ * "oferta" hay que mirarlo en esta oferta. */
+export interface PuntoDeRevision {
+  clave: string
+  ambito: 'proceso' | 'oferta'
+  que: string
+  donde: string
+}
+
 export interface DetalleTecnico {
   lote?: string
   valor_a_certificar?: number | null
@@ -254,6 +264,11 @@ export interface DetalleTecnico {
   factor_clave?: string
   puntaje_maximo?: number
   puntaje?: number | null
+  /** Lo que falta por mirar, punto por punto. */
+  revisiones?: PuntoDeRevision[]
+  /** La experiencia quedó acreditada con lo aportado: si el lote aún no cumple,
+   * lo que falta sale del pliego y se resuelve una vez, no oferta por oferta. */
+  experiencia_acreditada?: boolean
 }
 
 

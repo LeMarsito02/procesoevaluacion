@@ -694,3 +694,59 @@ class Formato3IlegibleTests(SimpleTestCase):
         from motor.tecnica.formato3 import Formato3, _es_coherente
 
         self.assertFalse(_es_coherente(Formato3(archivo="f3.pdf")))
+
+
+class RevisionDirigidaTests(SimpleTestCase):
+    """Revisar menos sin aprobar de más. Lo que falta por mirar se dice punto
+    por punto y separado por ámbito: lo que sale del pliego es igual para los
+    trece proponentes y se resuelve una vez; lo que sale de la oferta hay que
+    mirarlo en esa oferta. Ninguna de las dos cosas aprueba sola."""
+
+    cierre = date(2026, 8, 3)
+
+    def _lote_bueno(self):
+        integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0, _rup("VIAS ALFA S.A.S.", _exp("12", 1600)))
+        return Formato3("f3", [_fila(1, "12", "VIAS ALFA")]), [integrante]
+
+    def test_sin_nada_pendiente_no_hay_puntos_de_revision(self):
+        formato3, integrantes = self._lote_bueno()
+        lote, _ = evaluar_experiencia(formato3, integrantes, _parametros(), self.cierre, False)
+        self.assertTrue(lote.cumple)
+        self.assertTrue(lote.experiencia_acreditada)
+        self.assertEqual(lote.revisiones, [])
+
+    def test_lo_que_falta_del_pliego_no_desacredita_la_experiencia(self):
+        """El punto de la revisión dirigida: si la experiencia está acreditada
+        y lo que falta es del pliego, quien revisa no vuelve a mirar los
+        contratos de cada oferta —mira el pliego una vez."""
+        formato3, integrantes = self._lote_bueno()
+        parametros = _parametros()
+        parametros.requisitos_sin_verificar = ["Aportar una póliza de responsabilidad civil — pliego: «…»"]
+        lote, _ = evaluar_experiencia(formato3, integrantes, parametros, self.cierre, False)
+        self.assertFalse(lote.cumple)  # sigue sin aprobarse solo
+        self.assertTrue(lote.experiencia_acreditada)
+        self.assertEqual([r.ambito for r in lote.revisiones], ["proceso"])
+        self.assertEqual(lote.revisiones_de_la_oferta, [])
+
+    def test_lo_que_falta_de_la_oferta_si_deja_la_experiencia_sin_acreditar(self):
+        """Y al contrario: un soporte que no aparece es de esta oferta, así que
+        la experiencia no queda acreditada y no se puede saldar revisando el
+        pliego."""
+        formato3, integrantes = self._lote_bueno()
+        lote, _ = evaluar_experiencia(formato3, integrantes, _parametros(), self.cierre, False,
+                                      buscar_soporte=lambda c: None)
+        self.assertFalse(lote.cumple)
+        self.assertFalse(lote.experiencia_acreditada)
+        self.assertEqual([r.ambito for r in lote.revisiones], ["oferta"])
+
+    def test_un_lote_que_no_cumple_no_se_vuelve_acreditado(self):
+        """El riesgo de separar ámbitos sería que un incumplimiento con
+        evidencia se cuele como «acreditado, falta el pliego». No pasa: la
+        experiencia solo se acredita si las exigencias se cumplen."""
+        integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0, _rup("VIAS ALFA S.A.S.", _exp("12", 100)))
+        parametros = _parametros()
+        parametros.requisitos_sin_verificar = ["Aportar una póliza — pliego: «…»"]
+        lote, _ = evaluar_experiencia(Formato3("f3", [_fila(1, "12", "VIAS ALFA")]), [integrante],
+                                      parametros, self.cierre, False)
+        self.assertFalse(lote.cumple)
+        self.assertFalse(lote.experiencia_acreditada)

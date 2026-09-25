@@ -19,7 +19,7 @@ from motor.financiera.contadores import documentos_financieros, validez_capacida
 from motor.financiera.parametros import ParametrosFinancieros
 from motor.financiera.residual import residual_del_proponente
 from motor.evaluacion.proponente_plural import integrantes_formato2
-from motor.tecnica.experiencia import IntegranteTecnico
+from motor.tecnica.experiencia import IntegranteTecnico, PuntoDeRevision
 from motor.tecnica.proponente import _PLURAL_RE, integrantes_del_proponente, leer_rups
 from motor.tecnica.rup import normalizar
 
@@ -35,6 +35,18 @@ class ResultadoFinanciero:
     capital_por_lote: dict[str, Revision] = field(default_factory=dict)
     residual: Revision | None = None
     avisos: list[str] = field(default_factory=list)
+    # Lo mismo que los avisos, pero separado por ámbito: lo que sale del pliego
+    # se resuelve una vez para todos los proponentes y lo de la oferta hay que
+    # mirarlo en esta. Ninguno de los dos aprueba solo.
+    revisiones: list[PuntoDeRevision] = field(default_factory=list)
+
+    @property
+    def revisiones_del_proceso(self) -> list[PuntoDeRevision]:
+        return [r for r in self.revisiones if r.ambito == "proceso"]
+
+    @property
+    def revisiones_de_la_oferta(self) -> list[PuntoDeRevision]:
+        return [r for r in self.revisiones if r.ambito == "oferta"]
 
 
 def evaluar_proponente_financiero(
@@ -55,6 +67,12 @@ def evaluar_proponente_financiero(
             "no verifica; revísalos: " + "; ".join(parametros.requisitos_sin_verificar[:3])
         )
     resultado.integrantes, resultado.avisos = integrantes, [*avisos, *parametros.avisos, *sin_confirmar]
+    # Los avisos del pliego (lo leído con IA sin confirmar, los requisitos que
+    # el motor no verifica, lo que las reglas no pudieron leer) son del proceso.
+    resultado.revisiones = [
+        *(PuntoDeRevision(f"integrantes_{i}", "oferta", a) for i, a in enumerate(avisos)),
+        *(PuntoDeRevision(f"pliego_{i}", "proceso", a) for i, a in enumerate([*parametros.avisos, *sin_confirmar])),
+    ]
     numeros = [m.group(0) for l in parametros.lotes if (m := re.search(r"\d+", l.nombre))]
     elegidos = lotes_de_la_oferta(pdfs, numeros) if len(parametros.lotes) > 1 else None
     if len(parametros.lotes) > 1 and elegidos is None:
@@ -87,3 +105,20 @@ def cumple_lote(resultado: ResultadoFinanciero, lote: str) -> bool | None:
     )
     partes = [resultado.financiera, resultado.organizacional, resultado.validez, resultado.capital_por_lote.get(lote)]
     return all(p is not None and p.cumple for p in partes) and bool(cubierto) and not resultado.avisos
+
+
+def capacidad_acreditada(resultado: ResultadoFinanciero, lote: str) -> bool:
+    """La capacidad financiera del proponente quedó acreditada con lo que trae
+    su oferta y lo único que falta sale del pliego —igual para todos—. Sirve
+    para dirigir la revisión: quien revisa mira el pliego una vez en vez de
+    volver a los estados financieros de cada proponente. No aprueba nada por su
+    cuenta: el lote sigue sin cumplir hasta que eso del pliego se resuelva."""
+    if lote not in resultado.lotes_presentados:
+        return False
+    residual = resultado.residual
+    cubierto = residual is not None and residual.cumple or (
+        residual is not None and lote in (residual.detalle or {}).get("lotes_cubiertos", [])
+    )
+    partes = [resultado.financiera, resultado.organizacional, resultado.validez, resultado.capital_por_lote.get(lote)]
+    return (all(p is not None and p.cumple for p in partes) and bool(cubierto)
+            and not resultado.revisiones_de_la_oferta)

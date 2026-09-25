@@ -109,11 +109,26 @@ def _resultado(proponente: Proponente, numero: int, revision: Revision | None, r
     # Lo que impide decidir con seguridad (integrantes, lotes) va primero.
     avisos = [a for a in resultado.avisos if a not in motivos]
     cumple = revision.cumple and not avisos
+    del_proceso = [r for r in resultado.revisiones_del_proceso if r.que not in motivos]
+    if revision.cumple and not cumple and del_proceso and len(del_proceso) == len(avisos):
+        # La verificación pasó con lo que trae la oferta y lo único que falta
+        # sale del pliego: se dice así para que quien revisa mire el pliego una
+        # vez y no los estados financieros de cada proponente.
+        motivos = [
+            "La verificación pasa con lo que trae la oferta. Falta resolver "
+            f"{len(del_proceso)} punto(s) del pliego, iguales para todos los proponentes",
+            *motivos,
+        ]
     return ResultadoRequisito(
         **_base(proponente, numero),
         cumple=cumple,
         motivo="; ".join(avisos + motivos) or None,
-        detalle={"financiera": {**(revision.detalle or {}), **(extra or {})}, "integrantes_financieros": _integrantes(resultado)},
+        detalle={
+            "financiera": {**(revision.detalle or {}), **(extra or {})},
+            "integrantes_financieros": _integrantes(resultado),
+            "revisiones": [{"clave": r.clave, "ambito": r.ambito, "que": r.que, "donde": r.donde}
+                           for r in resultado.revisiones],
+        },
     )
 
 

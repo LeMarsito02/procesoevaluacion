@@ -110,6 +110,14 @@ def _detalle_lote(lote: ResultadoLote, resultado: ResultadoTecnico) -> dict:
         "longitud_minima_km": lote.longitud_minima_km,
         "condiciones_plural": lote.condiciones_plural,
         "aporte_por_integrante": lote.aporte_por_integrante,
+        # Lo que falta por mirar, separado por ámbito: lo del proceso sale del
+        # pliego y se resuelve una vez para todos los proponentes; lo de la
+        # oferta hay que mirarlo aquí.
+        "experiencia_acreditada": lote.experiencia_acreditada,
+        "revisiones": [
+            {"clave": r.clave, "ambito": r.ambito, "que": r.que, "donde": r.donde}
+            for r in lote.revisiones
+        ],
         "contratos": [
             {
                 "orden": c.orden,
@@ -149,12 +157,24 @@ def evaluar_experiencia_lote(proponente: Proponente, proceso: ProcesoDocumentoBa
         return ResultadoRequisito(**_base(proponente, numero), error="El pliego no tiene ese lote.")
     lote = resultado.lotes[indice]
     motivo = "; ".join(dict.fromkeys(lote.motivos)) or None
-    if lote.cumple and lote.valor_a_certificar is not None:
-        motivo = (
+    if lote.valor_a_certificar is not None and (lote.cumple or lote.experiencia_acreditada):
+        certifica = (
             f"Certifica {lote.valor_certificado:,.2f} SMMLV con {len([c for c in lote.contratos if c.valido])} contrato(s); "
             f"se requieren {lote.valor_a_certificar:,.2f}."
-            + (f" {motivo}" if motivo else "")
         )
+        if lote.cumple:
+            motivo = certifica + (f" {motivo}" if motivo else "")
+        else:
+            # La experiencia del proponente quedó acreditada y lo que falta sale
+            # del pliego, igual para todos: se dice así para que quien revisa no
+            # vuelva a mirar los contratos de cada oferta.
+            faltan = lote.revisiones_del_proceso
+            motivo = (
+                f"{certifica} La experiencia está acreditada con lo aportado. Falta resolver "
+                f"{len(faltan)} punto(s) del pliego, iguales para todos los proponentes: "
+                + "; ".join(r.que for r in faltan[:3])
+                + (" …" if len(faltan) > 3 else "")
+            )
     return ResultadoRequisito(
         **_base(proponente, numero),
         cumple=bool(lote.cumple),

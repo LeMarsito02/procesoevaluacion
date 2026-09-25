@@ -282,6 +282,12 @@ button.kpi:hover { box-shadow: var(--shadow); }
 .motivo { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; color: var(--ink-2); overflow-wrap: anywhere; }
 .motivo[data-tono='warn'] { background: var(--warn-soft); border-color: #f1d9ad; color: #5e3a06; }
 .motivo[data-tono='bad'] { background: var(--bad-soft); border-color: #f3c6c1; color: #7a1a12; }
+/* Lo que falta por mirar en un requisito, separado entre lo de la oferta y lo
+   del proceso: es la diferencia entre revisar una vez y revisarlo trece. */
+.que-falta { display: flex; flex-direction: column; gap: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--ink-2); }
+.que-falta h4 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3, var(--ink-2)); }
+.que-falta ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.que-falta-nota { margin: 0; color: var(--ink-2); }
 .archivo { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
 .acciones { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
