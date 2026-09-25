@@ -29,6 +29,8 @@ VERIFICACIONES: dict[str, str] = {
     "tecnica.max_contratos": "el número máximo de contratos que se tienen en cuenta",
     "tecnica.rup_experiencia": "que los contratos estén inscritos en el RUP con su consecutivo",
     "tecnica.terminacion": "que cada contrato haya terminado antes del cierre del proceso",
+    "tecnica.personal_clave": "que esté el formato con que el proponente acepta el personal clave, diligenciado y suscrito",
+    "tecnica.personal_clave_adicional": "que esté el formato de la experiencia y formación adicional del personal clave",
     "tecnica.soporte": "el acta de recibo o la certificación de cada contrato",
     "tecnica.formato3": "el Formato 3 y el integrante que aporta cada contrato",
     "tecnica.plural": "las condiciones de aporte de cada integrante del proponente plural",
@@ -215,6 +217,18 @@ _EXIGE_EN_INFINITIVO_RE = re.compile(
 _DE_LOS_CONTADORES_RE = re.compile(r"CONTADOR|REVISOR\s+FISCAL|JUNTA\s+CENTRAL")
 
 
+# Los dos formatos del personal clave que el motor sí verifica. Piden la palabra
+# FORMATO (o ACEPTACION/CUMPLIMIENTO) a propósito: «acreditar la formación
+# académica con copia del acta de grado» habla de los soportes, que el pliego
+# dice que no se evalúan con la oferta y el motor no mira.
+_FORMATO_ACEPTACION_PERSONAL_RE = re.compile(
+    r"(?:FORMATO\s*\d*\s*[-–]?\s*)?ACEPTACION\s+Y\s+CUMPLIMIENTO[^.]{0,120}?PERSONAL\s+CLAVE"
+    r"|FORMATO\s*\d+[^.]{0,80}?ACEPTACION[^.]{0,80}?PERSONAL\s+CLAVE")
+_FORMATO_PERSONAL_ADICIONAL_RE = re.compile(
+    r"FORMATO\s*\d+[^.]{0,90}?(?:EXPERIENCIA|FORMACION)[^.]{0,60}?ADICIONAL[^.]{0,60}?PERSONAL\s+CLAVE"
+    r"|EXPERIENCIA\s+Y\s+FORMACION\s+ACADEMICA\s+ADICIONAL[^.]{0,60}?PERSONAL\s+CLAVE")
+
+
 def clase_de(requisito: str, cita: str = "") -> str:
     """Qué clase de frase del pliego es. El orden es por riesgo: primero lo que
     puede hacer que se apruebe a quien no debe.
@@ -298,6 +312,13 @@ def verificacion_de(requisito: str, cita: str = "") -> str | None:
         return ""  # no es una exigencia al proponente: ni se verifica ni falta
     if _EXTRANJERO_SIN_SUCURSAL_RE.search(texto):
         return None  # el motor no verifica lo de los proponentes extranjeros
+    # De todo lo del personal clave, el motor verifica dos cosas: que estén sus dos
+    # formatos, diligenciados y suscritos. Se reconocen antes del filtro de temas
+    # sin verificación, que si no se los llevaría por delante.
+    if _FORMATO_ACEPTACION_PERSONAL_RE.search(texto):
+        return "tecnica.personal_clave"
+    if _FORMATO_PERSONAL_ADICIONAL_RE.search(texto):
+        return "tecnica.personal_clave_adicional"
     if _SIN_VERIFICACION_RE.search(texto) and not _DE_LOS_CONTADORES_RE.search(texto):
         return None  # temas que el motor no verifica: no los tapa ninguna regla
     for clave, patron in _REGLAS:

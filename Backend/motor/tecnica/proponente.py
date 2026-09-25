@@ -13,7 +13,10 @@ from motor.procesamiento.pdf_utils import buscar_pagina
 from motor.tecnica.experiencia import IntegranteTecnico, ResultadoLote, evaluar_experiencia
 from motor.tecnica.formato3 import Formato3, leer_excel, leer_pdf
 from motor.tecnica.longitud import area_del_contrato, longitud_del_contrato, soporte_del_contrato
-from motor.tecnica.puntaje import Factor, discapacidad, emprendimiento_mujeres, factor_calidad, industria_nacional, mipyme
+from motor.tecnica.puntaje import (
+    Factor, aceptacion_personal_clave, discapacidad, emprendimiento_mujeres, factor_calidad, industria_nacional,
+    mipyme, personal_clave_adicional,
+)
 from motor.tecnica.parametros import ParametrosTecnicos
 from motor.tecnica.rup import Rup, leer_rups as leer_rups_del_texto, normalizar, texto_del_pdf
 
@@ -30,6 +33,9 @@ class ResultadoTecnico:
     rups: list[str] = field(default_factory=list)
     avisos: list[str] = field(default_factory=list)
     puntaje: list[Factor] = field(default_factory=list)
+    # Concursos de méritos: el formato de aceptación del personal clave. Es
+    # habilitante, no da puntos, así que va aparte del puntaje.
+    personal_clave: Factor | None = None
 
 
 def _digitos(texto: str | None) -> str:
@@ -270,8 +276,12 @@ def evaluar_proponente_tecnico(
         lambda c: area_del_contrato(pdfs, textos, c.numero_contrato, c.contratante, c.objeto),
         lambda c: soporte_del_contrato(pdfs, textos, c.numero_contrato, c.contratante, c.objeto),
     )
+    # Concursos de méritos: el formato con que el proponente acepta el personal
+    # clave. Es habilitante, así que va aparte del puntaje.
+    resultado.personal_clave = aceptacion_personal_clave(pdfs, codigo_proceso)
     resultado.puntaje = aplicar_puntajes_del_pliego([
         *factor_calidad(pdfs, codigo_proceso),
+        personal_clave_adicional(pdfs, codigo_proceso),
         industria_nacional(pdfs, integrantes, codigo_proceso),
         discapacidad(pdfs, integrantes, resultado.lotes, plural, fecha_cierre),
         emprendimiento_mujeres(pdfs, integrantes, plural, fecha_cierre),

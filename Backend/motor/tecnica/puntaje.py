@@ -161,6 +161,88 @@ def factor_calidad(pdfs: dict[str, bytes], codigo_proceso: str | None) -> list[F
     return [gerencia, plan, ambiental]
 
 
+# El personal clave de los concursos de méritos (interventoría). Se busca por lo
+# que dice el formato, no por su número: en el documento tipo de obra el
+# "Formato 8" es el de discapacidad y en el de interventoría es este, así que el
+# número no identifica nada.
+_TITULO_ACEPTACION_PERSONAL = re.compile(
+    r"ACEPTACION\s+Y\s+CUMPLIMIENTO[^.]{0,80}?(?:FORMACION\s+ACADEMICA|EXPERIENCIA)[^.]{0,60}?PERSONAL\s+CLAVE"
+    r"|PERSONAL\s+CLAVE\s+EVALUABLE[^.]{0,60}?ACEPTACION", re.S)
+_TITULO_PERSONAL_ADICIONAL = re.compile(
+    r"EXPERIENCIA\s+Y\s+FORMACION\s+ACADEMICA\s+ADICIONAL[^.]{0,40}?PERSONAL\s+CLAVE"
+    r"|PERSONAL\s+CLAVE\s+EVALUABLE[^.]{0,60}?ADICIONAL", re.S)
+_PISTA_PERSONAL = re.compile(r"FORMA\w*\s*[89]|PERSONAL|CLAVE|EQUIPO|ACEPTACION|ADICIONAL")
+# Los cargos que el documento tipo llama personal clave evaluable.
+_CARGO_PERSONAL_RE = re.compile(
+    r"DIRECTOR|RESIDENTE|ESPECIALISTA|PROFESIONAL|INGENIER|ARQUITECT|COORDINADOR|INSPECTOR|TOPOGRAF")
+
+
+def _diligenciado_para_el_proceso(pdfs: dict[str, bytes], archivo: str, texto: str,
+                                  codigo_proceso: str | None) -> list[str]:
+    """Lo que le falta a un formato para valer: que sea de este proceso, que
+    esté diligenciado (no la plantilla en blanco) y que esté firmado."""
+    faltas = []
+    if codigo_proceso and not menciona_proceso(codigo_proceso, texto):
+        faltas.append(f"no menciona el proceso {codigo_proceso}")
+    if not _CARGO_PERSONAL_RE.search(texto):
+        faltas.append("no se ven los cargos del personal clave: puede estar en blanco")
+    firma = firmado(pdfs[archivo])
+    if firma is None:
+        faltas.append("es un escaneo: verifica la firma")
+    elif not firma:
+        faltas.append("no se detectó la firma")
+    return faltas
+
+
+def aceptacion_personal_clave(pdfs: dict[str, bytes], codigo_proceso: str | None) -> Factor:
+    """El formato con el que el proponente acepta y se compromete con la
+    formación académica y la experiencia del personal clave (el "Formato 8" del
+    documento tipo de interventoría).
+
+    Es habilitante: no presentarlo es causal de rechazo, aunque subsanable. Lo
+    que se verifica es que esté, que sea de este proceso, que no sea la plantilla
+    en blanco y que esté suscrito; los soportes de cada profesional NO se
+    verifican porque el propio pliego dice que no se evalúan con la oferta, sino
+    después de firmar el contrato."""
+    factor = Factor("personal_clave", "Aceptación y cumplimiento del Personal Clave Evaluable", 0)
+    for archivo, texto in _buscar_formato(pdfs, _TITULO_ACEPTACION_PERSONAL, _PISTA_PERSONAL):
+        faltas = _diligenciado_para_el_proceso(pdfs, archivo, texto, codigo_proceso)
+        if not faltas:
+            factor.puntaje, factor.archivo = 1, archivo
+            factor.motivos = ["formato de aceptación del personal clave presentado, diligenciado y suscrito"]
+            return factor
+        factor.archivo = factor.archivo or archivo
+        factor.motivos = [f"{archivo.rsplit('/', 1)[-1]}: {'; '.join(faltas)}"]
+    if factor.archivo is None:
+        factor.motivos = [
+            "no se encontró el formato de aceptación y cumplimiento del personal clave evaluable; "
+            "no presentarlo es causal de rechazo, pero el pliego permite subsanarlo: pídelo antes de rechazar"
+        ]
+    return factor
+
+
+def personal_clave_adicional(pdfs: dict[str, bytes], codigo_proceso: str | None) -> Factor:
+    """Los puntos por la experiencia y la formación académica ADICIONALES del
+    personal clave (el "Formato 9" del documento tipo de interventoría).
+
+    El pliego es explícito en que «para otorgar el puntaje basta con diligenciar
+    el formato» y en que «no se revisarán los soportes durante la evaluación de
+    las ofertas»: así que esto no verifica títulos ni certificaciones, verifica
+    que el formato esté, sea de este proceso, esté diligenciado y firmado."""
+    factor = Factor("personal_clave_adicional", "Experiencia y formación académica adicional del Personal Clave", 10)
+    for archivo, texto in _buscar_formato(pdfs, _TITULO_PERSONAL_ADICIONAL, _PISTA_PERSONAL):
+        faltas = _diligenciado_para_el_proceso(pdfs, archivo, texto, codigo_proceso)
+        if not faltas:
+            factor.puntaje, factor.archivo = factor.puntaje_maximo, archivo
+            factor.motivos = []
+            return factor
+        factor.archivo = factor.archivo or archivo
+        factor.motivos = [f"{archivo.rsplit('/', 1)[-1]}: {'; '.join(faltas)}"]
+    if factor.archivo is None:
+        factor.motivos = ["no se encontró el formato de experiencia y formación académica adicional del personal clave"]
+    return factor
+
+
 def mipyme(integrantes: list[IntegranteTecnico], plural: bool, minimo_participacion: float = 0.10) -> Factor:
     """4.7: el RUP de un integrante con participación ≥ 10 % (o del
     proponente individual) lo clasifica como micro, pequeña o mediana."""

@@ -341,6 +341,22 @@ VERIFICACIONES: dict[str, Verificacion] = {
                      "contratos, un contrato por el porcentaje del presupuesto, longitud si el lote la exige y "
                      "porcentajes de los integrantes (pliego 3.5).",
                      "experiencia", ("formato 3", "experiencia", "rup", "certificac", "acta")),
+        # Concursos de méritos (interventoría): el personal clave. Se nombran por
+        # lo que dicen y no por su número, porque el número del formato cambia
+        # entre documentos tipo (en obra, el "Formato 8" es el de discapacidad).
+        Verificacion("tecnica.personal_clave", "tecnica", 111, "Personal clave",
+                     "Aceptación y cumplimiento del Personal Clave Evaluable",
+                     "Que el formato de aceptación esté presentado, sea de este proceso, no esté en blanco y esté "
+                     "suscrito. Los soportes de cada profesional no se verifican aquí: el pliego dice que se "
+                     "verifican después de firmar el contrato, no con la oferta. No presentarlo es causal de "
+                     "rechazo, pero es subsanable.",
+                     "oferta", ("formato 8", "personal", "clave", "aceptacion")),
+        Verificacion("tecnica.personal_clave_adicional", "tecnica", 129, "Personal adicional",
+                     "Experiencia y formación académica adicional del Personal Clave",
+                     "Puntos por la experiencia y la formación adicionales del personal clave. El pliego dice que "
+                     "para otorgarlos basta con diligenciar el formato y que los soportes no se revisan en la "
+                     "evaluación de las ofertas.",
+                     "puntaje", ("formato 9", "personal", "clave", "adicional")),
         Verificacion("tecnica.gerencia_proyectos", "tecnica", 121, "Gerencia", "Programa de gerencia de proyectos (Formato 7A)",
                      "Formato 7A firmado bajo juramento para este proceso.", "puntaje", ("formato 7", "calidad", "gerencia")),
         Verificacion("tecnica.plan_calidad", "tecnica", 122, "Plan calidad", "Plan de calidad (Formato 7C)",

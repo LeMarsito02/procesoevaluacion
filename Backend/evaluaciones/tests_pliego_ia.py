@@ -367,14 +367,32 @@ class ClaseDeRequisitoTests(SimpleTestCase):
         from motor.pliego.catalogo_tecnico import verificacion_de
 
         cita = "capítulo IV, puntaje del factor de calidad"
+        # Los SOPORTES del personal (títulos, actas de grado, certificaciones,
+        # dedicación) no se verifican: el pliego dice que no se evalúan con la
+        # oferta. Los dos formatos sí, y eso se prueba aparte.
         for texto in (
-            "El proponente debe diligenciar el Formato 9 – Experiencia y formación académica adicional del Personal Clave Evaluable",
             "Los integrantes del equipo de trabajo deberán acreditar la experiencia del Personal Clave Evaluable",
             "El proponente debe acreditar la formación académica con copia del acta de grado",
             "Acreditar la convalidación de títulos académicos obtenidos en el exterior",
             "Acreditar como mínimo el porcentaje de dedicación para el cargo respectivo",
         ):
             self.assertIsNone(verificacion_de(texto, cita), texto)
+
+    def test_los_dos_formatos_del_personal_clave_si_se_verifican(self):
+        """De todo lo del personal clave, lo que es de esta etapa son sus dos
+        formatos: que estén, diligenciados y suscritos. Eso el motor lo verifica
+        (motor/tecnica/puntaje.py), así que no puede pedir revisión."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertEqual(
+            verificacion_de("Aportar y diligenciar en forma clara, completa, correcta y legible el «Formato 8 - "
+                            "Aceptación y cumplimiento de la formación académica y la experiencia del Personal "
+                            "Clave Evaluable»"),
+            "tecnica.personal_clave")
+        self.assertEqual(
+            verificacion_de("El proponente debe diligenciar el Formato 9 – Experiencia y formación académica "
+                            "adicional del Personal Clave Evaluable"),
+            "tecnica.personal_clave_adicional")
 
     def test_lo_que_el_pliego_deja_para_despues_del_contrato_no_frena_la_oferta(self):
         """El documento tipo de interventoría dice con todas sus letras que los
@@ -390,17 +408,20 @@ class ClaseDeRequisitoTests(SimpleTestCase):
                        "hojas de vida, ni certificaciones de los profesionales"),
             "posterior")
 
-    def test_el_formato_8_si_hay_que_presentarlo_y_sigue_frenando(self):
-        """El alcance de lo anterior son los SOPORTES. El Formato 8 se presenta
-        con la oferta y no presentarlo es causal de rechazo: el motor no lo
-        verifica, así que tiene que seguir frenando."""
+    def test_lo_que_el_pliego_deja_para_despues_no_tapa_lo_que_sí_es_de_ahora(self):
+        """El alcance de «se verifica después del contrato» son los soportes. El
+        Formato 8 se presenta con la oferta y no presentarlo es causal de rechazo,
+        así que es una exigencia de esta etapa —y desde que el motor lo verifica,
+        deja de pedir revisión—."""
         from motor.pliego.catalogo_tecnico import cobertura
 
-        requisito = ("Aportar y diligenciar en forma clara, completa, correcta y legible el «Formato 8 - Aceptación y "
-                     "cumplimiento de la formación académica y la experiencia del Personal Clave Evaluable»")
-        self.assertEqual(self.clase(requisito), "exigencia")
-        _, faltantes = cobertura([(requisito, requisito)])
-        self.assertEqual(len(faltantes), 1)
+        formato = ("Aportar y diligenciar en forma clara, completa, correcta y legible el «Formato 8 - Aceptación y "
+                   "cumplimiento de la formación académica y la experiencia del Personal Clave Evaluable»")
+        soporte = "El proponente debe acreditar la formación académica con copia del acta de grado"
+        self.assertEqual(self.clase(formato), "exigencia")
+        cubiertos, faltantes = cobertura([(formato, formato), (soporte, soporte)])
+        self.assertIn("tecnica.personal_clave", cubiertos)
+        self.assertEqual([r for r, _ in faltantes], [soporte])
 
     def test_la_tarjeta_del_contador_no_es_personal_clave(self):
         """El registro de lo que no automatizamos lo destapó: el patrón del

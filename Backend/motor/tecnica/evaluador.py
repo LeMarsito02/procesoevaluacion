@@ -28,6 +28,8 @@ from motor.tecnica.proponente import ResultadoTecnico, evaluar_proponente_tecnic
 from motor.tecnica.puntaje import Factor
 
 NUMERO_EXPERIENCIA = 101
+# Habilitante del personal clave (concursos de méritos).
+PERSONAL_CLAVE = 111
 FACTORES: dict[str, int] = {
     "gerencia_proyectos": 121,
     "plan_calidad": 122,
@@ -37,6 +39,7 @@ FACTORES: dict[str, int] = {
     "mujeres": 126,
     "mipyme": 127,
     "maquinaria": 128,
+    "personal_clave_adicional": 129,
 }
 OBRAS_INCONCLUSAS = 130
 
@@ -181,6 +184,23 @@ def evaluar_experiencia_lote(proponente: Proponente, proceso: ProcesoDocumentoBa
         motivo=motivo,
         archivo_evaluado=resultado.formato3,
         detalle=_detalle_lote(lote, resultado),
+    )
+
+
+def evaluar_personal_clave(proponente: Proponente, proceso: ProcesoDocumentoBase, numero: int) -> ResultadoRequisito:
+    """El formato con que el proponente acepta la formación y la experiencia del
+    personal clave (concursos de méritos). Habilitante y subsanable: si no está,
+    va a revisión con el aviso de que se puede pedir antes de rechazar."""
+    resultado = resultado_tecnico(proponente, proceso)
+    factor = resultado.personal_clave
+    if factor is None:
+        return ResultadoRequisito(**_base(proponente, numero), error="No se calculó esta verificación.")
+    return ResultadoRequisito(
+        **_base(proponente, numero),
+        cumple=bool(factor.puntaje),
+        motivo="; ".join(factor.motivos) or None,
+        archivo_evaluado=factor.archivo,
+        detalle={"factor_clave": factor.clave, "puntaje_maximo": 0, "puntaje": factor.puntaje},
     )
 
 

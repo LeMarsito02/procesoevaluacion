@@ -177,6 +177,9 @@ def _evaluar_tecnico(
         return tecnico.evaluar_experiencia_lote(proponente, proceso, req.lote or 0, req.numero)
     if clave == "obras_inconclusas":
         return tecnico.evaluar_obras_inconclusas(proponente, proceso, req.numero)
+    if clave == "personal_clave":
+        # Habilitante, no da puntos: tiene su propio camino.
+        return tecnico.evaluar_personal_clave(proponente, proceso, req.numero)
     return tecnico.evaluar_factor(proponente, proceso, clave, req.numero)
 
 

@@ -15,7 +15,7 @@ from motor.tecnica.formato3 import ContratoFormato3, Formato3, consecutivos_de, 
 from motor.tecnica.informe import PENDIENTE, ResultadoInforme, generar_informe
 from motor.tecnica.longitud import longitudes_en, numeros_del_contrato
 from motor.tecnica.parametros import LoteTecnico, ParametrosTecnicos, _clases_unspsc, lotes_del_pliego
-from motor.tecnica.rup import ExperienciaRup, Rup, leer_rup, leer_rups
+from motor.tecnica.rup import ExperienciaRup, Rup, leer_rup, leer_rups, normalizar
 
 RUP_CONFECAMARAS = """CÁMARA DE COMERCIO DE VILLA FICTICIA
 CERTIFICADO DE INSCRIPCIÓN Y CLASIFICACIÓN EN EL REGISTRO DE PROPONENTES
@@ -776,3 +776,102 @@ class PermisosDelPliegoTests(SimpleTestCase):
                                      parametros, self.cierre, False)
         self.assertFalse(lote.cumple)
         self.assertTrue(any("antes de rechazar" in m for m in lote.motivos), lote.motivos)
+
+
+class PersonalClaveEvaluableTests(SimpleTestCase):
+    """Concursos de méritos: el personal clave. El propio pliego dice que sus
+    soportes «no se evaluarán con la oferta» y que se verifican después de firmar
+    el contrato, así que aquí no se miran títulos ni certificaciones: se verifica
+    que los dos formatos estén, sean de este proceso, no estén en blanco y estén
+    suscritos.
+
+    Los formatos se buscan por lo que dicen, no por su número: en el documento
+    tipo de obra el «Formato 8» es el de discapacidad y en el de interventoría es
+    el de aceptación del personal clave."""
+
+    ACEPTACION = normalizar(
+        "FORMATO 8 - ACEPTACIÓN Y CUMPLIMIENTO DE LA FORMACIÓN ACADÉMICA Y LA EXPERIENCIA DEL PERSONAL CLAVE "
+        "EVALUABLE. Proceso ICCU-CM-043-2026. El proponente acepta y se compromete con: DIRECTOR DE "
+        "INTERVENTORÍA, RESIDENTE DE INTERVENTORÍA, ESPECIALISTA EN GEOTECNIA. Firma, Representante Legal")
+    ADICIONAL = normalizar(
+        "FORMATO 9 - EXPERIENCIA Y FORMACIÓN ACADÉMICA ADICIONAL DEL PERSONAL CLAVE EVALUABLE. "
+        "Proceso ICCU-CM-043-2026. DIRECTOR DE INTERVENTORÍA: un año adicional. Firma, Representante Legal")
+
+    def _correr(self, funcion, texto, firma=True, archivo="p1/formato.pdf", codigo="ICCU-CM-043-2026"):
+        from unittest import mock
+
+        from motor.tecnica import puntaje
+
+        with mock.patch.object(puntaje, "_buscar_formato", return_value=[(archivo, texto)]), \
+             mock.patch.object(puntaje, "firmado", return_value=firma):
+            return funcion({archivo: b"%PDF"}, codigo)
+
+    def test_la_aceptacion_presentada_y_firmada_cumple(self):
+        from motor.tecnica.puntaje import aceptacion_personal_clave
+
+        factor = self._correr(aceptacion_personal_clave, self.ACEPTACION)
+        self.assertTrue(factor.puntaje)
+        self.assertEqual(factor.archivo, "p1/formato.pdf")
+
+    def test_si_no_esta_se_dice_que_es_subsanable(self):
+        """No presentarlo es causal de rechazo, pero el pliego permite subsanarlo:
+        pedirlo cuesta menos que rechazar a alguien que sí lo tenía."""
+        from unittest import mock
+
+        from motor.tecnica import puntaje
+
+        with mock.patch.object(puntaje, "_buscar_formato", return_value=[]):
+            factor = puntaje.aceptacion_personal_clave({}, "ICCU-CM-043-2026")
+        self.assertFalse(factor.puntaje)
+        self.assertIn("subsanarlo", " ".join(factor.motivos))
+
+    def test_la_plantilla_en_blanco_no_cumple(self):
+        """Un formato sin los cargos del personal es la plantilla sin diligenciar."""
+        from motor.tecnica.puntaje import aceptacion_personal_clave
+
+        blanco = normalizar("FORMATO 8 - ACEPTACIÓN Y CUMPLIMIENTO DE LA FORMACIÓN ACADÉMICA Y LA EXPERIENCIA "
+                            "DEL PERSONAL CLAVE EVALUABLE. Proceso ICCU-CM-043-2026. [Indicar]")
+        factor = self._correr(aceptacion_personal_clave, blanco)
+        self.assertFalse(factor.puntaje)
+        self.assertIn("en blanco", " ".join(factor.motivos))
+
+    def test_de_otro_proceso_no_cumple(self):
+        from motor.tecnica.puntaje import aceptacion_personal_clave
+
+        factor = self._correr(aceptacion_personal_clave, self.ACEPTACION, codigo="ICCU-CM-099-2026")
+        self.assertFalse(factor.puntaje)
+        self.assertIn("no menciona el proceso", " ".join(factor.motivos))
+
+    def test_sin_firma_no_cumple(self):
+        from motor.tecnica.puntaje import aceptacion_personal_clave
+
+        factor = self._correr(aceptacion_personal_clave, self.ACEPTACION, firma=False)
+        self.assertFalse(factor.puntaje)
+        self.assertIn("firma", " ".join(factor.motivos))
+
+    def test_un_escaneo_no_se_da_por_firmado(self):
+        """`firmado` devuelve None cuando la página es una imagen: eso no es una
+        firma, es una revisión."""
+        from motor.tecnica.puntaje import aceptacion_personal_clave
+
+        factor = self._correr(aceptacion_personal_clave, self.ACEPTACION, firma=None)
+        self.assertFalse(factor.puntaje)
+        self.assertIn("escaneo", " ".join(factor.motivos))
+
+    def test_el_formato_adicional_da_todos_sus_puntos_con_estar_diligenciado(self):
+        """El pliego: «para otorgar el puntaje basta con diligenciar el formato;
+        por tanto, no se revisarán los soportes durante la evaluación»."""
+        from motor.tecnica.puntaje import personal_clave_adicional
+
+        factor = self._correr(personal_clave_adicional, self.ADICIONAL)
+        self.assertEqual(factor.puntaje, factor.puntaje_maximo)
+
+    def test_sin_el_formato_adicional_no_hay_puntos_pero_tampoco_rechazo(self):
+        from unittest import mock
+
+        from motor.tecnica import puntaje
+
+        with mock.patch.object(puntaje, "_buscar_formato", return_value=[]):
+            factor = puntaje.personal_clave_adicional({}, "ICCU-CM-043-2026")
+        self.assertFalse(factor.puntaje)
+        self.assertIn("no se encontró", " ".join(factor.motivos))
