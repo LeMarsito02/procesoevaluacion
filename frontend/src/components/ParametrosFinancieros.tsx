@@ -144,10 +144,19 @@ export default function ParametrosFinancieros({ evaluacionId, soloLectura }: { e
             </div>
           ) : (
             datos.umbrales_completos && (
-              <p className="small" style={{ marginTop: 12 }}>
-                {CAMPOS.map((c) => `${c.nombre} ${c.signo} ${texto(datos.umbrales[c.clave])}`).join(' · ')}
-                <span className="muted"> — {datos.umbrales.fuente}</span>
-              </p>
+              <>
+                <p className="small" style={{ marginTop: 12 }}>
+                  {CAMPOS.map((c) => `${c.nombre} ${c.signo} ${texto(datos.umbrales[c.clave])}`).join(' · ')}
+                  <span className="muted"> — {datos.umbrales.fuente}</span>
+                </p>
+                {datos.umbrales_mipyme && (
+                  <p className="small muted" style={{ marginTop: 4 }}>
+                    La Matriz 2 reserva otros a los proponentes que acrediten ser Mipyme:{' '}
+                    {CAMPOS.map((c) => `${c.nombre} ${c.signo} ${texto(datos.umbrales_mipyme![c.clave])}`).join(' · ')}.
+                    Se le aplican solo a quien lo acredite con su RUP, y en el informe queda dicho cuál se usó.
+                  </p>
+                )}
+              </>
             )
           )}
         </>

@@ -49,7 +49,14 @@ def parametros_de_dict(datos: dict) -> ParametrosFinancieros:
     datos = dict(datos)
     lotes = [LoteFinanciero(**l) for l in datos.pop("lotes", [])]
     umbrales = Umbrales(**datos.pop("umbrales", {}))
-    return ParametrosFinancieros(**datos, lotes=lotes, umbrales=umbrales)
+    # Los de Mipyme se guardan aparte y hay que reconstruirlos igual: si se
+    # quedaran como un diccionario, al evaluar a un proponente Mipyme se
+    # intentaría leer un umbral de algo que no es un Umbrales.
+    de_mipyme = datos.pop("umbrales_mipyme", None)
+    parametros = ParametrosFinancieros(**datos, lotes=lotes, umbrales=umbrales)
+    if de_mipyme:
+        parametros.umbrales_mipyme = Umbrales(**de_mipyme)
+    return parametros
 
 
 def _base(proponente: Proponente, numero: int) -> dict:

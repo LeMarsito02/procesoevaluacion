@@ -10,6 +10,7 @@ import PaginaEntrar from './paginas/PaginaEntrar'
 import PaginaEquipo from './paginas/PaginaEquipo'
 import PaginaEvaluacion from './paginas/PaginaEvaluacion'
 import PaginaFila from './paginas/PaginaFila'
+import PaginaMejoras from './paginas/PaginaMejoras'
 import PaginaRendimiento from './paginas/PaginaRendimiento'
 import PaginaInicio from './paginas/PaginaInicio'
 import PaginaNuevoProceso from './paginas/PaginaNuevoProceso'
@@ -131,6 +132,8 @@ export default function Raiz() {
   else if (ruta === '/equipo' && puedeGestionarEquipo(usuario)) pagina = <PaginaEquipo />
   else if (ruta === '/entidades' && usuario.rol === 'superadmin') pagina = <PaginaEntidades />
   else if (ruta === '/rendimiento' && usuario.rol === 'superadmin') pagina = <PaginaRendimiento />
+  // El registro junta información de varias entidades: solo nosotros.
+  else if (ruta === '/mejoras' && (usuario.rol === 'superadmin' || usuario.rol === 'soporte')) pagina = <PaginaMejoras />
   else if (ruta === '/cuenta') pagina = <PaginaCuenta />
   else pagina = <PaginaInicio />
 

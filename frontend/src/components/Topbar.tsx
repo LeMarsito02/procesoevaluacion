@@ -58,6 +58,7 @@ function Navegacion() {
     { ruta: '/equipo', nombre: 'Equipo', visible: puedeGestionarEquipo(u) },
     { ruta: '/entidades', nombre: 'Entidades', visible: u.rol === 'superadmin' },
     { ruta: '/rendimiento', nombre: 'Rendimiento', visible: u.rol === 'superadmin' },
+    { ruta: '/mejoras', nombre: 'Qué falta automatizar', visible: u.rol === 'superadmin' || u.rol === 'soporte' },
   ]
   return (
     <nav className="nav-principal" aria-label="Secciones">

@@ -842,3 +842,29 @@ class UnaExplicacionNoFrenaLaAprobacionTests(SimpleTestCase):
         r.residual = Revision(True, [])
         r.explicaciones = ["se evalúa con los indicadores de Mipyme porque ALFA es pequeña empresa según su RUP"]
         self.assertTrue(cumple_lote(r, "LOTE 1"))
+
+
+class GuardarYLeerLosUmbralesDeMipymeTests(SimpleTestCase):
+    """Los parámetros del proceso se guardan como JSON y se vuelven a leer. Si
+    los umbrales de Mipyme se quedaran como diccionario, al evaluar a un
+    proponente Mipyme se intentaría leer un umbral de algo que no lo es."""
+
+    def test_van_y_vuelven_como_umbrales(self):
+        from motor.financiera.evaluador import parametros_a_dict, parametros_de_dict
+        from motor.financiera.parametros import LoteFinanciero, ParametrosFinancieros, Umbrales
+
+        p = ParametrosFinancieros(smmlv=1_000_000)
+        p.lotes = [LoteFinanciero("LOTE 1", 2_000_000_000, 12, 0.25)]
+        p.umbrales = Umbrales(1.2, 0.70, 1.0, 0.02, 0.04, fuente="los demás")
+        p.umbrales_mipyme = Umbrales(1.1, 0.70, 1.0, 0.01, 0.02, fuente="Mipyme")
+        vuelto = parametros_de_dict(parametros_a_dict(p))
+        self.assertEqual(vuelto.umbrales_mipyme.liquidez_min, 1.1)
+        self.assertEqual(vuelto.umbrales_mipyme.fuente, "Mipyme")
+        self.assertEqual(vuelto.umbrales.liquidez_min, 1.2)
+
+    def test_sin_umbrales_de_mipyme_sigue_funcionando(self):
+        from motor.financiera.evaluador import parametros_a_dict, parametros_de_dict
+        from motor.financiera.parametros import ParametrosFinancieros
+
+        vuelto = parametros_de_dict(parametros_a_dict(ParametrosFinancieros(smmlv=1_000_000)))
+        self.assertIsNone(vuelto.umbrales_mipyme)

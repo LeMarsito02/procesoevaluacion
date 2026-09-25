@@ -232,6 +232,9 @@ export interface ParametrosFinancieros {
   smmlv: number
   lotes: LoteFinanciero[]
   umbrales: UmbralesFinancieros
+  /** Los que la Matriz 2 reserva a los proponentes que acrediten ser Mipyme:
+   * más laxos, y se aplican solo a quien lo acredite con su RUP. */
+  umbrales_mipyme?: UmbralesFinancieros | null
   umbrales_completos: boolean
   patrimonio_aplica: boolean
   avisos: string[]
@@ -272,6 +275,37 @@ export const requisitosPliego = (id: string) =>
 export const asumirRequisitosPliego = (id: string, claves: string[]) =>
   enviarJson<{ asumidos: number; reevaluados: number }>(
     `/api/evaluaciones/${id}/requisitos-pliego`, 'POST', { claves })
+
+export interface RequisitoNoAutomatizado {
+  clave: string
+  requisito: string
+  cita: string
+  clase: string
+  area: string
+  veces: number
+  veces_asumido: number
+  procesos: string[]
+  entidades: number
+  primera_vez: string
+  ultima_vez: string
+}
+
+export interface CausaDeRevision {
+  clave: string
+  ambito: string
+  area: string
+  ejemplo: string
+  ofertas: number
+  veces: number
+  procesos: string[]
+  primera_vez: string
+  ultima_vez: string
+  nota: string
+}
+
+export const requisitosNoAutomatizados = () =>
+  pedirJson<RequisitoNoAutomatizado[]>('/api/evaluaciones/requisitos-no-automatizados')
+export const causasDeRevision = () => pedirJson<CausaDeRevision[]>('/api/evaluaciones/causas-de-revision')
 
 export const listarTipos = () => pedirJson<TipoEvaluacion[]>('/api/evaluaciones/tipos')
 
