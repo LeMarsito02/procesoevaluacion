@@ -6,9 +6,17 @@ interface Props {
   fechaCierre: string
   carpetaDrive: string
   archivo: File | null
+  /** Ofertas en .zip subidas a mano, en vez de una carpeta compartida. */
+  ofertas: File[]
   analizando: boolean
   error: string | null
-  onCambiar: (campos: { codigoProceso?: string; fechaCierre?: string; carpetaDrive?: string; archivo?: File | null }) => void
+  onCambiar: (campos: {
+    codigoProceso?: string
+    fechaCierre?: string
+    carpetaDrive?: string
+    archivo?: File | null
+    ofertas?: File[]
+  }) => void
   onAnalizar: () => void
   onCancelar: () => void
 }
@@ -19,11 +27,14 @@ function tamanoLegible(bytes: number): string {
 }
 
 export default function PasoNuevo(props: Props) {
-  const { codigoProceso, fechaCierre, carpetaDrive, archivo, analizando, error } = props
+  const { codigoProceso, fechaCierre, carpetaDrive, archivo, ofertas, analizando, error } = props
+  const inputOfertas = useRef<HTMLInputElement>(null)
   const inputArchivo = useRef<HTMLInputElement>(null)
   const [arrastrando, setArrastrando] = useState(false)
 
-  const listo = codigoProceso.trim() && fechaCierre && archivo && carpetaDrive.trim()
+  // Las ofertas pueden venir de una carpeta compartida o subidas a mano: hace
+  // falta una de las dos, no las dos.
+  const listo = codigoProceso.trim() && fechaCierre && archivo && (carpetaDrive.trim() || ofertas.length > 0)
 
   function soltar(e: React.DragEvent) {
     e.preventDefault()
@@ -128,7 +139,51 @@ export default function PasoNuevo(props: Props) {
         </div>
 
         <div className="field">
-          <label htmlFor="drive">Carpeta con las ofertas (Google Drive u OneDrive)</label>
+          <label htmlFor="ofertas">Las ofertas en .zip (opcional, si no están en una carpeta compartida)</label>
+          <div className="acciones">
+            <button type="button" className="btn btn-secondary" onClick={() => inputOfertas.current?.click()}>
+              <Icono nombre="carpeta" tam={15} /> Elegir los .zip de las ofertas
+            </button>
+            {ofertas.length > 0 && (
+              <>
+                <span className="small">
+                  {ofertas.length} oferta(s) ·{' '}
+                  {tamanoLegible(ofertas.reduce((suma, o) => suma + o.size, 0))}
+                </span>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => props.onCambiar({ ofertas: [] })}>
+                  Quitar
+                </button>
+              </>
+            )}
+          </div>
+          <input
+            ref={inputOfertas}
+            type="file"
+            multiple
+            accept=".zip,.rar,.7z"
+            hidden
+            onChange={(e) => props.onCambiar({ ofertas: Array.from(e.target.files ?? []) })}
+          />
+          {ofertas.length > 0 && (
+            <ul className="hint" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {ofertas.slice(0, 8).map((o) => (
+                <li key={o.name}>
+                  {o.name} · {tamanoLegible(o.size)}
+                </li>
+              ))}
+              {ofertas.length > 8 && <li>y {ofertas.length - 8} más…</li>}
+            </ul>
+          )}
+          <span className="hint">
+            Nómbrelos “P1 Nombre del proponente” o “1. Nombre”. Si el nombre no dice el número, se numera por el orden
+            en que los elija y queda anotado. Súbalas por tandas si pesan mucho.
+          </span>
+        </div>
+
+        <div className="field">
+          <label htmlFor="drive">
+            Carpeta con las ofertas (Google Drive u OneDrive){ofertas.length > 0 ? ' — no se usa si subió los .zip' : ''}
+          </label>
           <div className="input-group">
             <Icono nombre="carpeta" tam={16} />
             <input
@@ -137,7 +192,7 @@ export default function PasoNuevo(props: Props) {
               placeholder="https://drive.google.com/drive/folders/… o https://1drv.ms/f/…"
               value={carpetaDrive}
               onChange={(e) => props.onCambiar({ carpetaDrive: e.target.value })}
-              required
+              disabled={ofertas.length > 0}
             />
           </div>
           <span className="hint">

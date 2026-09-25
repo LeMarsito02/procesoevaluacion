@@ -278,12 +278,16 @@ export async function analizarDocumentoBase(
   archivo: File,
   carpetaDrive: string,
   entidadId?: string | null,
+  /** Las ofertas subidas a mano, cuando no están en una carpeta compartida. */
+  ofertas?: File[] | null,
 ): Promise<AnalisisResponse> {
   const formData = new FormData()
   formData.append('codigo_proceso', codigoProceso)
   formData.append('fecha_cierre', fechaCierre)
   formData.append('archivo', archivo)
-  if (carpetaDrive.trim()) {
+  if (ofertas && ofertas.length > 0) {
+    for (const oferta of ofertas) formData.append('ofertas', oferta)
+  } else if (carpetaDrive.trim()) {
     formData.append('carpeta_drive', carpetaDrive.trim())
   }
   if (entidadId) formData.append('entidad_id', entidadId)

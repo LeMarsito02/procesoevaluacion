@@ -1,7 +1,7 @@
 """Pruebas de procesos, asignaciones, revisiones y aislamiento (app y RLS)."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from unittest import mock
 from urllib.parse import quote
 
@@ -2059,6 +2059,158 @@ class PorcentajeDeLaGarantiaEnLetrasTests(SimpleTestCase):
 
         with mock.patch("motor.procesamiento.ocr_franja.textos_de_la_franja", return_value=[]):
             self.assertEqual(documento_base._porcentaje_a_fondo(mock.Mock()), (None, ""))
+
+
+class OfertasSubidasAManoTests(SimpleTestCase):
+    """Las ofertas no siempre están en una carpeta compartida: cuando la entidad
+    las bajó del SECOP una por una, lo que hay son los zips en el disco. Se
+    guardan en la misma caché que las de Drive y llevan su propio identificador,
+    así que el resto del programa —el trabajador, el motor, la caché por
+    proponente— no nota la diferencia."""
+
+    def _zip(self, texto: str) -> bytes:
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as z:
+            z.writestr("documento.pdf", texto)
+        return buffer.getvalue()
+
+    def test_el_numero_y_el_nombre_salen_del_nombre_del_archivo(self):
+        from motor.integrations import ofertas_locales
+
+        r = ofertas_locales.desde_archivos([
+            ("p2 CONSORCIO BETA.zip", self._zip("beta")),
+            ("p1 ALFA S.A.S.zip", self._zip("alfa")),
+        ])
+        self.assertEqual([(p.numero_orden, p.hoja, p.nombre_proponente) for p in r.proponentes],
+                         [(1, "P-01", "ALFA S.A.S"), (2, "P-02", "CONSORCIO BETA")])
+        self.assertTrue(all(p.drive_file_id.startswith("local:") for p in r.proponentes))
+
+    def test_una_oferta_sin_numero_en_el_nombre_no_se_descarta(self):
+        """Se numera por el orden en que llegó y queda dicho: descartarla sería
+        peor, porque el proponente existe."""
+        from motor.integrations import ofertas_locales
+
+        r = ofertas_locales.desde_archivos([("oferta de gamma.zip", self._zip("gamma"))])
+        self.assertEqual(len(r.proponentes), 1)
+        self.assertEqual(r.proponentes[0].numero_orden, 1)
+        self.assertIn("no dice el número", r.proponentes[0].advertencia)
+
+    def test_lo_que_no_es_una_oferta_se_reporta(self):
+        from motor.integrations import ofertas_locales
+
+        r = ofertas_locales.desde_archivos([("informe.pdf", b"x"), ("vacia.zip", b"")])
+        self.assertEqual(r.proponentes, [])
+        self.assertEqual(len(r.no_reconocidos), 2)
+
+    def test_la_oferta_subida_se_lee_igual_que_una_de_drive(self):
+        """La prueba que importa: el motor pide la oferta con download_file_bytes
+        sin saber de dónde salió."""
+        from motor.integrations import ofertas_locales
+        from motor.integrations.drive import download_file_bytes, get_file_metadata
+
+        contenido = self._zip("alfa")
+        r = ofertas_locales.desde_archivos([("p1 ALFA S.A.S.zip", contenido)])
+        file_id = r.proponentes[0].drive_file_id
+        self.assertEqual(download_file_bytes(file_id), contenido)
+        self.assertTrue(get_file_metadata(file_id).get("md5Checksum"))
+
+    def test_subir_dos_veces_el_mismo_archivo_no_lo_duplica(self):
+        """La huella es del contenido: así la evaluación ya hecha se reaprovecha."""
+        from motor.integrations import ofertas_locales
+
+        contenido = self._zip("alfa")
+        primero = ofertas_locales.guardar("p1 ALFA.zip", contenido)
+        segundo = ofertas_locales.guardar("otro nombre.zip", contenido)
+        self.assertEqual(primero, segundo)
+
+    def test_dos_archivos_con_el_mismo_numero_no_se_pisan(self):
+        from motor.integrations import ofertas_locales
+
+        r = ofertas_locales.desde_archivos([
+            ("p1 ALFA.zip", self._zip("alfa")),
+            ("p1 BETA.zip", self._zip("beta")),
+        ])
+        self.assertEqual(len(r.proponentes), 2)
+        self.assertEqual(sorted(p.numero_orden for p in r.proponentes), [1, 2])
+
+    def test_una_oferta_que_ya_no_esta_en_disco_se_dice_claro(self):
+        from motor.integrations import ofertas_locales
+
+        with self.assertRaises(FileNotFoundError) as caso:
+            ofertas_locales.leer("local:" + "0" * 32)
+        self.assertIn("Vuelve a subirla", str(caso.exception))
+
+
+class SubirOfertasPorHttpTests(BaseEvaluaciones):
+    """El cableado que usa el navegador: el Documento Base y las ofertas en .zip
+    en la misma carga, sin carpeta compartida."""
+
+    def _zip(self, texto: str) -> bytes:
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as z:
+            z.writestr("documento.pdf", texto)
+        return buffer.getvalue()
+
+    def _analizar(self, ofertas, carpeta=""):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from motor.esquemas.proceso import GarantiaSeriedad, Lote, ProcesoDocumentoBase
+
+        proceso = ProcesoDocumentoBase(
+            codigo_proceso="ENT-CM-099-2026", fecha_cierre=date(2026, 8, 3),
+            objeto_general="CONSTRUCCIÓN DE LA VÍA", lotes=[
+                Lote(numero="ÚNICO", objeto="CONSTRUCCIÓN DE LA VÍA", plazo_meses=6,
+                     valor_presupuesto=1_000_000_000.0, lugar_ejecucion="Municipio")],
+            garantia_seriedad=GarantiaSeriedad(
+                vigencia_meses=3, porcentaje=0.10, valor_asegurado=100_000_000.0,
+                valor_base=1_000_000_000.0, fecha_cierre=date(2026, 8, 3),
+                fecha_vencimiento=date(2026, 11, 3), base_calculo="presupuesto_total"),
+            lote_mayor_valor="ÚNICO", presupuesto_total=1_000_000_000.0,
+        )
+        c = Cliente()
+        c.entrar("jefe@entidad.gov.co")
+        datos = {
+            "codigo_proceso": "ENT-CM-099-2026",
+            "fecha_cierre": "2026-08-03",
+            "archivo": SimpleUploadedFile("pliego.pdf", b"%PDF-1.4 prueba", content_type="application/pdf"),
+            "ofertas": [SimpleUploadedFile(n, contenido, content_type="application/zip") for n, contenido in ofertas],
+        }
+        if carpeta:
+            datos["carpeta_drive"] = carpeta
+        with mock.patch("api.api.build_proceso", return_value=proceso), \
+             mock.patch("api.api._analizar_pliego", new=mock.AsyncMock(return_value=(None, None))):
+            return c.http.post("/api/procesos/analizar", datos, headers={"X-CSRFToken": c.csrf})
+
+    def test_se_suben_las_ofertas_y_salen_como_proponentes(self):
+        r = self._analizar([("p1 ALFA S.A.S.zip", self._zip("alfa")),
+                            ("p2 CONSORCIO BETA.zip", self._zip("beta"))])
+        self.assertEqual(r.status_code, 200, r.content[:400])
+        datos = r.json()
+        self.assertEqual([(p["hoja"], p["nombre_proponente"]) for p in datos["proponentes"]],
+                         [("P-01", "ALFA S.A.S"), ("P-02", "CONSORCIO BETA")])
+        self.assertTrue(all(p["drive_file_id"].startswith("local:") for p in datos["proponentes"]))
+        self.assertIsNone(datos["drive_error"])
+
+    def test_sin_ofertas_y_sin_carpeta_no_falla(self):
+        """El Documento Base se puede leer antes de tener las ofertas."""
+        r = self._analizar([])
+        self.assertEqual(r.status_code, 200, r.content[:300])
+        self.assertEqual(r.json()["proponentes"], [])
+
+    def test_las_ofertas_subidas_ganan_a_la_carpeta(self):
+        """Si se manda de las dos formas, se usa la que el evaluador acaba de
+        subir: no se va a Drive a buscar otra cosa."""
+        r = self._analizar([("p1 ALFA S.A.S.zip", self._zip("alfa"))],
+                           carpeta="https://drive.google.com/drive/folders/inexistente")
+        self.assertEqual(r.status_code, 200, r.content[:300])
+        self.assertEqual(len(r.json()["proponentes"]), 1)
+        self.assertIsNone(r.json()["drive_error"])
 
 
 class DocumentoBaseObjetoUnicoTests(TestCase):

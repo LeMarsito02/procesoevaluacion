@@ -19,6 +19,8 @@ export default function PaginaNuevoProceso() {
   const [codigoProceso, setCodigoProceso] = useState('')
   const [fechaCierre, setFechaCierre] = useState('')
   const [carpetaDrive, setCarpetaDrive] = useState('')
+  // Las ofertas subidas a mano, cuando no están en una carpeta compartida.
+  const [ofertas, setOfertas] = useState<File[]>([])
   const [archivo, setArchivo] = useState<File | null>(null)
   const [analizando, setAnalizando] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +71,7 @@ export default function PaginaNuevoProceso() {
     setAnalizando(true)
     setError(null)
     try {
-      const r = await analizarDocumentoBase(codigoProceso.trim(), fechaCierre, archivo, carpetaDrive)
+      const r = await analizarDocumentoBase(codigoProceso.trim(), fechaCierre, archivo, carpetaDrive, null, ofertas)
       datos.cargar(r.documento_base)
       setProponentes(r.proponentes)
       setNoReconocidos(r.proponentes_no_reconocidos)
@@ -152,6 +154,7 @@ export default function PaginaNuevoProceso() {
           codigoProceso={codigoProceso}
           fechaCierre={fechaCierre}
           carpetaDrive={carpetaDrive}
+          ofertas={ofertas}
           archivo={archivo}
           analizando={analizando}
           error={error}
@@ -159,6 +162,7 @@ export default function PaginaNuevoProceso() {
             if (c.codigoProceso !== undefined) setCodigoProceso(c.codigoProceso)
             if (c.fechaCierre !== undefined) setFechaCierre(c.fechaCierre)
             if (c.carpetaDrive !== undefined) setCarpetaDrive(c.carpetaDrive)
+            if (c.ofertas !== undefined) setOfertas(c.ofertas)
             if (c.archivo !== undefined) setArchivo(c.archivo)
           }}
           onAnalizar={analizar}

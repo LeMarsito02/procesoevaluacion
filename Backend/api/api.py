@@ -73,6 +73,11 @@ def health(request: HttpRequest) -> dict[str, str]:
     return {"status": "ok"}
 
 
+# Cuánto se acepta en una sola carga de ofertas. Una oferta de obra pesa entre 20
+# y 80 MB, así que esto da para unas veinte; si son más, se suben en varias veces.
+LIMITE_OFERTAS_SUBIDAS = 2_000_000_000
+
+
 @procesos.post("/analizar", response=AnalisisResponse, throttle=[AuthRateThrottle(settings.LIMITES_API["pesado"])])
 async def analizar_documento_base(
     request: HttpRequest,
@@ -80,6 +85,9 @@ async def analizar_documento_base(
     fecha_cierre: Form[date],
     archivo: File[UploadedFile],
     carpeta_drive: Form[str | None] = None,
+    # Las ofertas subidas a mano, cuando no están en una carpeta compartida sino
+    # en el disco (bajadas del SECOP una por una, por ejemplo).
+    ofertas: File[list[UploadedFile] | None] = None,
     # Solo para el superadministrador, que elige en qué entidad crea el proceso.
     entidad_id: Form[UUID | None] = None,
 ) -> AnalisisResponse:
@@ -103,7 +111,18 @@ async def analizar_documento_base(
     proponentes: list[Proponente] = []
     no_reconocidos: list[str] = []
     drive_error: str | None = None
-    if carpeta_drive and carpeta_drive.strip():
+    if ofertas:
+        from motor.integrations import ofertas_locales
+
+        subidas = [(o.name or "sin nombre", o.read()) for o in ofertas]
+        total = sum(len(c) for _, c in subidas)
+        if total > LIMITE_OFERTAS_SUBIDAS:
+            raise HttpError(413, f"Las ofertas pesan {total / 1e6:.0f} MB en total; el máximo por carga es "
+                                 f"{LIMITE_OFERTAS_SUBIDAS / 1e6:.0f} MB. Súbelas en varias veces.")
+        resultado_local = await asyncio.to_thread(ofertas_locales.desde_archivos, subidas)
+        proponentes = resultado_local.proponentes
+        no_reconocidos = resultado_local.no_reconocidos
+    elif carpeta_drive and carpeta_drive.strip():
         try:
             resultado = await asyncio.to_thread(list_proponentes, carpeta_drive.strip())
             proponentes = resultado.proponentes

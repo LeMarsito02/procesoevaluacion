@@ -100,6 +100,10 @@ _ULTIMO_ZIP_LEIDO: tuple[str, str | None, bytes] | None = None
 
 
 def get_file_metadata(file_id: str) -> dict:
+    if file_id.startswith("local:"):
+        from motor.integrations import ofertas_locales
+
+        return ofertas_locales.metadatos(file_id) or {}
     guardada = _METADATA_MEMORIA.get(file_id)
     if guardada is not None and time.monotonic() - guardada[0] < _METADATA_TTL_SEGUNDOS:
         return guardada[1]
@@ -130,6 +134,11 @@ def download_file_bytes(file_id: str, metadata: dict | None = None) -> bytes:
     (md5Checksum) para no volver a bajarlo si no ha cambiado en Drive. Si
     Drive no responde y el archivo ya está en caché, se usa el de caché."""
     global _ULTIMO_ZIP_LEIDO
+    if file_id.startswith("local:"):
+        # Oferta subida a mano: está en la misma caché, sin Drive de por medio.
+        from motor.integrations import ofertas_locales
+
+        return ofertas_locales.leer(file_id)
     cache_zip, cache_meta = _cache_paths(file_id)
 
     md5_pedido = metadata.get("md5Checksum") if metadata else None
