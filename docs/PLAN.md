@@ -112,6 +112,26 @@ Ya está garantizado en cinco frentes:
 | ~~Elegir el rango de la Matriz 2 con el criterio que ella misma da (SMMLV)~~ **Hecho** (24/09/2026) | 13 de 13 matrices se resuelven solas: el rango sale del presupuesto del lote en SMMLV y se usa la tabla de «los demás proponentes», no la de Mipyme, que es más laxa. Ya no hay que registrar los umbrales a mano. Las mediciones anteriores de LP-027 usaban por error los de Mipyme (liquidez 1,1 en vez de 1,2) |
 | Tiempo por oferta | mediana 49 s, picos de 332 s |
 
+## 3 bis. El registro de lo que no automatizamos
+
+Cada proceso evaluado deja anotado, en `RequisitoNoAutomatizado`, lo que su
+pliego exige y el programa no sabe verificar: el texto, la cita, la clase, en
+cuántos procesos ha aparecido y —lo que manda— **cuántas veces una persona tuvo
+que asumirlo**, porque eso es trabajo humano que se repetirá en el siguiente
+proceso.
+
+Se consulta con `manage.py que_falta_automatizar` o con
+`GET /api/evaluaciones/requisitos-no-automatizados` (solo superadministración y
+soporte: junta información de varias entidades). Cuando se programe la
+verificación de uno, se anota en su campo `verificacion` y deja de pedirse.
+
+No cambia ninguna evaluación y nunca da nada por cumplido: es la hoja de ruta,
+sacada de los pliegos reales en vez de suposiciones. Cargado con los 14 pliegos
+del ICCU da 253 requisitos distintos, 27 de ellos exclusiones. En la primera
+lectura de esa lista aparecieron dos falsos negativos del catálogo (la tarjeta
+profesional del contador y la terminación del contrato antes del cierre), que ya
+están arreglados: de 461 requisitos que frenaban se pasó a 438.
+
 ## 4. Verificación continua
 
 1. Ofertas de 3 o 4 procesos más.

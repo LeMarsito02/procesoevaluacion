@@ -576,6 +576,39 @@ def estado_de_la_fila(request: HttpRequest) -> EstadoFilaOut:
 
 
 # --- Una evaluación ---
+@router.get("/requisitos-no-automatizados", response=list[dict])
+def requisitos_no_automatizados(request: HttpRequest, limite: int = 200) -> list[dict]:
+    """Lo que los pliegos exigen y el programa no sabe verificar, acumulado de
+    todos los procesos evaluados y ordenado por lo que más trabajo humano
+    cuesta. Es la lista de qué automatizar primero: sale de los pliegos reales,
+    no de suposiciones.
+
+    Solo para superadministración y soporte: junta información de varias
+    entidades."""
+    from evaluaciones.models import RequisitoNoAutomatizado
+
+    usuario: Usuario = request.auth
+    if not (usuario.es_superadmin or usuario.rol == Rol.SOPORTE):
+        raise HttpError(403, "Solo superadministración y soporte pueden ver este registro.")
+    filas = RequisitoNoAutomatizado.objects.filter(verificacion="").prefetch_related("entidades")[: max(1, min(limite, 500))]
+    return [
+        {
+            "clave": f.clave,
+            "requisito": f.requisito,
+            "cita": f.cita,
+            "clase": f.clase,
+            "area": f.area,
+            "veces": f.veces,
+            "veces_asumido": f.veces_asumido,
+            "procesos": f.procesos,
+            "entidades": f.entidades.count(),
+            "primera_vez": f.primera_vez,
+            "ultima_vez": f.ultima_vez,
+        }
+        for f in filas
+    ]
+
+
 @router.get("/{evaluacion_id}", response=EvaluacionDetalleOut)
 def detalle(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionDetalleOut:
     usuario: Usuario = request.auth

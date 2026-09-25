@@ -402,6 +402,28 @@ class ClaseDeRequisitoTests(SimpleTestCase):
         _, faltantes = cobertura([(requisito, requisito)])
         self.assertEqual(len(faltantes), 1)
 
+    def test_la_tarjeta_del_contador_no_es_personal_clave(self):
+        """El registro de lo que no automatizamos lo destapó: el patrón del
+        personal clave se llevaba la tarjeta profesional del contador, que sí se
+        verifica con la validez de los estados financieros."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertEqual(
+            verificacion_de("Copiar la tarjeta profesional del contador público o del revisor fiscal y su certificado "
+                            "de antecedentes disciplinarios"),
+            "financiera.validez_estados")
+        # La del personal clave sigue sin verificarse.
+        self.assertIsNone(verificacion_de(
+            "El proponente debe acreditar la formación académica con copia de la tarjeta profesional del personal clave"))
+
+    def test_que_el_contrato_haya_terminado_antes_del_cierre_si_se_verifica(self):
+        """Aparecía en 4 de los 14 pliegos pidiendo revisión: el motor descarta
+        el contrato cuya terminación no es anterior al cierre."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertEqual(verificacion_de("Los contratos deben haber terminado antes de la fecha de cierre del Proceso"),
+                         "tecnica.terminacion")
+
     def test_el_rango_financiero_de_las_mipymes_no_se_da_por_aplicado(self):
         """El pliego les aplica otro rango de la matriz; el motor usa un solo
         conjunto de umbrales para todos."""

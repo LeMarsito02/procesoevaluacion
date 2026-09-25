@@ -2475,6 +2475,115 @@ class AsumirRequisitosDelPliegoTests(BaseEvaluaciones):
             servicios.asumir_requisitos_del_pliego(proceso, [], self.jefe)
 
 
+class RegistroDeLoQueNoAutomatizamosTests(BaseEvaluaciones):
+    """Cada proceso deja anotado lo que su pliego exige y el programa no sabe
+    verificar. Con eso se sabe qué automatizar primero: sale de los pliegos
+    reales y de lo que de verdad le costó trabajo a una persona, no de
+    suposiciones. Es un registro para mejorar el programa; no cambia ninguna
+    evaluación y nunca da nada por cumplido."""
+
+    def _proceso(self):
+        from evaluaciones.models import Proceso
+
+        c, ev = self.crear()
+        proceso = Proceso.objects.get(pk=ev["proceso_id"])
+        analisis = PliegoProcesoTests.analisis(self)
+        analisis.estado_ia = "listo"
+        analisis.parametros_ia = {"requisitos": [
+            {"valor": "El proponente debe aportar una póliza de responsabilidad civil extracontractual",
+             "cita": "deberá aportar una póliza de responsabilidad civil extracontractual", "seccion": "5.2"},
+            {"valor": "El proponente debe presentar un plan de manejo de tránsito aprobado",
+             "cita": "deberá presentar un plan de manejo de tránsito", "seccion": "5.3"}]}
+        analisis.save(update_fields=["estado_ia", "parametros_ia"])
+        Proceso.objects.filter(pk=proceso.pk).update(analisis_pliego=analisis)
+        proceso.refresh_from_db()
+        return c, ev, proceso
+
+    def test_se_anota_lo_que_el_pliego_exige_y_no_verificamos(self):
+        from evaluaciones import servicios
+        from evaluaciones.models import RequisitoNoAutomatizado
+
+        _, _, proceso = self._proceso()
+        self.assertEqual(servicios.anotar_lo_que_no_automatizamos(proceso, "tecnica"), 2)
+        filas = RequisitoNoAutomatizado.objects.all()
+        self.assertEqual(filas.count(), 2)
+        poliza = filas.get(requisito__icontains="póliza")
+        self.assertEqual((poliza.veces, poliza.veces_asumido, poliza.area), (1, 0, "tecnica"))
+        self.assertIn("póliza", poliza.cita)
+        self.assertEqual(poliza.entidades.count(), 1)
+
+    def test_el_mismo_proceso_no_se_cuenta_dos_veces(self):
+        """Los parámetros se recalculan cada vez que alguien confirma algo: si
+        cada recálculo sumara, el registro mediría recálculos y no procesos."""
+        from evaluaciones import servicios
+        from evaluaciones.models import RequisitoNoAutomatizado
+
+        _, _, proceso = self._proceso()
+        servicios.anotar_lo_que_no_automatizamos(proceso, "tecnica")
+        self.assertEqual(servicios.anotar_lo_que_no_automatizamos(proceso, "tecnica"), 0)
+        self.assertEqual({f.veces for f in RequisitoNoAutomatizado.objects.all()}, {1})
+
+    def test_lo_que_una_persona_asume_se_cuenta_aparte(self):
+        """Es la medida de qué automatizar primero: trabajo humano que ya se
+        hizo y se volverá a hacer en el siguiente proceso."""
+        from evaluaciones import servicios
+        from evaluaciones.models import RequisitoNoAutomatizado
+
+        _, _, proceso = self._proceso()
+        servicios.anotar_lo_que_no_automatizamos(proceso, "tecnica")
+        pendientes = servicios.requisitos_del_pliego_sin_verificar(proceso)
+        clave = next(p["clave"] for p in pendientes if "póliza" in p["requisito"])
+        servicios.asumir_requisitos_del_pliego(proceso, [clave], self.jefe)
+        self.assertEqual(RequisitoNoAutomatizado.objects.get(clave=clave).veces_asumido, 1)
+        otro = RequisitoNoAutomatizado.objects.exclude(clave=clave).first()
+        self.assertEqual(otro.veces_asumido, 0)
+
+    def test_asumirlo_dos_veces_no_infla_la_cuenta(self):
+        from evaluaciones import servicios
+        from evaluaciones.models import RequisitoNoAutomatizado
+
+        _, _, proceso = self._proceso()
+        servicios.anotar_lo_que_no_automatizamos(proceso, "tecnica")
+        clave = servicios.requisitos_del_pliego_sin_verificar(proceso)[0]["clave"]
+        servicios.asumir_requisitos_del_pliego(proceso, [clave], self.jefe)
+        proceso.analisis_pliego.refresh_from_db()
+        servicios.asumir_requisitos_del_pliego(proceso, [clave], self.jefe)
+        self.assertEqual(RequisitoNoAutomatizado.objects.get(clave=clave).veces_asumido, 1)
+
+    def test_anotar_no_da_nada_por_cumplido(self):
+        """Lo importante: el registro es para mejorar el programa, no para
+        saltarse la revisión. Después de anotar, el requisito sigue pendiente."""
+        from evaluaciones import servicios
+
+        _, _, proceso = self._proceso()
+        servicios.anotar_lo_que_no_automatizamos(proceso, "tecnica")
+        pendientes = servicios.requisitos_del_pliego_sin_verificar(proceso)
+        self.assertEqual(len(pendientes), 2)
+        self.assertFalse(any(p["asumido"] for p in pendientes))
+
+    def test_solo_soporte_y_superadmin_ven_el_registro(self):
+        """Junta información de varias entidades."""
+        _, ev, proceso = self._proceso()
+        from evaluaciones import servicios
+
+        servicios.anotar_lo_que_no_automatizamos(proceso, "tecnica")
+        c = Cliente()
+        c.entrar("jefe@entidad.gov.co")
+        self.assertEqual(c.get("/api/evaluaciones/requisitos-no-automatizados").status_code, 403)
+
+    def test_el_registro_sale_ordenado_por_trabajo_humano(self):
+        from evaluaciones import servicios
+        from evaluaciones.models import RequisitoNoAutomatizado
+
+        _, _, proceso = self._proceso()
+        servicios.anotar_lo_que_no_automatizamos(proceso, "tecnica")
+        clave = next(p["clave"] for p in servicios.requisitos_del_pliego_sin_verificar(proceso)
+                     if "tránsito" in p["requisito"])
+        servicios.asumir_requisitos_del_pliego(proceso, [clave], self.jefe)
+        primero = RequisitoNoAutomatizado.objects.first()
+        self.assertEqual(primero.clave, clave)
+
+
 class FiltrosLecturaIATests(TestCase):
     """Lo que se aprendió de la prueba 4 (documento tipo de menor cuantía)."""
 

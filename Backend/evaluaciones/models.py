@@ -412,6 +412,51 @@ class AnalisisPliego(models.Model):
         return self.nombre_archivo
 
 
+class RequisitoNoAutomatizado(models.Model):
+    """Un requisito que algún pliego exige y el programa no sabe verificar.
+
+    Cada proceso que se evalúa deja aquí lo que hubo que revisar a mano, con la
+    cuenta de cuántas veces ha aparecido y en cuántos procesos. Eso es la lista
+    de qué automatizar primero: no una idea de lo que los pliegos piden, sino lo
+    que los pliegos de verdad piden y hoy cuesta trabajo humano. Lo que más
+    aparece —y sobre todo lo que más veces una persona ha tenido que asumir— es
+    lo que más paga programarlo.
+
+    No sustituye ninguna verificación ni cambia una evaluación: es un registro
+    para mejorar el programa. Guardar aquí un requisito nunca lo da por
+    cumplido."""
+
+    # Misma clave que usa motor.pliego.fusion.clave_de_requisito, para que el
+    # mismo requisito leído con otras palabras sea la misma fila.
+    clave = models.CharField(max_length=40, unique=True)
+    requisito = models.TextField()
+    cita = models.TextField(blank=True)
+    # exigencia | exclusion | regla_lectura (motor.pliego.catalogo_tecnico)
+    clase = models.CharField(max_length=20, blank=True)
+    area = models.CharField(max_length=20, blank=True)  # tecnica | financiera
+    veces = models.PositiveIntegerField(default=0)
+    # Cuántas veces una persona se encargó de revisarlo: mide el trabajo real
+    # que ahorraría automatizarlo.
+    veces_asumido = models.PositiveIntegerField(default=0)
+    # Dónde se ha visto, para poder ir al pliego. Se guardan los últimos.
+    procesos = models.JSONField(default=list, blank=True)
+    entidades = models.ManyToManyField(Entidad, blank=True, related_name="+")
+    primera_vez = models.DateTimeField(auto_now_add=True)
+    ultima_vez = models.DateTimeField(auto_now=True)
+    # Cuando ya se programó su verificación, se anota aquí y deja de pedirse.
+    verificacion = models.CharField(max_length=60, blank=True)
+    nota = models.TextField(blank=True)
+
+    MAX_PROCESOS = 20
+
+    class Meta:
+        ordering = ["-veces_asumido", "-veces"]
+        indexes = [models.Index(fields=["-veces"]), models.Index(fields=["clase"])]
+
+    def __str__(self) -> str:
+        return f"{self.requisito[:60]} (×{self.veces})"
+
+
 class SalarioMinimo(models.Model):
     """Salario mínimo mensual legal vigente de cada año (lo fija el Gobierno
     cada diciembre). Es de la plataforma, no de una entidad: el superadmin lo

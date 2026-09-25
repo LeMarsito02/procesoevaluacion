@@ -498,6 +498,48 @@ def _fundir_con_la_ia(parametros, analisis, *, tecnicos: bool) -> None:
     parametros.permisos_del_pliego = fusion.permisos_no_aprovechados(ia)
 
 
+def anotar_lo_que_no_automatizamos(proceso, area: str) -> int:
+    """Guarda en el registro los requisitos que este pliego exige y el programa
+    no sabe verificar, para saber qué automatizar primero.
+
+    Es información para mejorar el programa, no parte de la evaluación: no
+    cambia ningún resultado y nunca da nada por cumplido. Por eso, si algo falla
+    aquí, la evaluación sigue.
+
+    Se cuenta cada proceso una vez (no cada proponente), y aparte se cuenta
+    cuántas veces una persona tuvo que asumir el requisito: eso es el trabajo
+    humano que ahorraría programarlo."""
+    from django.db.models import F
+
+    from evaluaciones.models import RequisitoNoAutomatizado
+    from evaluaciones.pliego import parametros_leidos
+    from motor.pliego import fusion
+    from motor.pliego.catalogo_tecnico import clase_de
+
+    analisis = getattr(proceso, "analisis_pliego", None)
+    ia = parametros_leidos(analisis)
+    if ia is None:
+        return 0
+    codigo = (proceso.documento_base or {}).get("codigo_proceso") or str(proceso.pk)
+    anotados = 0
+    for clave, requisito, cita in fusion.sin_verificar(ia):
+        fila, creada = RequisitoNoAutomatizado.objects.get_or_create(
+            clave=clave,
+            defaults={"requisito": requisito[:2000], "cita": cita[:2000],
+                      "clase": clase_de(requisito, cita), "area": area},
+        )
+        if codigo in (fila.procesos or []):
+            continue  # este proceso ya lo dejó anotado
+        procesos = [*(fila.procesos or []), codigo][-RequisitoNoAutomatizado.MAX_PROCESOS:]
+        RequisitoNoAutomatizado.objects.filter(pk=fila.pk).update(
+            veces=F("veces") + 1, procesos=procesos, ultima_vez=timezone.now(),
+        )
+        if proceso.entidad_id:
+            fila.entidades.add(proceso.entidad_id)
+        anotados += 1
+    return anotados
+
+
 def parametros_tecnicos_de(proceso) -> dict | None:
     """Parámetros de la evaluación técnica leídos del pliego del proceso. Se
     calculan una vez y quedan guardados; None si el proceso no tiene el
@@ -527,6 +569,12 @@ def parametros_tecnicos_de(proceso) -> dict | None:
     base = ProcesoDocumentoBase.model_validate(proceso.documento_base)
     leidos = leer_parametros(contenido, [(l.numero, l.valor_presupuesto) for l in base.lotes], salario)
     _fundir_con_la_ia(leidos, analisis, tecnicos=True)
+    try:
+        # Lo que este pliego exige y no sabemos verificar queda anotado para ir
+        # mejorando el programa. Si falla, la evaluación sigue igual.
+        anotar_lo_que_no_automatizamos(proceso, "tecnica")
+    except Exception:  # noqa: BLE001
+        log.exception("no se pudo anotar lo que no automatizamos")
     parametros = parametros_a_dict(leidos)
     type(proceso).objects.filter(pk=proceso.pk).update(parametros_tecnicos=parametros)
     proceso.parametros_tecnicos = parametros
@@ -646,6 +694,17 @@ def asumir_requisitos_del_pliego(proceso, claves: list[str], usuario) -> int:
     validas = {str(c)[:40] for c in (claves or []) if str(c).strip()}
     if not validas:
         raise ValueError("No se recibió ningún requisito.")
+    # Lo que una persona tuvo que asumir se cuenta en el registro: es la medida
+    # de qué automatizar primero, porque es trabajo humano que ya se hizo.
+    try:
+        from django.db.models import F
+
+        from evaluaciones.models import RequisitoNoAutomatizado
+
+        nuevas = validas - set(analisis.requisitos_asumidos or [])
+        RequisitoNoAutomatizado.objects.filter(clave__in=nuevas).update(veces_asumido=F("veces_asumido") + 1)
+    except Exception:  # noqa: BLE001
+        log.exception("no se pudo contar lo asumido")
     analisis.requisitos_asumidos = sorted(set(analisis.requisitos_asumidos or []) | validas)
     analisis.confirmados_por, analisis.confirmados_en = usuario, _tz.now()
     analisis.save(update_fields=["requisitos_asumidos", "confirmados_por", "confirmados_en"])

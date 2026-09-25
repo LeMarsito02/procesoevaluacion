@@ -28,6 +28,7 @@ VERIFICACIONES: dict[str, str] = {
     "tecnica.unspsc": "la clasificación de los contratos en los códigos del pliego",
     "tecnica.max_contratos": "el número máximo de contratos que se tienen en cuenta",
     "tecnica.rup_experiencia": "que los contratos estén inscritos en el RUP con su consecutivo",
+    "tecnica.terminacion": "que cada contrato haya terminado antes del cierre del proceso",
     "tecnica.soporte": "el acta de recibo o la certificación de cada contrato",
     "tecnica.formato3": "el Formato 3 y el integrante que aporta cada contrato",
     "tecnica.plural": "las condiciones de aporte de cada integrante del proponente plural",
@@ -72,6 +73,10 @@ REGLAS: tuple[tuple[str, str], ...] = (
     ("tecnica.puntaje", r"PUNTAJE|PUNTOS|FACTOR\s+DE\s+CALIDAD|INDUSTRIA\s+NACIONAL|EMPRENDIMIENTO|MIPYME|DISCAPACIDAD"
                         r"|CRITERIOS?\s+AMBIENTAL|PLAN\s+DE\s+CALIDAD|GERENCIA\s+DE\s+PROYECTOS|DESEMPATE"),
     ("tecnica.rup_experiencia", r"INSCRIT\w+\s+EN\s+EL\s+RUP|EXPERIENCIA\s+CONTENIDA\s+EN\s+EL\s+(?:REGISTRO|RUP)"),
+    # El motor descarta el contrato cuya fecha de terminación del Formato 3 no es
+    # anterior al cierre (motor/tecnica/experiencia.py).
+    ("tecnica.terminacion", r"(?:DEBEN|DEBERAN|DEBE)\s+HABER\s+TERMINADO|TERMINAD\w+\s+ANTES\s+(?:DE|DEL)"
+                            r"|HABER\s+TERMINADO\s+ANTES"),
     ("financiera.capacidad_residual", r"CAPACIDAD\s+RESIDUAL|\bCRP\b|SALDO\s+DE\s+(?:LOS\s+)?CONTRATOS\s+EN\s+EJECUCION"),
     ("financiera.capital_trabajo", r"CAPITAL\s+DE\s+TRABAJO"),
     ("financiera.patrimonio", r"PATRIMONIO\s+(?:MINIMO|EXIGIDO|REQUERIDO)"),
@@ -204,6 +209,12 @@ _EXIGE_EN_INFINITIVO_RE = re.compile(
 )
 
 
+# La tarjeta profesional del contador o del revisor fiscal sí se verifica (es
+# parte de la validez de los estados financieros), así que no entra en lo que el
+# motor no mira aunque diga "tarjeta profesional".
+_DE_LOS_CONTADORES_RE = re.compile(r"CONTADOR|REVISOR\s+FISCAL|JUNTA\s+CENTRAL")
+
+
 def clase_de(requisito: str, cita: str = "") -> str:
     """Qué clase de frase del pliego es. El orden es por riesgo: primero lo que
     puede hacer que se apruebe a quien no debe.
@@ -287,7 +298,7 @@ def verificacion_de(requisito: str, cita: str = "") -> str | None:
         return ""  # no es una exigencia al proponente: ni se verifica ni falta
     if _EXTRANJERO_SIN_SUCURSAL_RE.search(texto):
         return None  # el motor no verifica lo de los proponentes extranjeros
-    if _SIN_VERIFICACION_RE.search(texto):
+    if _SIN_VERIFICACION_RE.search(texto) and not _DE_LOS_CONTADORES_RE.search(texto):
         return None  # temas que el motor no verifica: no los tapa ninguna regla
     for clave, patron in _REGLAS:
         if patron.search(texto):
