@@ -66,12 +66,23 @@ def evaluar_proponente_financiero(
             f"el pliego exige {len(parametros.requisitos_sin_verificar)} requisito(s) financiero(s) que el programa "
             "no verifica; revísalos: " + "; ".join(parametros.requisitos_sin_verificar[:3])
         )
+    if parametros.permisos_del_pliego:
+        # No entra en los avisos que frenan la aprobación: el pliego permite más
+        # de lo que el programa aplica, y eso solo puede perjudicar al
+        # proponente. Se dice para que nadie se rechace por omisión.
+        avisos_permisos = [
+            f"antes de rechazar, mira que el pliego admite {len(parametros.permisos_del_pliego)} forma(s) de "
+            "acreditar que el programa no aplica: " + "; ".join(parametros.permisos_del_pliego[:2])
+        ]
+    else:
+        avisos_permisos = []
     resultado.integrantes, resultado.avisos = integrantes, [*avisos, *parametros.avisos, *sin_confirmar]
     # Los avisos del pliego (lo leído con IA sin confirmar, los requisitos que
     # el motor no verifica, lo que las reglas no pudieron leer) son del proceso.
     resultado.revisiones = [
         *(PuntoDeRevision(f"integrantes_{i}", "oferta", a) for i, a in enumerate(avisos)),
         *(PuntoDeRevision(f"pliego_{i}", "proceso", a) for i, a in enumerate([*parametros.avisos, *sin_confirmar])),
+        *(PuntoDeRevision(f"permiso_{i}", "proceso", a) for i, a in enumerate(avisos_permisos)),
     ]
     numeros = [m.group(0) for l in parametros.lotes if (m := re.search(r"\d+", l.nombre))]
     elegidos = lotes_de_la_oferta(pdfs, numeros) if len(parametros.lotes) > 1 else None

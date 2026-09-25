@@ -210,6 +210,19 @@ def sin_verificar(ia: ParametrosIA | None, asumidos: list[str] | None = None) ->
     return salida
 
 
+def permisos_no_aprovechados(ia: ParametrosIA | None) -> list[str]:
+    """Lo que el pliego permite y el motor no sabe aprovechar. Se separa de lo
+    que falta por verificar porque el riesgo es el contrario: ignorar un permiso
+    no aprueba a nadie de más, puede rechazar a quien cumplía. Así que no frena
+    la aprobación, pero tiene que estar delante de quien decide un rechazo."""
+    from motor.pliego.catalogo_tecnico import permisos
+
+    if ia is None or not ia.requisitos:
+        return []
+    return [f"{requisito} — pliego: «{cita[:140]}»"
+            for requisito, cita in permisos([(str(r.valor), r.cita) for r in ia.requisitos])]
+
+
 def _separar_lotes(parametros, ia: ParametrosIA) -> bool:
     """Si las reglas no pudieron separar los lotes del pliego y la IA sí los
     vio, se usan los suyos. Evaluar un proceso de tres lotes como si fuera

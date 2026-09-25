@@ -750,3 +750,29 @@ class RevisionDirigidaTests(SimpleTestCase):
                                       parametros, self.cierre, False)
         self.assertFalse(lote.cumple)
         self.assertFalse(lote.experiencia_acreditada)
+
+
+class PermisosDelPliegoTests(SimpleTestCase):
+    """Rechazar por omisión también es un riesgo: si el pliego admite una forma
+    de acreditar que el programa no aplica, quien decide el rechazo tiene que
+    verlo. Pero un permiso no puede cambiar un resultado."""
+
+    cierre = date(2026, 8, 3)
+
+    def test_un_permiso_no_tumba_un_lote_que_cumple(self):
+        integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0, _rup("VIAS ALFA S.A.S.", _exp("12", 1600)))
+        parametros = _parametros()
+        parametros.permisos_del_pliego = ["El proponente podrá acreditarlo con un documento alterno — pliego: «…»"]
+        lote, _ = evaluar_experiencia(Formato3("f3", [_fila(1, "12", "VIAS ALFA")]), [integrante],
+                                     parametros, self.cierre, False)
+        self.assertTrue(lote.cumple, lote.motivos)
+        self.assertFalse(any("antes de rechazar" in m for m in lote.motivos))
+
+    def test_cuando_no_cumple_se_avisa_del_permiso(self):
+        integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0, _rup("VIAS ALFA S.A.S.", _exp("12", 100)))
+        parametros = _parametros()
+        parametros.permisos_del_pliego = ["El proponente podrá acreditarlo con un documento alterno — pliego: «…»"]
+        lote, _ = evaluar_experiencia(Formato3("f3", [_fila(1, "12", "VIAS ALFA")]), [integrante],
+                                     parametros, self.cierre, False)
+        self.assertFalse(lote.cumple)
+        self.assertTrue(any("antes de rechazar" in m for m in lote.motivos), lote.motivos)

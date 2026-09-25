@@ -83,7 +83,7 @@ Ya está garantizado en cinco frentes:
 
 | Fase | Qué | Cuánto pesa |
 |---|---|---|
-| A | Filtrar el ruido del catálogo | 170 de 498 requisitos (63 trámites de la entidad, 107 reglas de forma) |
+| A | ~~Filtrar el ruido del catálogo~~ **Hecho** (24/09/2026) | 498 → 410 frenan. Cada frase del pliego se clasifica por el riesgo de ignorarla: exclusión (48), exigencia (324), regla de lectura (38) frenan; permiso (39) y encabezado no. Los permisos se muestran antes de rechazar. Lo de proponentes extranjeros nunca se da por verificado |
 | B | El 50 % de experiencia de un integrante del proponente plural | 34 casos |
 | C | **Personal clave** (director, residente, profesionales: formación, experiencia, acta de grado, tarjeta) | 39+ casos, área nueva completa; es el corazón de los concursos de méritos |
 | D | Huecos de lectura del pliego: CM-016 no se leyó, plazo falta en 5 de 14, lotes en 0 en 2, CM-045 lee 31 meses | — |
@@ -123,7 +123,9 @@ Ya está garantizado en cinco frentes:
    financiera, expuestos en el detalle del requisito y en `QueFaltaRevisar.tsx`.
    Un lote cuya experiencia está acreditada y solo espera algo del pliego lo
    dice así, en vez de parecer un incumplimiento. Sigue sin aprobarse solo.
-3. Filtrar el ruido del catálogo.
+3. ~~Filtrar el ruido del catálogo.~~ **Hecho**: ver la fase A. Lo que bajó el
+   conteo no fue borrar requisitos, fue clasificarlos por riesgo; y quien de
+   verdad baja el costo es la palanca 1 (una vez por proceso).
 4. El 50 % de experiencia del integrante.
 5. Los tres huecos de la garantía.
 

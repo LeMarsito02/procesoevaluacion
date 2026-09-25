@@ -556,6 +556,16 @@ def evaluar_lote(
     dudas_del_proceso = bool(resultado.revisiones_del_proceso)
     resultado.experiencia_acreditada = all(exigencias) and not dudas_de_la_oferta
     resultado.cumple = resultado.experiencia_acreditada and not dudas_del_proceso
+    if not resultado.cumple and parametros.permisos_del_pliego:
+        # El lote ya no se aprueba solo, así que esto no frena nada más. Se dice
+        # porque antes de rechazar a alguien hay que saber qué otras formas de
+        # acreditar admite el pliego y el programa no aplica: se aprueba con
+        # evidencia y se rechaza con evidencia.
+        resultado.motivos.append(
+            f"antes de rechazar, mira que el pliego admite {len(parametros.permisos_del_pliego)} forma(s) de acreditar "
+            "que el programa no aplica: " + "; ".join(parametros.permisos_del_pliego[:2])
+            + (" …" if len(parametros.permisos_del_pliego) > 2 else "")
+        )
     return resultado
 
 

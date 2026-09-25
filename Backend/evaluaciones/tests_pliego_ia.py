@@ -262,6 +262,100 @@ class RequisitosQueElMotorNoVerificaTests(SimpleTestCase):
         self.assertTrue(any("572" in m and "m²" in m for m in resultado.motivos))
 
 
+class ClaseDeRequisitoTests(SimpleTestCase):
+    """Qué riesgo corre cada frase del pliego si el programa la ignora. La
+    clasificación existe para revisar menos, así que cada caso de aquí es un
+    caso donde equivocarse costaría una aprobación indebida."""
+
+    def clase(self, texto, cita=""):
+        from motor.pliego.catalogo_tecnico import clase_de
+
+        return clase_de(texto, cita)
+
+    def test_una_exclusion_del_pliego_es_lo_mas_peligroso(self):
+        """Si el motor no aplica lo que el pliego excluye, cuenta un contrato
+        que no debía contar: esas frases nunca dejan de frenar."""
+        self.assertEqual(self.clase("Las auto certificaciones no servirán para acreditar la experiencia requerida"), "exclusion")
+        self.assertEqual(self.clase("No se aceptará experiencia cuya ejecución sea exclusivamente en afirmado"), "exclusion")
+        self.assertEqual(self.clase("No será válida la experiencia relacionada con estudios técnicos y diseños"), "exclusion")
+        self.assertEqual(self.clase("De no lograrse la discriminación de los valores, la Entidad no lo tendrá en cuenta"), "exclusion")
+
+    def test_una_restriccion_escrita_como_permiso_sigue_siendo_restriccion(self):
+        self.assertEqual(
+            self.clase("Solo uno (1) de los contratos podrá haber iniciado ejecución antes del 9 de enero de 1998"),
+            "exclusion")
+
+    def test_un_permiso_no_puede_aprobar_a_nadie_de_mas(self):
+        """El pliego amplía lo aceptable. Ignorarlo puede hacer que se rechace a
+        quien cumplía —y eso se muestra—, pero no aprueba a nadie de más."""
+        self.assertEqual(
+            self.clase("El Proponente podrá acreditar este requisito con un documento emitido por una firma de auditoría externa"),
+            "permiso")
+        self.assertEqual(
+            self.clase("Los proponentes podrán acreditar experiencia proveniente de contratos celebrados con particulares"),
+            "permiso")
+
+    def test_un_deber_manda_sobre_la_regla_de_lectura_de_al_lado(self):
+        """La IA devuelve el requisito junto con la frase vecina. Si la frase
+        vecina decide la clase, una exigencia se cuela como regla de lectura y
+        deja de frenar."""
+        self.assertEqual(
+            self.clase("Para Proponentes Plurales, uno de los integrantes debe aportar como mínimo el 50 % de la experiencia",
+                       "en caso de discrepancias se tendrá en cuenta el de menor valor"),
+            "exigencia")
+
+    def test_una_exigencia_larga_sin_verbo_no_es_un_encabezado(self):
+        """A la lectura se le va el verbo. Una lista de documentos por aportar
+        no puede quedar como un título de tabla."""
+        self.assertEqual(self.clase("Copias de las resoluciones de nombramiento y de posesión para cargos públicos"), "exigencia")
+        self.assertEqual(self.clase("Actas de liquidación o actas de terminación de los contratos, en caso de aplicar"), "exigencia")
+        self.assertEqual(self.clase("Objeto del contrato"), "encabezado")
+
+    def test_lo_de_los_proponentes_extranjeros_nunca_se_da_por_verificado(self):
+        """Sus requisitos hablan de los mismos temas que el motor sí verifica
+        (estados financieros, códigos de clasificación), pero en su caso no se
+        verificó nada: sin esto quedarían tapados."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertIsNone(verificacion_de(
+            "Los Proponentes extranjeros sin domicilio o Sucursal en Colombia deberán allegar el estado de situación "
+            "financiera (balance general) y estado de resultado integral"))
+        self.assertIsNone(verificacion_de(
+            "Las personas jurídicas extranjeras sin domicilio en Colombia deberán indicar los códigos de clasificación"))
+
+    def test_lo_que_el_motor_si_verifica_deja_de_pedir_revision(self):
+        """Falsos negativos que se encontraron en los 14 pliegos del ICCU: el
+        motor sí lo verifica y el catálogo no lo reconocía."""
+        from motor.pliego.catalogo_tecnico import verificacion_de
+
+        self.assertEqual(verificacion_de("Patrimonio (Roe) Patrimonio"), "financiera.organizacional")
+        self.assertEqual(verificacion_de("Que hayan contenido la ejecución de: PAVIMENTO ASFÁLTICO DE VÍAS"),
+                         "tecnica.experiencia_general")
+        self.assertEqual(verificacion_de("Acta de Inicio o la orden de inicio"), "tecnica.soporte")
+
+    def test_los_permisos_no_entran_en_lo_que_frena_pero_se_listan(self):
+        from motor.pliego.catalogo_tecnico import cobertura, permisos
+
+        requisitos = [
+            ("El Proponente podrá acreditarlo con un documento de una firma de auditoría externa", "podrá acreditarlo"),
+            ("No se aceptará experiencia cuya ejecución sea exclusivamente en afirmado", "no se aceptará"),
+        ]
+        _, faltantes = cobertura(requisitos)
+        self.assertEqual([r for r, _ in faltantes], [requisitos[1][0]])
+        self.assertEqual([r for r, _ in permisos(requisitos)], [requisitos[0][0]])
+
+    def test_lo_que_frena_sale_ordenado_por_riesgo(self):
+        from motor.pliego.catalogo_tecnico import cobertura
+
+        requisitos = [
+            ("La contabilización de la experiencia se realizará en años", "se realizará en años"),
+            ("El proponente debe presentar un plan de manejo de tránsito", "debe presentar un plan"),
+            ("No se aceptará experiencia ejecutada exclusivamente en afirmado", "no se aceptará"),
+        ]
+        _, faltantes = cobertura(requisitos)
+        self.assertEqual([r.split()[0] for r, _ in faltantes], ["No", "El", "La"])
+
+
 class AsumirRequisitosTests(SimpleTestCase):
     """La otra mitad de la garantía: que no dar por cumplido lo que no se miró
     no obligue a mirarlo trece veces. Un requisito del pliego se asume una vez

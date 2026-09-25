@@ -102,6 +102,11 @@ class ParametrosFinancieros:
     # Requisitos que el pliego exige y el motor no sabe verificar: mientras
     # haya alguno, el lote va a revisión (motor/pliego/catalogo_tecnico.py).
     requisitos_sin_verificar: list[str] = field(default_factory=list)
+    # Lo que el pliego PERMITE y el motor no sabe aprovechar (acreditar algo con
+    # un documento alterno, por ejemplo). No frena ninguna aprobación —ignorarlo
+    # no aprueba a nadie de más—, pero sí puede hacer que se rechace a quien
+    # cumplía: por eso se dice cuando el resultado no es un cumple.
+    permisos_del_pliego: list[str] = field(default_factory=list)
 
 
 # El título de la sección cambia entre documentos tipo: "ANTICIPO Y/O PAGO

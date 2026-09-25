@@ -493,6 +493,9 @@ def _fundir_con_la_ia(parametros, analisis, *, tecnicos: bool) -> None:
     parametros.requisitos_sin_verificar = [
         f"{requisito} — pliego: «{cita[:140]}»" for _, requisito, cita in fusion.sin_verificar(ia, asumidos)
     ]
+    # Y lo que el pliego permite y el motor no aprovecha: no frena nada, pero
+    # tiene que verse antes de rechazar a nadie.
+    parametros.permisos_del_pliego = fusion.permisos_no_aprovechados(ia)
 
 
 def parametros_tecnicos_de(proceso) -> dict | None:
