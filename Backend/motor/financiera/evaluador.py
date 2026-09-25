@@ -122,7 +122,8 @@ def _resultado(proponente: Proponente, numero: int, revision: Revision | None, r
     return ResultadoRequisito(
         **_base(proponente, numero),
         cumple=cumple,
-        motivo="; ".join(avisos + motivos) or None,
+        # Las explicaciones van al final: cuentan cómo se evaluó, no qué falta.
+        motivo="; ".join(avisos + motivos + resultado.explicaciones) or None,
         detalle={
             "financiera": {**(revision.detalle or {}), **(extra or {})},
             "integrantes_financieros": _integrantes(resultado),

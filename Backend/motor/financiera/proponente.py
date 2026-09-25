@@ -35,6 +35,10 @@ class ResultadoFinanciero:
     capital_por_lote: dict[str, Revision] = field(default_factory=dict)
     residual: Revision | None = None
     avisos: list[str] = field(default_factory=list)
+    # Lo que solo explica cómo se evaluó (con qué tabla de la Matriz 2, por
+    # ejemplo). No frena nada: un aviso frena la aprobación, una explicación no,
+    # y confundirlos deja sin aprobar a quien cumplía todo.
+    explicaciones: list[str] = field(default_factory=list)
     # Lo mismo que los avisos, pero separado por ámbito: lo que sale del pliego
     # se resuelve una vez para todos los proponentes y lo de la oferta hay que
     # mirarlo en esta. Ninguno de los dos aprueba solo.
@@ -67,23 +71,23 @@ def evaluar_proponente_financiero(
             "no verifica; revísalos: " + "; ".join(parametros.requisitos_sin_verificar[:3])
         )
     if parametros.permisos_del_pliego:
-        # No entra en los avisos que frenan la aprobación: el pliego permite más
-        # de lo que el programa aplica, y eso solo puede perjudicar al
-        # proponente. Se dice para que nadie se rechace por omisión.
-        avisos_permisos = [
+        # Ni frena la aprobación ni es un punto por resolver: el pliego permite
+        # más de lo que el programa aplica, y eso solo puede perjudicar al
+        # proponente. Va como explicación, para que nadie se rechace por omisión.
+        explicaciones_permisos = [
             f"antes de rechazar, mira que el pliego admite {len(parametros.permisos_del_pliego)} forma(s) de "
             "acreditar que el programa no aplica: " + "; ".join(parametros.permisos_del_pliego[:2])
         ]
     else:
-        avisos_permisos = []
+        explicaciones_permisos = []
     resultado.integrantes, resultado.avisos = integrantes, [*avisos, *parametros.avisos, *sin_confirmar]
     # Los avisos del pliego (lo leído con IA sin confirmar, los requisitos que
     # el motor no verifica, lo que las reglas no pudieron leer) son del proceso.
     resultado.revisiones = [
         *(PuntoDeRevision(f"integrantes_{i}", "oferta", a) for i, a in enumerate(avisos)),
         *(PuntoDeRevision(f"pliego_{i}", "proceso", a) for i, a in enumerate([*parametros.avisos, *sin_confirmar])),
-        *(PuntoDeRevision(f"permiso_{i}", "proceso", a) for i, a in enumerate(avisos_permisos)),
     ]
+    resultado.explicaciones.extend(explicaciones_permisos)
     numeros = [m.group(0) for l in parametros.lotes if (m := re.search(r"\d+", l.nombre))]
     elegidos, avisos_lotes = lotes_de_la_oferta(pdfs, numeros) if len(parametros.lotes) > 1 else (None, [])
     resultado.avisos.extend(avisos_lotes)
@@ -129,7 +133,7 @@ def _umbrales_del_proponente(parametros: ParametrosFinancieros, integrantes: lis
             continue
         if plural and (i.participacion is None or i.participacion < 0.10 - 1e-9):
             continue
-        resultado.avisos.append(
+        resultado.explicaciones.append(
             f"se evalúa con los indicadores que la Matriz 2 reserva a los proponentes Mipyme porque "
             f"{i.nombre} es {i.rup.tamano_empresa.lower()} según su RUP"
             + (f" y tiene el {i.participacion * 100:.0f} % de participación" if plural and i.participacion else "")
@@ -140,7 +144,7 @@ def _umbrales_del_proponente(parametros: ParametrosFinancieros, integrantes: lis
         # Sin el RUP no se sabe el tamaño de empresa. Se usan los indicadores
         # generales, que son los más exigentes, y se dice: si resulta que era
         # Mipyme, se le estaría exigiendo más de lo que el pliego le exige.
-        resultado.avisos.append(
+        resultado.explicaciones.append(
             "no se leyó el RUP de " + ", ".join(sin_rup) + ", así que no se sabe si acredita ser Mipyme: se evalúa con "
             "los indicadores de los demás proponentes, que son los más exigentes"
         )

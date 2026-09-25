@@ -782,7 +782,10 @@ class UmbralesSegunElProponenteTests(SimpleTestCase):
 
         resultado = ResultadoFinanciero()
         umbrales = _umbrales_del_proponente(self._parametros(), integrantes, plural, resultado)
-        return umbrales, resultado.avisos
+        # Explicaciones, no avisos: un aviso frena la aprobación y decir con qué
+        # tabla se evaluó no puede dejar sin aprobar a quien cumplía todo.
+        self.assertEqual(resultado.avisos, [])
+        return umbrales, resultado.explicaciones
 
     def test_una_pequena_empresa_usa_los_indicadores_de_mipyme(self):
         umbrales, avisos = self._elegir([self._integrante("PEQUENA EMPRESA")])
@@ -820,3 +823,22 @@ class UmbralesSegunElProponenteTests(SimpleTestCase):
         umbrales = _umbrales_del_proponente(parametros, [self._integrante("PEQUENA EMPRESA")], False,
                                             ResultadoFinanciero())
         self.assertEqual(umbrales.liquidez_min, 1.2)
+
+
+class UnaExplicacionNoFrenaLaAprobacionTests(SimpleTestCase):
+    """Decir con qué tabla de la Matriz 2 se evaluó no puede dejar sin aprobar a
+    quien cumplió todo. Pasó: el aviso informativo tumbaba el lote de un
+    proponente cuyas cuatro verificaciones estaban en orden."""
+
+    def test_con_todo_en_orden_y_una_explicacion_el_lote_cumple(self):
+        from motor.financiera.proponente import ResultadoFinanciero, cumple_lote
+
+        r = ResultadoFinanciero()
+        r.lotes_presentados = ["LOTE 1"]
+        r.financiera = Revision(True, [])
+        r.organizacional = Revision(True, [])
+        r.validez = Revision(True, [])
+        r.capital_por_lote = {"LOTE 1": Revision(True, [])}
+        r.residual = Revision(True, [])
+        r.explicaciones = ["se evalúa con los indicadores de Mipyme porque ALFA es pequeña empresa según su RUP"]
+        self.assertTrue(cumple_lote(r, "LOTE 1"))
