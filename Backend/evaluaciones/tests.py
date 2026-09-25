@@ -2584,6 +2584,74 @@ class RegistroDeLoQueNoAutomatizamosTests(BaseEvaluaciones):
         self.assertEqual(primero.clave, clave)
 
 
+class RegistroDeCausasDeRevisionTests(BaseEvaluaciones):
+    """La otra mitad de por qué una persona tiene que mirar: no que el pliego
+    pida algo que no verificamos, sino que sí sabemos verificarlo y en esa oferta
+    la lectura falló. Se cuenta por oferta, porque eso es el trabajo humano: una
+    lectura que falla en 48 de 98 ofertas cuesta 48 revisiones."""
+
+    def _resultado(self, numero, revisiones, cumple=False):
+        from motor.esquemas.proceso import ResultadoRequisito
+
+        return ResultadoRequisito(
+            hoja="H", numero_orden=1, nombre_proponente="ALFA S.A.S.", requisito=numero,
+            cumple=cumple, motivo="falta revisar", detalle={"revisiones": revisiones},
+        )
+
+    def _guardar(self, evaluacion_id, resultados):
+        from evaluaciones import servicios
+        from evaluaciones.models import Evaluacion
+
+        evaluacion = Evaluacion.objects.get(pk=evaluacion_id)
+        proponente = evaluacion.proceso.proponentes.first()
+        servicios.guardar_resultados(evaluacion, proponente, resultados)
+        return evaluacion
+
+    def test_se_anota_la_causa_una_vez_por_oferta(self):
+        """Tres contratos sin acta son una oferta con esa causa, no tres."""
+        from evaluaciones.models import CausaDeRevision
+
+        c, ev = self.crear()
+        self._guardar(ev["id"], [self._resultado(101, [
+            {"clave": "soporte_contrato_3", "ambito": "oferta", "que": "el acta del contrato 3 no se encontró"},
+            {"clave": "soporte_contrato_7", "ambito": "oferta", "que": "el acta del contrato 7 no se encontró"},
+            {"clave": "area", "ambito": "oferta", "que": "el área intervenida no se pudo dar por cumplida"},
+        ])])
+        filas = {f.clave: f for f in CausaDeRevision.objects.all()}
+        self.assertEqual(sorted(filas), ["area", "soporte_contrato"])
+        self.assertEqual(filas["soporte_contrato"].ofertas, 1)
+        self.assertIn("contrato 3", filas["soporte_contrato"].ejemplo)
+
+    def test_dos_ofertas_con_la_misma_causa_suman(self):
+        from evaluaciones.models import CausaDeRevision
+
+        c, ev = self.crear()
+        punto = [{"clave": "soporte_contrato_1", "ambito": "oferta", "que": "el acta no se encontró"}]
+        self._guardar(ev["id"], [self._resultado(101, punto)])
+        self._guardar(ev["id"], [self._resultado(102, punto)])
+        self.assertEqual(CausaDeRevision.objects.get(clave="soporte_contrato").ofertas, 2)
+
+    def test_lo_que_no_va_a_revision_no_se_anota(self):
+        """Si se contara lo que sí se decidió solo, el registro mediría
+        evaluaciones y no trabajo humano."""
+        from evaluaciones.models import CausaDeRevision
+
+        c, ev = self.crear()
+        self._guardar(ev["id"], [self._resultado(
+            101, [{"clave": "unspsc", "ambito": "proceso", "que": "no se leyeron los códigos"}], cumple=True)])
+        self.assertEqual(CausaDeRevision.objects.count(), 0)
+
+    def test_anotar_no_cambia_el_resultado_guardado(self):
+        from evaluaciones.models import Resultado
+
+        c, ev = self.crear()
+        evaluacion = self._guardar(ev["id"], [self._resultado(
+            101, [{"clave": "area", "ambito": "oferta", "que": "el área no se pudo verificar"}])])
+        guardado = Resultado.objects.get(evaluacion=evaluacion, requisito=101)
+        self.assertFalse(guardado.datos["cumple"])
+        self.assertTrue(guardado.requiere_revision)
+
+
 class FiltrosLecturaIATests(TestCase):
     """Lo que se aprendió de la prueba 4 (documento tipo de menor cuantía)."""
 

@@ -125,12 +125,43 @@ Se consulta con `manage.py que_falta_automatizar` o con
 soporte: junta información de varias entidades). Cuando se programe la
 verificación de uno, se anota en su campo `verificacion` y deja de pedirse.
 
+Tiene un hermano, `CausaDeRevision`, que mide la otra mitad: no lo que el pliego
+pide y no verificamos, sino lo que **sí sabemos verificar y la lectura falló** en
+una oferta (no se encontró el acta de un contrato, no se leyó el ingreso
+operacional, no apareció el RUP de un integrante). Se cuenta por oferta, porque
+eso es el trabajo humano: una lectura que falla en 48 de 98 ofertas cuesta 48
+revisiones. Conviene no confundirlos: uno se arregla programando una verificación
+nueva, el otro mejorando una lectura que ya existe. Se consulta con el mismo
+comando y con `GET /api/evaluaciones/causas-de-revision`.
+
 No cambia ninguna evaluación y nunca da nada por cumplido: es la hoja de ruta,
 sacada de los pliegos reales en vez de suposiciones. Cargado con los 14 pliegos
 del ICCU da 253 requisitos distintos, 27 de ellos exclusiones. En la primera
 lectura de esa lista aparecieron dos falsos negativos del catálogo (la tarjeta
 profesional del contador y la terminación del contrato antes del cierre), que ya
 están arreglados: de 461 requisitos que frenaban se pasó a 438.
+
+### Medición de ICCU-LP-027 (11 ofertas, 24/09/2026)
+
+Escenario real de uso: el evaluador confirma una vez los parámetros del pliego y
+asume una vez los requisitos que el programa no verifica.
+
+| | Resultado |
+|---|---|
+| Aprobaciones indebidas | **0** |
+| Decisiones iguales al informe del ICCU | 6 de 22 (1 técnica, 5 financiera) |
+| Mediana por oferta | ~30 s (pico de 209 s) |
+
+Las causas de lo que quedó a revisión, ya en el registro:
+
+- **técnica**: el acta o certificación de un contrato no aparece (3 ofertas), el
+  área intervenida (1), el objeto de un contrato que no se puede clasificar ni
+  descartar (1), experiencia de un socio (1).
+- **financiera**: el ingreso operacional que no se lee de los estados financieros
+  (4 ofertas, es la causa mayor), el RUP de un integrante que no aparece (2), y
+  certificados de la Junta Central de Contadores vencidos al cierre (3) —ahí
+  rechazamos con evidencia y el ICCU aprobó: **falta que el abogado diga el
+  criterio**, porque rechazar de más también es riesgo—.
 
 ## 4. Verificación continua
 

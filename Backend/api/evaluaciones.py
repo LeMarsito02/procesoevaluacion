@@ -592,6 +592,7 @@ def requisitos_no_automatizados(request: HttpRequest, limite: int = 200) -> list
         raise HttpError(403, "Solo superadministración y soporte pueden ver este registro.")
     filas = RequisitoNoAutomatizado.objects.filter(verificacion="").prefetch_related("entidades")[: max(1, min(limite, 500))]
     return [
+        # Lo que el pliego exige y no sabemos verificar.
         {
             "clave": f.clave,
             "requisito": f.requisito,
@@ -606,6 +607,28 @@ def requisitos_no_automatizados(request: HttpRequest, limite: int = 200) -> list
             "ultima_vez": f.ultima_vez,
         }
         for f in filas
+    ]
+
+
+@router.get("/causas-de-revision", response=list[dict])
+def causas_de_revision(request: HttpRequest, limite: int = 200) -> list[dict]:
+    """Por qué las ofertas necesitaron que las mirara una persona cuando el
+    programa sí sabía qué verificar: la lectura que falló, y en cuántas ofertas.
+    La otra mitad de la hoja de ruta —esto se arregla mejorando una lectura que
+    ya existe, no programando una verificación nueva—.
+
+    Solo para superadministración y soporte: junta información de varias
+    entidades."""
+    from evaluaciones.models import CausaDeRevision
+
+    usuario: Usuario = request.auth
+    if not (usuario.es_superadmin or usuario.rol == Rol.SOPORTE):
+        raise HttpError(403, "Solo superadministración y soporte pueden ver este registro.")
+    return [
+        {"clave": c.clave, "ambito": c.ambito, "area": c.area, "ejemplo": c.ejemplo,
+         "ofertas": c.ofertas, "veces": c.veces, "procesos": c.procesos,
+         "primera_vez": c.primera_vez, "ultima_vez": c.ultima_vez, "nota": c.nota}
+        for c in CausaDeRevision.objects.all()[: max(1, min(limite, 500))]
     ]
 
 

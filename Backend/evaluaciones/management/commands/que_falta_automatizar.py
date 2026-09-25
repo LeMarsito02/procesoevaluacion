@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
-from evaluaciones.models import RequisitoNoAutomatizado
+from evaluaciones.models import CausaDeRevision, RequisitoNoAutomatizado
 
 
 class Command(BaseCommand):
@@ -43,3 +43,15 @@ class Command(BaseCommand):
         if exclusiones:
             self.stdout.write(f"\nDe esos, {exclusiones} son exclusiones del pliego («no se aceptará…»): "
                               "son las que más riesgo traen si nadie las mira.")
+        # La otra mitad: lo que el programa sí sabe verificar y falló al leer.
+        causas = CausaDeRevision.objects.all()
+        if opciones["area"]:
+            causas = causas.filter(area=opciones["area"])
+        if not causas.exists():
+            return
+        self.stdout.write("\nLecturas que sí sabemos hacer y fallaron, por cuántas ofertas mandaron a revisión:")
+        self.stdout.write(f"{'OFERTAS':>8} {'AMBITO':<8} {'AREA':<11} CAUSA")
+        for c in causas[: opciones["limite"]]:
+            self.stdout.write(f"{c.ofertas:>8} {c.ambito:<8} {c.area:<11} {c.clave}")
+            if c.ejemplo:
+                self.stdout.write(f"{'':>8} {c.ejemplo[:100]}")

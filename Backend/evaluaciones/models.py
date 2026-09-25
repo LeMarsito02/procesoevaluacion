@@ -457,6 +457,44 @@ class RequisitoNoAutomatizado(models.Model):
         return f"{self.requisito[:60]} (×{self.veces})"
 
 
+class CausaDeRevision(models.Model):
+    """Por qué una oferta concreta no se pudo decidir sola.
+
+    Hermana de [RequisitoNoAutomatizado], pero mide otra cosa: allá el pliego
+    exige algo que el programa no sabe verificar; aquí el programa sí sabe
+    verificarlo y en esta oferta no pudo —no encontró el acta de un contrato, no
+    leyó el ingreso operacional de unos estados financieros, no halló el RUP de
+    un integrante—. Son los dos motivos por los que una persona tiene que
+    mirar, y conviene no confundirlos: uno se arregla programando una
+    verificación nueva, el otro mejorando una lectura que ya existe.
+
+    Se cuenta por oferta, porque eso es exactamente el trabajo humano: una
+    lectura que falla en 48 de 98 ofertas cuesta 48 revisiones."""
+
+    # Una causa, no un caso: "soporte_contrato", no "soporte_contrato_3".
+    clave = models.CharField(max_length=60)
+    ambito = models.CharField(max_length=12)  # oferta | proceso
+    area = models.CharField(max_length=20, blank=True)
+    # Un ejemplo real de cómo se lee, para saber de qué se habla.
+    ejemplo = models.TextField(blank=True)
+    veces = models.PositiveIntegerField(default=0)
+    # En cuántas ofertas distintas ha pasado.
+    ofertas = models.PositiveIntegerField(default=0)
+    procesos = models.JSONField(default=list, blank=True)
+    primera_vez = models.DateTimeField(auto_now_add=True)
+    ultima_vez = models.DateTimeField(auto_now=True)
+    nota = models.TextField(blank=True)
+
+    MAX_PROCESOS = 20
+
+    class Meta:
+        ordering = ["-ofertas", "-veces"]
+        constraints = [models.UniqueConstraint(fields=["clave", "area"], name="causa_unica_por_area")]
+
+    def __str__(self) -> str:
+        return f"{self.clave} ({self.ofertas} ofertas)"
+
+
 class SalarioMinimo(models.Model):
     """Salario mínimo mensual legal vigente de cada año (lo fija el Gobierno
     cada diciembre). Es de la plataforma, no de una entidad: el superadmin lo

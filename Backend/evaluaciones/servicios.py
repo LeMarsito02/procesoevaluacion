@@ -156,6 +156,52 @@ def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultado
                 },
             )
         sincronizar_personas(evaluacion, proponente)
+    try:
+        # Por qué esta oferta no se pudo decidir sola. Es para mejorar el
+        # programa: no cambia el resultado y si falla, no pasa nada.
+        anotar_causas_de_revision(evaluacion, resultados)
+    except Exception:  # noqa: BLE001
+        log.exception("no se pudieron anotar las causas de revisión")
+
+
+def anotar_causas_de_revision(evaluacion: Evaluacion, resultados: list[ResultadoRequisito]) -> int:
+    """Guarda por qué esta oferta necesitó que la mirara una persona.
+
+    Se cuenta una vez por oferta y por causa: si el acta de tres contratos no
+    aparece, eso es una oferta con la causa «soporte_contrato», no tres. Lo que
+    se quiere medir es cuánta revisión humana ahorraría arreglar esa lectura.
+
+    Es información para mejorar el programa: no cambia ninguna evaluación."""
+    import re as _re
+
+    from django.db.models import F
+
+    from evaluaciones.models import CausaDeRevision
+
+    codigo = (evaluacion.proceso.documento_base or {}).get("codigo_proceso") or str(evaluacion.proceso_id)
+    vistas: dict[str, dict] = {}
+    for r in resultados:
+        if not requiere_revision(r):
+            continue
+        for punto in ((r.detalle or {}).get("revisiones") or []):
+            # "soporte_contrato_3" y "soporte_contrato_7" son la misma causa.
+            clave = _re.sub(r"_\d+$", "", str(punto.get("clave") or ""))[:60]
+            if not clave:
+                continue
+            vistas.setdefault(clave, {"ambito": str(punto.get("ambito") or "")[:12],
+                                      "ejemplo": str(punto.get("que") or "")[:2000]})
+    for clave, datos in vistas.items():
+        fila, _ = CausaDeRevision.objects.get_or_create(
+            clave=clave, area=evaluacion.tipo,
+            defaults={"ambito": datos["ambito"], "ejemplo": datos["ejemplo"]},
+        )
+        procesos = fila.procesos or []
+        if codigo not in procesos:
+            procesos = [*procesos, codigo][-CausaDeRevision.MAX_PROCESOS:]
+        CausaDeRevision.objects.filter(pk=fila.pk).update(
+            veces=F("veces") + 1, ofertas=F("ofertas") + 1, procesos=procesos, ultima_vez=timezone.now(),
+        )
+    return len(vistas)
 
 
 def _clave_integrante(nombre: str, nit: str | None) -> str:
