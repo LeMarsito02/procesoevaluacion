@@ -493,6 +493,60 @@ def _row_condicion(row: list[str | None]) -> str:
     return _norm(non_empty[0]) if non_empty else ""
 
 
+# El porcentaje del valor asegurado escrito en letras. Importa porque en un
+# escaneo el número se lee mal ("(107)", "¿1U70)") y la palabra, bien: de seis
+# lecturas de la misma franja, "Diez por ciento" salió igual en las seis.
+_EN_LETRAS = {
+    "UNO": 1, "DOS": 2, "TRES": 3, "CUATRO": 4, "CINCO": 5, "SEIS": 6, "SIETE": 7, "OCHO": 8,
+    "NUEVE": 9, "DIEZ": 10, "ONCE": 11, "DOCE": 12, "QUINCE": 15, "VEINTE": 20, "TREINTA": 30,
+    "CUARENTA": 40, "CINCUENTA": 50,
+}
+# Las alternativas van de la palabra más larga a la más corta, y sin exigir
+# límite de palabra al principio: el OCR pega letras sueltas delante ("VDiez por
+# ciento"), y con \b esa lectura se perdía.
+_PALABRAS_DE_NUMERO = "|".join(sorted(_EN_LETRAS, key=len, reverse=True))
+_PORCENTAJE_EN_LETRAS_RE = re.compile(
+    r"(" + _PALABRAS_DE_NUMERO + r")\b[^)]{0,16}?\)?\s*POR\s*CIENTO", re.IGNORECASE)
+# La etiqueta de la fila, aunque el OCR la dañe ("Vvalor Asegurado").
+_ETIQUETA_ASEGURADO_RE = re.compile(r"ASEGURAD")
+
+
+def _porcentaje_en_letras(texto: str) -> float | None:
+    """El porcentaje dicho en letras («diez por ciento» → 0.10)."""
+    m = _PORCENTAJE_EN_LETRAS_RE.search(_strip_accents(texto.upper()))
+    if m is None:
+        return None
+    palabra = (m.group(1) or m.group(2) or "").upper()
+    valor = _EN_LETRAS.get(palabra)
+    return valor / 100 if valor else None
+
+
+def _porcentaje_a_fondo(page) -> tuple[float | None, str]:
+    """(porcentaje, la frase que lo dice) leyendo la fila del valor asegurado
+    recortada de la página.
+
+    Es el último recurso, para cuando el OCR de la página completa perdió esa
+    celda. Se lee la misma franja a varios tamaños y se exige que coincidan al
+    menos dos: una sola lectura de un escaneo no basta para fijar el valor
+    asegurado que después se le exige al proponente."""
+    from motor.procesamiento.ocr_franja import textos_de_la_franja
+
+    votos: dict[float, str] = {}
+    cuenta: dict[float, int] = {}
+    for lectura in textos_de_la_franja(page, _ETIQUETA_ASEGURADO_RE):
+        porcentaje = _porcentaje_en_letras(lectura)
+        if porcentaje is None:
+            continue
+        cuenta[porcentaje] = cuenta.get(porcentaje, 0) + 1
+        votos.setdefault(porcentaje, _norm(lectura[:160]))
+    if not cuenta:
+        return None, ""
+    mejor = max(cuenta, key=lambda p: cuenta[p])
+    if cuenta[mejor] < 2:
+        return None, ""
+    return mejor, votos[mejor]
+
+
 def _garantia_del_texto(texto: str) -> tuple[int | None, str, float | None, str]:
     """(vigencia en meses, su frase, porcentaje, su frase) leídos del texto de la
     tabla de características de la garantía, para cuando esa tabla es una imagen.
@@ -517,6 +571,17 @@ def _garantia_del_texto(texto: str) -> tuple[int | None, str, float | None, str]
     if v is not None:
         porcentaje = float(v.group(1).replace(",", ".")) / 100
         raw_valor = _norm(plano[max(0, v.start() - 60): v.end() + 60])
+    if porcentaje is None:
+        # En letras: el escaneo daña el número y no la palabra. Tiene que ser del
+        # PRESUPUESTO: las garantías del contrato (cumplimiento, salarios,
+        # estabilidad) traen sus propios porcentajes "del valor del contrato" en
+        # las páginas siguientes, y tomar uno de esos pondría un valor asegurado
+        # equivocado.
+        m = re.search(r"POR\s*CIENTO[^.]{0,80}?PRESUPUESTO", plano, re.IGNORECASE)
+        if m is not None:
+            porcentaje = _porcentaje_en_letras(plano[max(0, m.start() - 40): m.end()])
+            if porcentaje is not None:
+                raw_valor = _norm(plano[max(0, m.start() - 40): m.end() + 40])
     return vigencia, raw_vigencia, porcentaje, raw_valor
 
 
@@ -569,6 +634,14 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
                     vigencia_meses, raw_vigencia = de_texto[0], de_texto[1]
                 if porcentaje is None and de_texto[2] is not None:
                     porcentaje, raw_valor = de_texto[2], de_texto[3]
+            if porcentaje is None and escaneado:
+                # Último recurso: la celda del valor asegurado recortada de la
+                # página y leída sola, a varios tamaños. El OCR de la página
+                # completa se la come a veces, y sin el porcentaje habría que
+                # asumir el del documento tipo.
+                porcentaje, dice = _porcentaje_a_fondo(p)
+                if porcentaje is not None:
+                    raw_valor = dice
             if vigencia_meses is not None and porcentaje is not None:
                 break
 

@@ -2009,6 +2009,58 @@ LOTE 2 MEJORAMIENTO DE LA VÍA A GAMMA CUATRO (4) MESES 266.128.268,00 Municipio
         self.assertEqual(_plazo_del_texto(_zona_de_la_tabla(texto)), 12)
 
 
+class PorcentajeDeLaGarantiaEnLetrasTests(SimpleTestCase):
+    """En un escaneo el número se lee mal y la palabra bien. De seis lecturas de
+    la misma franja de un pliego real, el «(10%)» salió como «(107)», «C107)»,
+    «¿1U70)» y «1U0)», y «Diez por ciento» salió igual en las seis. Así que el
+    porcentaje del valor asegurado se lee en letras."""
+
+    def test_se_lee_el_porcentaje_en_letras_aunque_el_numero_este_dañado(self):
+        from motor.parsers.documento_base import _porcentaje_en_letras
+
+        for lectura in (
+            "Vvalor Diez por ciento (107) del Presupuesto ÚUficial del Proceso de Asegurado Contratación",
+            "valor Diez por ciento C107) del Presupuesto Vficial",
+            "valor VDiez por ciento ¿1U) del Presupuesto Úficial",
+            "valor Diez por ciento ¿1U70) del Fresupuesto Vricial",
+        ):
+            self.assertEqual(_porcentaje_en_letras(lectura), 0.10, lectura)
+
+    def test_otros_porcentajes_en_letras(self):
+        from motor.parsers.documento_base import _porcentaje_en_letras
+
+        self.assertEqual(_porcentaje_en_letras("equivalente al veinte por ciento del valor del contrato"), 0.20)
+        self.assertEqual(_porcentaje_en_letras("treinta por ciento"), 0.30)
+        self.assertEqual(_porcentaje_en_letras("cinco (5%) por ciento"), 0.05)
+        self.assertIsNone(_porcentaje_en_letras("del Presupuesto Oficial del Proceso"))
+
+    def test_hacen_falta_dos_lecturas_que_coincidan(self):
+        """Una sola lectura de un escaneo no fija el valor asegurado que después
+        se le exige al proponente: si las franjas no coinciden, no se usa."""
+        from unittest import mock
+
+        from motor.parsers import documento_base
+
+        with mock.patch("motor.procesamiento.ocr_franja.textos_de_la_franja",
+                        return_value=["Valor Asegurado Diez por ciento del Presupuesto"]):
+            self.assertEqual(documento_base._porcentaje_a_fondo(mock.Mock()), (None, ""))
+        with mock.patch("motor.procesamiento.ocr_franja.textos_de_la_franja",
+                        return_value=["Asegurado Diez por ciento del Presupuesto",
+                                      "Asegurado Diez por ciento del Fresupuesto",
+                                      "Asegurado Veinte por ciento"]):
+            porcentaje, dice = documento_base._porcentaje_a_fondo(mock.Mock())
+        self.assertEqual(porcentaje, 0.10)
+        self.assertIn("Diez por ciento", dice)
+
+    def test_sin_ninguna_lectura_no_se_inventa(self):
+        from unittest import mock
+
+        from motor.parsers import documento_base
+
+        with mock.patch("motor.procesamiento.ocr_franja.textos_de_la_franja", return_value=[]):
+            self.assertEqual(documento_base._porcentaje_a_fondo(mock.Mock()), (None, ""))
+
+
 class DocumentoBaseObjetoUnicoTests(TestCase):
     """Pliegos de obra de un solo objeto, sin tabla de lotes."""
 
