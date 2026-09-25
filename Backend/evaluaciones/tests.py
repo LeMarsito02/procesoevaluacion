@@ -1951,6 +1951,64 @@ Asegurado Contratación"""
         self.assertFalse(_es_escaneado(Pdf([])))
 
 
+class DocumentoBaseSinSignoDePesosTests(SimpleTestCase):
+    """Un escaneo pierde el signo de pesos y parte las celdas, así que el
+    presupuesto y el plazo hay que reconocerlos por su forma. Es lo que hacía que
+    un pliego escaneado se creara sin lotes."""
+
+    def test_el_presupuesto_se_reconoce_sin_el_signo(self):
+        from motor.parsers.documento_base import _cifra_del_texto
+
+        self.assertEqual(_cifra_del_texto("VALOR PRESUPUESTO OFICIAL 337.867.316,00"), 337867316.0)
+        self.assertEqual(_cifra_del_texto("($337.867.316,00)"), 337867316.0)
+        # Con el signo manda el signo, aunque haya otras cifras alrededor.
+        self.assertEqual(_cifra_del_texto("12 MESES $5.458.954.545,00 pesos"), 5458954545.0)
+
+    def test_un_numero_que_no_es_dinero_no_se_toma_como_presupuesto(self):
+        from motor.parsers.documento_base import _cifra_del_texto
+
+        self.assertIsNone(_cifra_del_texto("Plazo del contrato: 7 meses"))
+        self.assertIsNone(_cifra_del_texto("Decreto 1082 de 2015"))
+        self.assertIsNone(_cifra_del_texto("liquidez 1,25"))
+
+    def test_el_plazo_se_lee_aunque_el_numero_y_la_palabra_esten_separados(self):
+        from motor.parsers.documento_base import _plazo_del_texto
+
+        self.assertEqual(_plazo_del_texto("SIETE (7) OCHOCIENTOS SESENTA\nMESES Y SIETE MIL"), 7)
+        self.assertEqual(_plazo_del_texto("DOCE (12) MESES"), 12)
+        self.assertEqual(_plazo_del_texto("Plazo: 4 meses"), 4)
+        self.assertIsNone(_plazo_del_texto("sin plazo indicado"))
+
+    def test_se_reconocen_las_filas_de_lote_en_el_texto(self):
+        """Un pliego por lotes escaneado: si se leyera como un solo objeto, el
+        presupuesto y el plazo saldrían equivocados."""
+        from motor.parsers.documento_base import _lotes_del_texto
+
+        texto = """Objeto del proyecto, lote o segmento Plazo Valor Presupuesto Oficial
+LOTE 1 MEJORAMIENTO DE LA VÍA A BETA CUATRO (4) MESES 385.873.632,00 Municipio de Beta
+LOTE 2 MEJORAMIENTO DE LA VÍA A GAMMA CUATRO (4) MESES 266.128.268,00 Municipio de Gamma"""
+        lotes = _lotes_del_texto(texto)
+        self.assertEqual([l.numero for l in lotes], ["LOTE 1", "LOTE 2"])
+        self.assertEqual([l.valor_presupuesto for l in lotes], [385873632.0, 266128268.0])
+        self.assertEqual([l.plazo_meses for l in lotes], [4, 4])
+
+    def test_una_sola_mencion_de_lote_no_arma_una_tabla(self):
+        """El pliego nombra "el lote" en muchas partes; hace falta la tabla."""
+        from motor.parsers.documento_base import _lotes_del_texto
+
+        self.assertEqual(_lotes_del_texto("El proponente puede presentarse al LOTE 1 con $500.000.000"), [])
+
+    def test_el_plazo_no_se_confunde_con_la_vigencia_de_la_garantia(self):
+        """La garantía también se cuenta en meses: si se leyera de cualquier parte
+        de la página, el plazo del contrato saldría siendo 3 meses."""
+        from motor.parsers.documento_base import _plazo_del_texto, _zona_de_la_tabla
+
+        texto = ("1.1 OBJETO, PRESUPUESTO OFICIAL\nse identifican en la siguiente tabla:\n"
+                 "CONSTRUCCIÓN DE LA VÍA DOCE (12) MESES $5.458.954.545\n"
+                 + "relleno " * 200 + "\nVigencia de la garantía: 3 meses contados desde el cierre")
+        self.assertEqual(_plazo_del_texto(_zona_de_la_tabla(texto)), 12)
+
+
 class DocumentoBaseObjetoUnicoTests(TestCase):
     """Pliegos de obra de un solo objeto, sin tabla de lotes."""
 

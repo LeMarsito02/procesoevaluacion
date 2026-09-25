@@ -201,6 +201,87 @@ def _orden_de_busqueda(pdf: pdfplumber.PDF, titulo: str, escaneado: bool):
     return [pdf.pages[i] for i in orden]
 
 
+# El presupuesto escrito sin el signo de pesos. Un escaneo pierde el "$" a menudo
+# (o lo lee como "S" o "5"), así que la cifra se reconoce por su forma: al menos
+# millones, con separadores de miles. En un Documento Base no hay otro número así.
+_CIFRA_GRANDE_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:[.,]\d{3}){2,}(?:[.,]\d{1,2})?)(?![\d])")
+
+# Una fila de lote leída del texto: "LOTE 1 <objeto> <cifra> <N> MESES".
+_LOTE_EN_TEXTO_RE = re.compile(r"\b(LOTE|SEGMENTO)\s*(?:N[O°.]?\s*)?(\d{1,2})\b", re.IGNORECASE)
+
+
+def _cifra_del_texto(texto: str) -> float | None:
+    """El presupuesto de una fila: con el signo de pesos si está, y si no, la
+    cifra más grande con forma de dinero. Se toma la mayor porque en la fila
+    también puede quedar el número del lote o el plazo."""
+    con_signo = _DINERO_CELDA_RE.search(texto)
+    if con_signo is not None:
+        valor = _parse_money(con_signo.group(0))
+        if valor:
+            return valor
+    valores = []
+    for m in _CIFRA_GRANDE_RE.finditer(texto):
+        crudo = m.group(1)
+        if crudo.count(".") + crudo.count(",") < 2:
+            continue  # "1,23" no es un presupuesto
+        # El punto separa los miles y la coma los decimales (como en el país):
+        # "337.867.316,00" son trescientos treinta y siete millones, no treinta
+        # y tres mil. Confundirlos multiplica el presupuesto por cien.
+        entero = crudo.split(",")[0].replace(".", "")
+        if entero.isdigit() and len(entero) >= 7:
+            valores.append(float(f"{entero}.{(crudo.split(',') + ['0'])[1][:2] or 0}"))
+    return max(valores) if valores else None
+
+
+def _plazo_del_texto(texto: str) -> int | None:
+    """El plazo en meses. El OCR separa el número de la palabra porque entre
+    ellos se cuela la columna de al lado."""
+    plano = re.sub(r"\s+", " ", _strip_accents(texto.upper()))
+    m = (re.search(r"\((\d{1,3})\)[^()]{0,70}?MES(?:ES)?", plano)
+         or re.search(r"MES(?:ES)?[^()]{0,70}?\((\d{1,3})\)", plano)
+         or re.search(r"(\d{1,3})\s+MES(?:ES)?", plano))
+    return int(m.group(1)) if m else None
+
+
+def _lotes_del_texto(texto: str) -> list[ParsedLote]:
+    """Las filas de lote reconocidas en el texto, para cuando la tabla es una
+    imagen. Cada fila empieza donde se nombra el lote y termina donde empieza el
+    siguiente; de ese tramo se saca el presupuesto, el plazo y el objeto."""
+    marcas = list(_LOTE_EN_TEXTO_RE.finditer(texto))
+    if len(marcas) < 2:
+        return []
+    lotes: list[ParsedLote] = []
+    vistos: set[str] = set()
+    for i, m in enumerate(marcas):
+        fin = marcas[i + 1].start() if i + 1 < len(marcas) else len(texto)
+        tramo = texto[m.start():fin]
+        numero = f"{m.group(1).upper()} {int(m.group(2))}"
+        if numero in vistos:
+            continue
+        valor = _cifra_del_texto(tramo)
+        if valor is None:
+            continue
+        vistos.add(numero)
+        lotes.append(ParsedLote(
+            numero=numero,
+            objeto=_objeto_de_las_lineas(tramo) or _norm(tramo[:200]),
+            plazo_meses=_plazo_del_texto(tramo),
+            valor_presupuesto=valor,
+            lugar_ejecucion=None,
+        ))
+    return lotes if len(lotes) >= 2 else []
+
+
+def _zona_de_la_tabla(texto: str, largo: int = 1400) -> str:
+    """El tramo del texto donde está la tabla de objeto y presupuesto."""
+    plano = _strip_accents(texto.upper())
+    desde = (re.search(r"SIGUIENTE\s+TABLA\s*:?", plano)
+             or re.search(r"OBJETO\s+DEL\s+PROYECTO", plano)
+             or re.search(r"PRESUPUESTO\s+OFICIAL", plano))
+    inicio = desde.end() if desde else 0
+    return texto[inicio: inicio + largo]
+
+
 def _objeto_de_las_lineas(texto: str) -> str:
     """El objeto del proyecto, reconstruido renglón por renglón.
 
@@ -250,28 +331,17 @@ def _lote_unico_del_texto(texto: str) -> ParsedLote | None:
     extraer porque la página es una imagen. Cada dato se reconoce por su forma,
     igual que en la tabla: el valor por el signo $, el plazo por los meses y el
     objeto por ser la parte larga en mayúsculas."""
-    dinero = _DINERO_CELDA_RE.search(texto)
-    if dinero is None:
-        return None
-    valor = _parse_money(dinero.group(0))
+    valor = _cifra_del_texto(texto)
     if not valor:
         return None
-    # El OCR mezcla las columnas de la tabla, así que entre el número del plazo y
-    # la palabra "meses" se cuela texto de la columna de al lado: "SIETE (7)
-    # OCHOCIENTOS SESENTA / MESES Y SIETE MIL". Se admite ese ruido, pero poco, y
-    # solo con el número entre paréntesis (de 1 a 3 dígitos, para no confundirlo
-    # con una cifra de dinero).
-    plano = re.sub(r"\s+", " ", _strip_accents(texto.upper()))
-    plazo = (re.search(r"\((\d{1,3})\)[^()]{0,70}?MES(?:ES)?", plano)
-             or re.search(r"MES(?:ES)?[^()]{0,70}?\((\d{1,3})\)", plano)
-             or re.search(r"(\d{1,3})\s+MES(?:ES)?", plano))
+
     # El objeto: el tramo largo en mayúsculas de la tabla (los pliegos lo
     # escriben así), sin los números ni el encabezado de las columnas.
     objeto = _objeto_de_las_lineas(texto)
     return ParsedLote(
         numero="ÚNICO",
         objeto=_norm(objeto),
-        plazo_meses=int(plazo.group(1)) if plazo else None,
+        plazo_meses=_plazo_del_texto(texto),
         valor_presupuesto=valor,
         lugar_ejecucion=None,
     )
@@ -291,7 +361,11 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
     hasta = min(_MAX_PAGINAS_ENCABEZADO, len(pdf.pages)) if escaneado else len(pdf.pages)
     for i, page in enumerate(pdf.pages[:hasta]):
         text = _texto(page, escaneado)
-        if "OBJETO, PRESUPUESTO OFICIAL" not in _strip_accents(text.upper()):
+        sin_tildes = _strip_accents(text.upper())
+        # El OCR deforma el título ("OBJETO, PRESUPUESTO OFICTAL"), así que
+        # también vale que la página nombre la tabla o sus columnas.
+        if not (("OBJETO" in sin_tildes and "PRESUPUESTO" in sin_tildes)
+                or "OBJETO DEL PROYECTO" in sin_tildes):
             continue
         if fallback_page_idx is None:
             fallback_page_idx = i
@@ -331,10 +405,37 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
             break
 
     if not lotes:
+        # La tabla puede ser una imagen (o venir vacía): sus filas se reconocen
+        # en el texto. Primero los lotes, porque un pliego por lotes leído como
+        # un solo objeto daría un presupuesto y un plazo equivocados.
+        for i in range(heading_page_idx, min(heading_page_idx + 8, len(pdf.pages))):
+            texto = _texto(pdf.pages[i], escaneado)
+            sin_tildes = _strip_accents(texto.upper())
+            if "PRESUPUESTO" not in sin_tildes:
+                continue
+            del_texto = _lotes_del_texto(texto)
+            if del_texto:
+                lotes.extend(del_texto)
+                break
+    if not lotes:
         unico = _objeto_unico(pdf, heading_page_idx, escaneado)
         if unico is not None:
             lotes.append(unico)
             objeto_general = objeto_general or unico.objeto
+
+    # El plazo suele estar en su propia celda, pero cuando la tabla lo parte (o la
+    # página es una imagen) queda sin leer, y sin plazo no se puede calcular el
+    # capital de trabajo ni saber si el pliego exige patrimonio mínimo. Se busca
+    # entonces en el texto de la página de la tabla.
+    if lotes and all(l.plazo_meses is None for l in lotes) and heading_page_idx is not None:
+        for i in range(heading_page_idx, min(heading_page_idx + 3, len(pdf.pages))):
+            # Solo en la zona de la tabla: más allá está la vigencia de la
+            # garantía, que también se cuenta en meses y pondría un plazo falso.
+            plazo = _plazo_del_texto(_zona_de_la_tabla(_texto(pdf.pages[i], escaneado)))
+            if plazo:
+                for lote in lotes:
+                    lote.plazo_meses = plazo
+                break
 
     for lote in lotes:
         lote.lugar_ejecucion = lote.lugar_ejecucion or None
