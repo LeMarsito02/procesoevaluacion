@@ -260,6 +260,19 @@ export const confirmarParametrosPliego = (id: string, valores: Record<string, un
   enviarJson<{ confirmados: Record<string, unknown>; reevaluados: number }>(
     `/api/evaluaciones/${id}/parametros-pliego`, 'PUT', valores)
 
+export interface RequisitoPliego {
+  clave: string
+  requisito: string
+  cita: string
+  asumido: boolean
+}
+
+export const requisitosPliego = (id: string) =>
+  pedirJson<RequisitoPliego[]>(`/api/evaluaciones/${id}/requisitos-pliego`)
+export const asumirRequisitosPliego = (id: string, claves: string[]) =>
+  enviarJson<{ asumidos: number; reevaluados: number }>(
+    `/api/evaluaciones/${id}/requisitos-pliego`, 'POST', { claves })
+
 export const listarTipos = () => pedirJson<TipoEvaluacion[]>('/api/evaluaciones/tipos')
 
 export const actualizarPlantillaEvaluacion = (id: string) =>

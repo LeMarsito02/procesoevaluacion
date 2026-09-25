@@ -489,7 +489,10 @@ def _fundir_con_la_ia(parametros, analisis, *, tecnicos: bool) -> None:
     parametros.sin_confirmar = [p.explicacion() for p in resultado.sin_confirmar]
     # Lo que el pliego exige y el motor no sabe verificar: se nombra y manda
     # el lote a revisión, nunca se da por cumplido.
-    parametros.requisitos_sin_verificar = fusion.sin_verificar(ia)
+    asumidos = (analisis.requisitos_asumidos or []) if analisis is not None else []
+    parametros.requisitos_sin_verificar = [
+        f"{requisito} — pliego: «{cita[:140]}»" for _, requisito, cita in fusion.sin_verificar(ia, asumidos)
+    ]
 
 
 def parametros_tecnicos_de(proceso) -> dict | None:
@@ -606,6 +609,46 @@ def parametros_del_pliego(proceso, tipo: str) -> list[dict]:
             "seccion": procedencia.seccion,
         })
     return salida
+
+
+def requisitos_del_pliego_sin_verificar(proceso) -> list[dict]:
+    """Los requisitos que el pliego exige, el motor no sabe verificar y nadie
+    ha asumido todavía. Cada uno bloquea la aprobación automática de todos los
+    proponentes, así que asumirlos (una vez por proceso) es lo que devuelve el
+    automatismo sin bajar el listón."""
+    from evaluaciones.pliego import parametros_leidos
+    from motor.pliego import fusion
+
+    analisis = proceso.analisis_pliego
+    ia = parametros_leidos(analisis)
+    if ia is None:
+        return []
+    asumidos = set((analisis.requisitos_asumidos or []) if analisis is not None else [])
+    pendientes = fusion.sin_verificar(ia, [])
+    return [
+        {"clave": clave, "requisito": requisito, "cita": cita, "asumido": clave in asumidos}
+        for clave, requisito, cita in pendientes
+    ]
+
+
+def asumir_requisitos_del_pliego(proceso, claves: list[str], usuario) -> int:
+    """Marca requisitos como revisados por una persona: dejan de bloquear la
+    aprobación de todos los proponentes del proceso. Se registra quién lo
+    hizo; lo que se asume, se asume para el proceso completo."""
+    from django.utils import timezone as _tz
+
+    analisis = proceso.analisis_pliego
+    if analisis is None:
+        raise ValueError("El proceso no tiene pliego analizado.")
+    validas = {str(c)[:40] for c in (claves or []) if str(c).strip()}
+    if not validas:
+        raise ValueError("No se recibió ningún requisito.")
+    analisis.requisitos_asumidos = sorted(set(analisis.requisitos_asumidos or []) | validas)
+    analisis.confirmados_por, analisis.confirmados_en = usuario, _tz.now()
+    analisis.save(update_fields=["requisitos_asumidos", "confirmados_por", "confirmados_en"])
+    type(proceso).objects.filter(pk=proceso.pk).update(parametros_tecnicos={}, parametros_financieros={})
+    proceso.parametros_tecnicos, proceso.parametros_financieros = {}, {}
+    return len(validas)
 
 
 def confirmar_parametros_del_pliego(proceso, valores: dict, usuario) -> dict:

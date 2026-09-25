@@ -750,6 +750,41 @@ def confirmar_parametros_pliego(request: HttpRequest, evaluacion_id: UUID, datos
     return {"confirmados": confirmados, "reevaluados": len(evaluados)}
 
 
+@router.get("/{evaluacion_id}/requisitos-pliego", response=list[dict])
+def requisitos_pliego(request: HttpRequest, evaluacion_id: UUID) -> list[dict]:
+    """Los requisitos que el pliego exige y el programa no sabe verificar.
+    Cada uno frena la aprobación automática de todos los proponentes, así que
+    aquí se ve de una vez qué hay que mirar a mano en este proceso."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    return servicios.requisitos_del_pliego_sin_verificar(evaluacion.proceso)
+
+
+@router.post("/{evaluacion_id}/requisitos-pliego", response=dict)
+def asumir_requisitos_pliego(request: HttpRequest, evaluacion_id: UUID, datos: dict) -> dict:
+    """Marca requisitos como revisados por una persona: se asumen para el
+    proceso completo, no proponente por proponente. Los ya evaluados vuelven a
+    la fila para que el cambio cuente."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    if evaluacion.estado == EstadoEvaluacion.APROBADA:
+        raise HttpError(409, "La evaluación está aprobada: reábrela para asumir requisitos.")
+    claves = datos.get("claves")
+    if not isinstance(claves, list):
+        raise HttpError(400, "Se esperaba una lista de requisitos en «claves».")
+    try:
+        asumidos = servicios.asumir_requisitos_del_pliego(evaluacion.proceso, claves, usuario)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    auditar(request, "proceso.requisitos_pliego_asumidos", objeto=evaluacion.proceso,
+            requisitos=[str(c)[:40] for c in claves][:50])
+    evaluados = list(evaluacion.resultados.values_list("proponente_id", flat=True).distinct())
+    if evaluados:
+        servicios.encolar(evaluacion, evaluados, usuario)
+    return {"asumidos": asumidos, "reevaluados": len(evaluados)}
+
+
 @router.put("/{evaluacion_id}/umbrales-financieros", response=dict)
 def registrar_umbrales(request: HttpRequest, evaluacion_id: UUID, datos: UmbralesFinancierosIn) -> dict:
     """Registra los umbrales de la Matriz 2 del proceso. Los proponentes ya

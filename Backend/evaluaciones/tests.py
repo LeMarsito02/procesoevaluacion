@@ -2416,6 +2416,65 @@ class LecturaIAProcesoTests(BaseEvaluaciones):
         self.assertEqual(AnalisisPliego.objects.get(pk=a.pk).estado_ia, "no_disponible")
 
 
+class AsumirRequisitosDelPliegoTests(BaseEvaluaciones):
+    """Los requisitos que el pliego exige y el motor no verifica se revisan una
+    vez por proceso, no una vez por proponente. Es la mitad barata de la
+    garantía: seguimos sin dar por cumplido lo que nadie miró, pero mirarlo no
+    cuesta trece revisiones."""
+
+    def _proceso_con_requisito(self):
+        from evaluaciones.models import Proceso
+
+        c, ev = self.crear()
+        proceso = Proceso.objects.get(pk=ev["proceso_id"])
+        cita = "el proponente deberá aportar una póliza de responsabilidad civil extracontractual"
+        analisis = PliegoProcesoTests.analisis(self)
+        analisis.estado_ia = "listo"
+        analisis.parametros_ia = {"requisitos": [
+            {"valor": "El proponente debe aportar una póliza de responsabilidad civil extracontractual",
+             "cita": cita, "seccion": "5.2"}]}
+        analisis.save(update_fields=["estado_ia", "parametros_ia"])
+        Proceso.objects.filter(pk=proceso.pk).update(analisis_pliego=analisis)
+        proceso.refresh_from_db()
+        return c, ev, proceso
+
+    def test_se_listan_con_su_cita_y_asumirlos_los_quita(self):
+        from evaluaciones import servicios
+
+        _, _, proceso = self._proceso_con_requisito()
+        pendientes = servicios.requisitos_del_pliego_sin_verificar(proceso)
+        self.assertEqual(len(pendientes), 1)
+        self.assertIn("póliza", pendientes[0]["requisito"])
+        self.assertIn("póliza", pendientes[0]["cita"])
+        self.assertFalse(pendientes[0]["asumido"])
+
+        servicios.asumir_requisitos_del_pliego(proceso, [pendientes[0]["clave"]], self.jefe)
+        proceso.analisis_pliego.refresh_from_db()
+        self.assertTrue(servicios.requisitos_del_pliego_sin_verificar(proceso)[0]["asumido"])
+        self.assertEqual(proceso.analisis_pliego.confirmados_por, self.jefe)
+
+    def test_asumir_borra_los_parametros_guardados(self):
+        """Si no se recalcularan, el requisito seguiría frenando la aprobación
+        aunque ya lo revisaron."""
+        from evaluaciones import servicios
+        from evaluaciones.models import Proceso
+
+        _, _, proceso = self._proceso_con_requisito()
+        Proceso.objects.filter(pk=proceso.pk).update(parametros_tecnicos={"algo": 1}, parametros_financieros={"algo": 1})
+        proceso.refresh_from_db()
+        clave = servicios.requisitos_del_pliego_sin_verificar(proceso)[0]["clave"]
+        servicios.asumir_requisitos_del_pliego(proceso, [clave], self.jefe)
+        proceso.refresh_from_db()
+        self.assertEqual((proceso.parametros_tecnicos, proceso.parametros_financieros), ({}, {}))
+
+    def test_sin_requisitos_no_se_asume_nada(self):
+        from evaluaciones import servicios
+
+        _, _, proceso = self._proceso_con_requisito()
+        with self.assertRaises(ValueError):
+            servicios.asumir_requisitos_del_pliego(proceso, [], self.jefe)
+
+
 class FiltrosLecturaIATests(TestCase):
     """Lo que se aprendió de la prueba 4 (documento tipo de menor cuantía)."""
 

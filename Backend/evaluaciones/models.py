@@ -395,6 +395,11 @@ class AnalisisPliego(models.Model):
     parametros_confirmados = models.JSONField(default=dict, blank=True)
     confirmados_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     confirmados_en = models.DateTimeField(null=True, blank=True)
+    # Requisitos del pliego que el motor no sabe verificar y que una persona
+    # se encarga de revisar por su cuenta. Se asumen una vez por proceso, no
+    # por proponente: si no, un requisito que el programa no cubre mandaría a
+    # revisión las 107 ofertas del proceso.
+    requisitos_asumidos = models.JSONField(default=list, blank=True)
     creado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)

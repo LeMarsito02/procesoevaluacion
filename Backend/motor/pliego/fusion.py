@@ -145,20 +145,69 @@ def _del_lote(mapa: dict[str, Leido], lote: str, total_lotes: int) -> Leido | No
     return None
 
 
-def sin_verificar(ia: ParametrosIA | None) -> list[str]:
-    """Lo que el pliego le exige al proponente y el motor no sabe comprobar.
-    Mientras haya algo aquí, ningún lote se aprueba solo: se evalúa lo que se
-    puede y esto queda escrito para que lo mire una persona.
+# Palabras que no distinguen un requisito de otro (ya normalizadas al tronco
+# de 5 letras). Sirven para que «el proponente debe aportar una póliza» y «el
+# Proponente deberá aportar la póliza» sean el mismo requisito: si dependiera
+# de la redacción exacta, cada relectura del pliego con la IA borraría lo que
+# una persona ya revisó y habría que revisarlo todo otra vez.
+_RELLENO = {
+    "DEBE", "DEBER", "SER", "SERA", "SERAN", "ESTAR", "TENER", "TENDR", "HABER",
+    "LOS", "LAS", "UNA", "UNO", "UNOS", "UNAS", "DEL", "QUE", "CON", "POR", "PARA",
+    "SUS", "ESTA", "ESTE", "ESTOS", "ESTAS", "CUAL", "CUALE", "CUYO", "CUYA",
+    "SEGUN", "MISMO", "MISMA", "DICHO", "DICHA", "SIGUI", "TAMBI", "ADEMA",
+    "SOLO", "CADA", "OTRO", "OTRA", "CUAND", "DONDE", "ENTRE", "SOBRE",
+    "TODO", "TODA", "TODOS", "TODAS", "CASO", "CASOS", "PODRA", "PODRAN",
+}
 
-    Es lo que hace al programa compatible con cualquier pliego: no necesita
-    conocer de antemano todos los requisitos posibles, necesita no dar por
-    cumplido lo que no miró."""
+
+def _tronco(palabra: str) -> str:
+    """Las cinco primeras letras. Basta para que «aportar», «aportará» y
+    «aporte» cuenten como lo mismo, sin necesitar un diccionario."""
+    return palabra[:5]
+
+
+def _cifras(texto: str) -> set[str]:
+    """Todas las cifras del requisito, incluidas las de uno o dos dígitos.
+    «acreditar 5 años» y «acreditar 8 años» son requisitos distintos: si la
+    clave los confundiera, asumir uno daría por revisado el otro."""
+    return {n.lstrip("0") or "0" for n in re.findall(r"\d+", texto.replace(".", "").replace(",", ""))}
+
+
+def clave_de_requisito(requisito: str) -> str:
+    """Identificador estable de un requisito del pliego, para poder marcarlo
+    como asumido una vez y reconocerlo después aunque la IA lo lea con otras
+    palabras. Se hace con los troncos de sus palabras con contenido, sin la
+    redacción: lo que cambia el significado cambia la clave, y un requisito
+    distinto vuelve a pedir que alguien lo mire."""
+    import hashlib
+
+    troncos = ({_tronco(p) for p in _palabras(requisito)} - _RELLENO) | _cifras(requisito)
+    return hashlib.sha1(" ".join(sorted(troncos)).encode()).hexdigest()[:12]
+
+
+def sin_verificar(ia: ParametrosIA | None, asumidos: list[str] | None = None) -> list[tuple[str, str, str]]:
+    """(clave, requisito, cita) de lo que el pliego le exige al proponente y el
+    motor no sabe comprobar, quitando lo que una persona ya se encargó de
+    revisar.
+
+    Mientras haya algo aquí, ningún lote se aprueba solo: se evalúa lo que se
+    puede y esto queda escrito para que lo mire alguien. Eso es lo que hace al
+    programa compatible con cualquier pliego —no necesita conocer de antemano
+    todos los requisitos posibles, necesita no dar por cumplido lo que no
+    miró— y lo que evita que revisar salga carísimo: los requisitos se asumen
+    una vez por proceso, no una vez por proponente."""
     from motor.pliego.catalogo_tecnico import cobertura
 
     if ia is None or not ia.requisitos:
         return []
+    ya_asumidos = set(asumidos or [])
     _, faltantes = cobertura([(str(r.valor), r.cita) for r in ia.requisitos])
-    return [f"{requisito} — pliego: «{cita[:140]}»" for requisito, cita in faltantes]
+    salida = []
+    for requisito, cita in faltantes:
+        clave = clave_de_requisito(requisito)
+        if clave not in ya_asumidos:
+            salida.append((clave, requisito, cita))
+    return salida
 
 
 def _separar_lotes(parametros, ia: ParametrosIA) -> bool:

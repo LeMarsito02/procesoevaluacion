@@ -262,6 +262,58 @@ class RequisitosQueElMotorNoVerificaTests(SimpleTestCase):
         self.assertTrue(any("572" in m and "m²" in m for m in resultado.motivos))
 
 
+class AsumirRequisitosTests(SimpleTestCase):
+    """La otra mitad de la garantía: que no dar por cumplido lo que no se miró
+    no obligue a mirarlo trece veces. Un requisito del pliego se asume una vez
+    para el proceso, y desde ahí los proponentes vuelven a poder aprobarse
+    solos."""
+
+    def _ia(self):
+        cita = "el proponente deberá aportar una póliza de responsabilidad civil extracontractual"
+        ia = ParametrosIA()
+        ia.requisitos = [Leido(valor="El proponente debe aportar una póliza de responsabilidad civil extracontractual",
+                               cita=cita, seccion="5.2 REQUISITOS")]
+        return ia
+
+    def test_un_requisito_pendiente_se_lista_con_su_clave_y_su_cita(self):
+        pendientes = fusion.sin_verificar(self._ia())
+        self.assertEqual(len(pendientes), 1)
+        clave, requisito, cita = pendientes[0]
+        self.assertTrue(clave)
+        self.assertIn("póliza", requisito)
+        self.assertIn("póliza", cita)
+
+    def test_lo_asumido_deja_de_frenar_la_aprobacion(self):
+        ia = self._ia()
+        clave = fusion.sin_verificar(ia)[0][0]
+        self.assertEqual(fusion.sin_verificar(ia, [clave]), [])
+
+    def test_la_clave_aguanta_que_la_lectura_cambie_de_palabras(self):
+        """La IA no lee dos veces igual. Si la clave dependiera del texto
+        literal, lo asumido se olvidaría a la siguiente lectura y habría que
+        revisarlo todo otra vez."""
+        a = fusion.clave_de_requisito("El proponente debe aportar una póliza de responsabilidad civil extracontractual")
+        b = fusion.clave_de_requisito("El Proponente deberá aportar la póliza de responsabilidad civil extracontractual.")
+        self.assertEqual(a, b)
+
+    def test_dos_requisitos_que_difieren_en_una_cifra_no_son_el_mismo(self):
+        """El lado peligroso de tolerar la redacción: si la clave ignorara las
+        cifras, asumir «5 años de experiencia» daría por revisado «8 años» y
+        eso es una aprobación indebida."""
+        a = fusion.clave_de_requisito("El personal clave debe acreditar 5 años de experiencia específica")
+        b = fusion.clave_de_requisito("El personal clave debe acreditar 8 años de experiencia específica")
+        self.assertNotEqual(a, b)
+
+    def test_asumir_un_requisito_no_asume_los_demas(self):
+        ia = self._ia()
+        ia.requisitos.append(Leido(valor="El proponente debe presentar un plan de manejo de tránsito aprobado",
+                                   cita="deberá presentar un plan de manejo de tránsito aprobado", seccion="5.3"))
+        pendientes = fusion.sin_verificar(ia)
+        self.assertEqual(len(pendientes), 2)
+        quedan = fusion.sin_verificar(ia, [pendientes[0][0]])
+        self.assertEqual([r for _, r, _ in quedan], [pendientes[1][1]])
+
+
 class ConfirmarLoLeidoTests(SimpleTestCase):
     """Confirmar lo que la IA leyó es lo que devuelve el automatismo: a
     partir de ahí el parámetro vale como si lo hubieran leído las reglas."""
