@@ -1985,6 +1985,37 @@ class LoteConNumeroYPlazoPorFechaTests(SimpleTestCase):
         self.assertIsNone(_fecha_limite("expedido el 31 de diciembre de 2026"))
 
 
+class LotesNumeradosSinLaPalabraTests(SimpleTestCase):
+    """Hay pliegos cuya columna de lote trae solo el número ("1", "2"), sin la
+    palabra. Lo cazó comparar lo que leemos con el presupuesto que la entidad
+    publicó en el SECOP: de ICCU-LP-038 leíamos 6.297 millones y el publicado era
+    11.362, porque el segundo lote no se reconocía."""
+
+    def test_dos_filas_numeradas_con_dinero_son_lotes(self):
+        from motor.parsers.documento_base import _filas_numeradas_con_dinero
+
+        tabla = [
+            ["Número de lote", "Objeto", "Plazo", "Valor presupuesto"],
+            ["1", "MEJORAMIENTO DE LA VÍA A BETA", "SIETE (7) MESES", "$6.297.490.698,00"],
+            ["2", "MEJORAMIENTO DE LA VÍA A GAMMA", "CUATRO (4) MESES", "$5.064.714.214,00"],
+        ]
+        self.assertEqual(_filas_numeradas_con_dinero(tabla), {"1", "2"})
+
+    def test_una_sola_fila_numerada_no_arma_una_tabla_de_lotes(self):
+        """Un pliego de un solo objeto tiene tablas numeradas por todas partes
+        (documentos, requisitos, cronograma): con una fila no alcanza."""
+        from motor.parsers.documento_base import _filas_numeradas_con_dinero
+
+        tabla = [["Ítem", "Concepto", "Valor"], ["1", "Presupuesto oficial", "$5.458.954.545,00"]]
+        self.assertEqual(_filas_numeradas_con_dinero(tabla), set())
+
+    def test_las_filas_numeradas_sin_dinero_no_cuentan(self):
+        from motor.parsers.documento_base import _filas_numeradas_con_dinero
+
+        tabla = [["1", "Presentación de ofertas", "9 de junio"], ["2", "Cierre", "26 de junio"]]
+        self.assertEqual(_filas_numeradas_con_dinero(tabla), set())
+
+
 class DocumentoBaseSinSignoDePesosTests(SimpleTestCase):
     """Un escaneo pierde el signo de pesos y parte las celdas, así que el
     presupuesto y el plazo hay que reconocerlos por su forma. Es lo que hacía que

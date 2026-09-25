@@ -384,6 +384,26 @@ def _lote_unico_del_texto(texto: str) -> ParsedLote | None:
     )
 
 
+_SOLO_NUMERO_RE = re.compile(r"^\(?(\d{1,2})\)?$")
+
+
+def _filas_numeradas_con_dinero(table: list[list[str | None]]) -> set[str]:
+    """Las celdas de la primera columna que son solo un número y cuya fila trae
+    una cifra de dinero. Devuelve el conjunto vacío si hay menos de dos: una
+    fila sola no distingue una tabla de lotes de una lista numerada."""
+    candidatas: dict[str, float] = {}
+    for row in table:
+        if not row or row[0] is None:
+            continue
+        primera = _norm(row[0])
+        if not _SOLO_NUMERO_RE.match(primera):
+            continue
+        resto = " ".join(_norm(c) for c in row[1:] if c)
+        if _cifra_del_texto(resto):
+            candidatas[primera] = 1
+    return set(candidatas) if len(candidatas) >= 2 else set()
+
+
 def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str, list[ParsedLote], int | None]:
     objeto_general = ""
     lotes: list[ParsedLote] = []
@@ -422,12 +442,19 @@ def _find_budget_rows(pdf: pdfplumber.PDF, escaneado: bool = False) -> tuple[str
     for i in range(heading_page_idx, min(heading_page_idx + 6, len(pdf.pages))):
         page = pdf.pages[i]
         for table in page.extract_tables():
+            # Hay pliegos cuya columna de lote trae solo el número ("1", "2"),
+            # sin la palabra: se aceptan si hay al menos dos filas así con su
+            # cifra de dinero, que es lo que hace que sea una tabla de lotes y no
+            # una lista numerada cualquiera.
+            solo_numero = _filas_numeradas_con_dinero(table)
             for row in table:
                 if not row or row[0] is None:
                     continue
                 first_cell = _norm(row[0])
-                if not LOTE_ROW_RE.match(first_cell):
+                if not LOTE_ROW_RE.match(first_cell) and first_cell not in solo_numero:
                     continue
+                if first_cell in solo_numero:
+                    first_cell = f"LOTE {int(first_cell)}"
                 # Cada dato se reconoce por su forma, no por su posición: hay
                 # pliegos con una columna de más (o de menos) y con el orden
                 # cambiado, y tomando la posición el presupuesto salía en cero.
