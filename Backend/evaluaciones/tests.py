@@ -2301,6 +2301,44 @@ class UnZipConTodasLasOfertasTests(SimpleTestCase):
         self.assertEqual([p.nombre_proponente for p in r.proponentes], ["DELTA S.A.S"])
 
 
+class VigenciaDeLaGarantiaEnLetrasTests(SimpleTestCase):
+    """La celda de la vigencia también se pierde en un escaneo: en el pliego de
+    ICCU-LP-026 la página entera devolvió «Vigencia . | contratación», sin el
+    dato. Se recorta esa fila y se lee sola, como con el porcentaje."""
+
+    def test_los_meses_se_leen_en_cifra_o_en_letras(self):
+        from motor.parsers.documento_base import _meses_de_la_frase
+
+        self.assertEqual(_meses_de_la_frase("3 meses contados a partir del cierre"), 3)
+        self.assertEqual(_meses_de_la_frase("Tres (3) meses contados desde la fecha de cierre"), 3)
+        self.assertEqual(_meses_de_la_frase("tres meses"), 3)
+        self.assertEqual(_meses_de_la_frase("Vigencia . contratación"), None)
+
+    def test_hacen_falta_dos_lecturas_que_coincidan(self):
+        from unittest import mock
+
+        from motor.parsers import documento_base
+
+        with mock.patch("motor.procesamiento.ocr_franja.textos_de_la_franja",
+                        return_value=["Vigencia Tres (3) meses contados"]):
+            self.assertEqual(documento_base._vigencia_a_fondo(mock.Mock()), (None, ""))
+        with mock.patch("motor.procesamiento.ocr_franja.textos_de_la_franja",
+                        return_value=["Vigencia Tres (3) meses contados", "Vigencia Tres meses contados",
+                                      "Vigencia Cuatro meses"]):
+            meses, dice = documento_base._vigencia_a_fondo(mock.Mock())
+        self.assertEqual(meses, 3)
+        self.assertIn("meses", dice)
+
+    def test_una_vigencia_imposible_no_se_acepta(self):
+        from unittest import mock
+
+        from motor.parsers import documento_base
+
+        with mock.patch("motor.procesamiento.ocr_franja.textos_de_la_franja",
+                        return_value=["Vigencia 99 meses", "Vigencia 99 meses"]):
+            self.assertEqual(documento_base._vigencia_a_fondo(mock.Mock()), (None, ""))
+
+
 class PorcentajeDeLaGarantiaEnElTextoTests(SimpleTestCase):
     """El numeral de la garantía dice el porcentaje en su propio texto casi
     siempre, aunque la tabla de características no se pueda leer."""

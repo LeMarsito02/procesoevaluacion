@@ -163,16 +163,25 @@ _MAX_PAGINAS_ENCABEZADO = 25
 
 
 def _es_escaneado(pdf: pdfplumber.PDF) -> bool:
-    """Si el cuerpo del documento es una imagen. Se mide con las primeras
-    páginas: si apenas traen texto y sí traen imágenes, está escaneado."""
-    paginas = pdf.pages[:_PAGINAS_DE_MUESTRA]
-    if not paginas:
+    """Si el cuerpo del documento es una imagen.
+
+    La muestra se toma a lo largo del documento, no del principio: hay pliegos
+    con el índice en texto y las sesenta páginas del cuerpo escaneadas, y mirando
+    solo las primeras se concluía que no hacía falta OCR.
+
+    Esto no decide si se hace OCR —eso es por página— sino si conviene acotar la
+    búsqueda y usar los recursos más lentos, que solo valen la pena cuando el
+    documento de verdad es un escaneo."""
+    total = len(pdf.pages)
+    if not total:
         return False
+    paso = max(1, total // _PAGINAS_DE_MUESTRA)
+    muestra = [pdf.pages[i] for i in range(0, total, paso)][:_PAGINAS_DE_MUESTRA]
     textos, con_imagen = [], 0
-    for page in paginas:
+    for page in muestra:
         textos.append(len((page.extract_text() or "").strip()))
         con_imagen += bool(page.images)
-    return sum(textos) / len(textos) < _TEXTO_MINIMO_POR_PAGINA and con_imagen >= len(paginas) / 2
+    return sum(textos) / len(textos) < _TEXTO_MINIMO_POR_PAGINA and con_imagen >= len(muestra) / 2
 
 
 def _texto(page, escaneado: bool) -> str:
@@ -614,6 +623,44 @@ def _porcentaje_en_letras(texto: str) -> float | None:
     return valor / 100 if valor else None
 
 
+_ETIQUETA_VIGENCIA_RE = re.compile(r"VIGENC")
+# "tres (3) meses", "tres meses": los meses dichos en letras, porque el escaneo
+# daña el número igual que en el porcentaje.
+_MESES_EN_LETRAS_RE = re.compile(
+    r"(" + "|".join(sorted(_EN_LETRAS, key=len, reverse=True)) + r")\b[^)]{0,16}?\)?\s*MES(?:ES)?",
+    re.IGNORECASE)
+
+
+def _meses_de_la_frase(texto: str) -> int | None:
+    """Los meses de una frase, en cifra o en letras."""
+    plano = re.sub(r"\s+", " ", _strip_accents(texto.upper()))
+    m = re.search(r"(\d{1,2})\s*MES(?:ES)?", plano)
+    if m is not None:
+        return int(m.group(1))
+    m = _MESES_EN_LETRAS_RE.search(plano)
+    return _EN_LETRAS.get(m.group(1).upper()) if m else None
+
+
+def _vigencia_a_fondo(page) -> tuple[int | None, str]:
+    """(meses de vigencia, la frase que lo dice) leyendo la fila de la vigencia
+    recortada de la página, para cuando el OCR de la página entera se comió esa
+    celda. Como en el porcentaje, hacen falta dos lecturas que coincidan."""
+    from motor.procesamiento.ocr_franja import textos_de_la_franja
+
+    cuenta: dict[int, int] = {}
+    dicen: dict[int, str] = {}
+    for lectura in textos_de_la_franja(page, _ETIQUETA_VIGENCIA_RE):
+        meses = _meses_de_la_frase(lectura)
+        if meses is None or not 1 <= meses <= 36:
+            continue
+        cuenta[meses] = cuenta.get(meses, 0) + 1
+        dicen.setdefault(meses, _norm(lectura[:160]))
+    if not cuenta:
+        return None, ""
+    mejor = max(cuenta, key=lambda v: cuenta[v])
+    return (mejor, dicen[mejor]) if cuenta[mejor] >= 2 else (None, "")
+
+
 def _porcentaje_a_fondo(page) -> tuple[float | None, str]:
     """(porcentaje, la frase que lo dice) leyendo la fila del valor asegurado
     recortada de la página.
@@ -745,6 +792,10 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
                     vigencia_meses, raw_vigencia = de_texto[0], de_texto[1]
                 if porcentaje is None and de_texto[2] is not None:
                     porcentaje, raw_valor = de_texto[2], de_texto[3]
+            if vigencia_meses is None and escaneado:
+                vigencia_meses, dice = _vigencia_a_fondo(p)
+                if vigencia_meses is not None:
+                    raw_vigencia = dice
             if porcentaje is None and escaneado:
                 # Último recurso: la celda del valor asegurado recortada de la
                 # página y leída sola, a varios tamaños. El OCR de la página
