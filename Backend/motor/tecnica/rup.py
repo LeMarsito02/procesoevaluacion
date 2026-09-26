@@ -50,7 +50,15 @@ _VALOR_RE = re.compile(
     r"\s*(?:\(SMMLV\)|(?:EN\s+)?SMMLV)\s*:\s*\$?\s*([\d.,]+)"
 )
 _PARTICIPACION_RE = re.compile(r"PORCENTAJE DE PARTICIPACION[^:]*:\s*([\d.,]+)\s*%?")
-_CODIGO_RE = re.compile(r"^\s*(\d{2})\s+(\d{2})\s+(\d{2})\s+(\d{2})\s*:|\|\s*(\d{2})\s*\|\s*(\d{2})\s*\|\s*(\d{2})\s*\|\s*(\d{2})\s*\|", re.M)
+# La tabla del clasificador va con un separador distinto en cada cámara:
+# "72 14 10 00 :", "| 72| 14| 10| 00|" y, en Barranquilla, "[ 80] 10] 16] 00]".
+# Sin los códigos, el contrato parece no estar clasificado con lo que pide el
+# pliego y no cuenta.
+_CODIGO_RE = re.compile(
+    r"^\s*(\d{2})\s+(\d{2})\s+(\d{2})\s+(\d{2})\s*:"
+    r"|[\|\[]\s*(\d{2})\s*[\|\]]\s*(\d{2})\s*[\|\]]\s*(\d{2})\s*[\|\]]\s*(\d{2})\s*[\|\]]",
+    re.M,
+)
 _TAMANO_RE = re.compile(
     r"TAMANO DE (?:LA )?EMPRESA\s*:\s*([A-Z ]+?)\s*$|CLASIFICACION POR TAMANO DE LA EMPRESA\s*\n(?:.*SE CLASIFICO COMO\s*:?\s*\n)?\s*([A-Z ]+?)\s*$",
     re.M,

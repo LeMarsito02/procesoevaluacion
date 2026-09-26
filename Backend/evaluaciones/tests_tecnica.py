@@ -107,6 +107,30 @@ class RupTests(SimpleTestCase):
         self.assertAlmostEqual(consorcio.valor_aportado, 1600.0)
         self.assertEqual(consorcio.clases, {"721411"})
 
+    def test_la_tabla_de_codigos_con_el_separador_de_cada_camara(self):
+        """Barranquilla escribe el clasificador con corchetes ("[ 80] 10] 16]
+        00]") y otras con barras. Sin los códigos, el contrato parecía no estar
+        clasificado con lo que pide el pliego y no contaba."""
+        molde = """CAMARA DE COMERCIO DE VILLA FICTICIA
+CERTIFICADO DE INSCRIPCION Y CLASIFICACION EN EL REGISTRO DE PROPONENTES
+NOMBRE:VIAS INVENTADAS S.A.S.
+NIT:900111222-3
+EXPERIENCIA
+NUMERO CONSECUTIVO DEL REPORTE DEL CONTRATO EJECUTADO: 9
+CONTRATO CELEBRADO POR: EL PROPONENTE
+NOMBRE DEL CONTRATISTA: VIAS INVENTADAS S.A.S.
+NOMBRE DEL CONTRATANTE: MUNICIPIO DE ALFA
+VALOR CONTRATADO EN SMMLV: 1.000,00
+CONTRATO EJECUTADO IDENTIFICADO CON EL CLASIFICADOR DE BIENES, OBRAS Y SERVICIOS EN EL TERCER NIVEL:
+{tabla}
+"""
+        for tabla in ("[SEGMENTO]FAMILIA]CLASE]PRODUCTO]DESCRIPCION ]\n[ 80] 10] 16] 00]GERENCIA DE PROYECTOS ]",
+                      "| 80| 10| 16| 00|",
+                      "80 10 16 00 :"):
+            with self.subTest(tabla=tabla[:24]):
+                rup = leer_rup(molde.format(tabla=tabla))
+                self.assertIn("801016", rup.experiencias["9"].clases)
+
     def test_el_valor_en_smmlv_en_las_redacciones_de_cada_camara(self):
         """Cali escribe "EXPRESADO SMMLV: $ 679,34" (sin el "EN" y con signo de
         pesos) y Barranquilla "EJECUTADO (SMMLV): 90,39". Sin leer el valor, el
