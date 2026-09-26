@@ -105,13 +105,22 @@ def _texto_celda(c) -> str:
 
 
 def _tablas(pdf) -> list[tuple[int, list[list[str]]]]:
+    """Las tablas de las páginas que hablan de experiencia, y también las de la
+    página siguiente: una tabla se parte entre páginas y sus filas quedan en una
+    página que ya no nombra el encabezado. En los pliegos de interventoría pasa
+    siempre —el encabezado «NO. DE LOTE | EXPERIENCIA GENERAL» cierra una página
+    y los lotes empiezan en la otra—, y sin esto la experiencia del pliego no se
+    leía y no había con qué comparar el objeto de los contratos."""
     tablas = []
+    anterior_tenia_marca = False
     for n, page in enumerate(pdf.pages, 1):
         texto = normalizar(page.extract_text() or "")
-        if not re.search(r"EXPERIENCIA GENERAL|VALOR MINIMO A CERTIFICAR|CLASIFICADOR DE BIENES", texto):
+        tiene_marca = bool(re.search(r"EXPERIENCIA GENERAL|VALOR MINIMO A CERTIFICAR|CLASIFICADOR DE BIENES", texto))
+        if not tiene_marca and not anterior_tenia_marca:
             continue
         for tabla in page.extract_tables():
             tablas.append((n, [[_texto_celda(c) for c in fila] for fila in tabla]))
+        anterior_tenia_marca = tiene_marca
         page.flush_cache()
     return tablas
 
@@ -143,9 +152,15 @@ def _experiencia_por_lote(tablas) -> dict[str, tuple[str, str]]:
     Experiencia Especifica" (3.5.2 A)."""
     por_lote: dict[str, tuple[str, str]] = {}
     sin_lote: tuple[str, str] | None = None
+    # La tabla se parte entre páginas más a menudo de lo que parece: en los
+    # pliegos de interventoría el encabezado ("NO. DE LOTE | EXPERIENCIA GENERAL
+    # | EXPERIENCIA ESPECIFICA") queda al final de una página y las filas de cada
+    # lote empiezan en la siguiente. Si la tabla del encabezado no trae filas, se
+    # siguen mirando las que vengan después.
+    buscando_filas = False
     for _, filas in tablas:
         encabezado = next((f for f in filas if any("EXPERIENCIA GENERAL" in normalizar(c) for c in f)), None)
-        if encabezado is None:
+        if encabezado is None and not buscando_filas:
             continue
         antes = len(por_lote)
         for fila in filas:
@@ -156,8 +171,14 @@ def _experiencia_por_lote(tablas) -> dict[str, tuple[str, str]]:
             if numero is None:
                 continue
             por_lote[str(int(numero.group(1)))] = (celdas[1], " ".join(celdas[2:]))
-        if len(por_lote) == antes and sin_lote is None:
-            sin_lote = _experiencia_en_filas(filas)
+        if len(por_lote) > antes:
+            buscando_filas = False
+        elif encabezado is not None:
+            # El encabezado estaba, pero sus filas no: vienen en la tabla
+            # siguiente (o en la página siguiente).
+            buscando_filas = True
+            if sin_lote is None:
+                sin_lote = _experiencia_en_filas(filas)
     if not por_lote and sin_lote:
         por_lote["1"] = sin_lote
     return por_lote
