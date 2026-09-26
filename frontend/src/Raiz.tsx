@@ -1,24 +1,36 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import Icono from './components/Icono'
 import Topbar from './components/Topbar'
 import { cerrarSesion, obtenerYo, salirDeEntidad, type Usuario } from './cuentas'
 import { ErrorApi, MENSAJE_SISTEMA } from './http'
-import PaginaConfiguracion from './paginas/PaginaConfiguracion'
 import PaginaCuenta from './paginas/PaginaCuenta'
-import PaginaEntidades from './paginas/PaginaEntidades'
 import PaginaEntrar from './paginas/PaginaEntrar'
-import PaginaEquipo from './paginas/PaginaEquipo'
 import PaginaEvaluacion from './paginas/PaginaEvaluacion'
-import PaginaFila from './paginas/PaginaFila'
-import PaginaMejoras from './paginas/PaginaMejoras'
-import PaginaRendimiento from './paginas/PaginaRendimiento'
 import PaginaInicio from './paginas/PaginaInicio'
 import PaginaNuevoProceso from './paginas/PaginaNuevoProceso'
 import PaginaProcesos from './paginas/PaginaProcesos'
-import PaginaSoporte from './paginas/PaginaSoporte'
-import PaginaRestablecer from './paginas/PaginaRestablecer'
+const PaginaConfiguracion = lazy(() => import('./paginas/PaginaConfiguracion'))
+const PaginaEntidades = lazy(() => import('./paginas/PaginaEntidades'))
+const PaginaEquipo = lazy(() => import('./paginas/PaginaEquipo'))
+const PaginaFila = lazy(() => import('./paginas/PaginaFila'))
+const PaginaMejoras = lazy(() => import('./paginas/PaginaMejoras'))
+const PaginaRendimiento = lazy(() => import('./paginas/PaginaRendimiento'))
+const PaginaSoporte = lazy(() => import('./paginas/PaginaSoporte'))
+const PaginaRestablecer = lazy(() => import('./paginas/PaginaRestablecer'))
+
 import { encajar, navegar, useRuta } from './rutas'
 import { ContextoSesion, puedeCrearProcesos, puedeGestionarEquipo } from './sesion'
+
+/** Mientras llega el trozo de una página que se carga aparte. Es el mismo
+ * indicador que usan las páginas al pedir sus datos, así que no se nota el
+ * cambio. */
+function Cargando() {
+  return (
+    <div className="cargando-pagina" role="status">
+      <span className="spinner oscuro" /> Cargando…
+    </div>
+  )
+}
 
 export default function Raiz() {
   const ruta = useRuta()
@@ -78,7 +90,12 @@ export default function Raiz() {
 
   // Rutas públicas (con o sin sesión).
   const restablecer = encajar('/restablecer/:uid/:token', ruta)
-  if (restablecer) return <PaginaRestablecer uid={restablecer.uid} token={restablecer.token} />
+  if (restablecer)
+    return (
+      <Suspense fallback={<Cargando />}>
+        <PaginaRestablecer uid={restablecer.uid} token={restablecer.token} />
+      </Suspense>
+    )
 
   if (cargando) {
     return (
@@ -107,12 +124,14 @@ export default function Raiz() {
     return (
       <ContextoSesion.Provider value={{ usuario, salir }}>
         <Topbar />
-        <PaginaSoporte
-          onEntrar={(u) => {
-            setUsuario(u)
-            navegar('/', true)
-          }}
-        />
+        <Suspense fallback={<Cargando />}>
+          <PaginaSoporte
+            onEntrar={(u) => {
+              setUsuario(u)
+              navegar('/', true)
+            }}
+          />
+        </Suspense>
       </ContextoSesion.Provider>
     )
   }
@@ -160,7 +179,7 @@ export default function Raiz() {
         </div>
       )}
       {conTopbar && <Topbar />}
-      {pagina}
+      <Suspense fallback={<Cargando />}>{pagina}</Suspense>
     </ContextoSesion.Provider>
   )
 }

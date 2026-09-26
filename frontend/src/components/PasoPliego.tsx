@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react'
 import type { AnalisisPliego, DecisionPliego, HallazgoPliego, LecturaIA, RequisitoDelPliego } from '../api'
+import { conGlosario } from '../glosario'
 import Icono from './Icono'
 
 interface Props {
@@ -171,7 +172,7 @@ export default function PasoPliego(p: Props) {
                 {aTener.map((h) => (
                   <div key={h.id} className="hallazgo">
                     <strong>{h.titulo}</strong>
-                    <p className="small">{h.detalle}</p>
+                    <p className="small">{conGlosario(h.detalle)}</p>
                     <Cita h={h} />
                   </div>
                 ))}
@@ -251,7 +252,7 @@ export default function PasoPliego(p: Props) {
                 <ul className="lista-simple small">
                   {fuera.map((h) => (
                     <li key={h.id}>
-                      <strong>{h.titulo}</strong> — {h.detalle} <span className="muted">(pág. {h.pagina})</span>
+                      <strong>{h.titulo}</strong> — {conGlosario(h.detalle)} <span className="muted">(pág. {h.pagina})</span>
                     </li>
                   ))}
                 </ul>
@@ -310,7 +311,7 @@ function HallazgoDecidible({
         <span className="tag">{ETIQUETA[h.tipo] ?? h.tipo}</span>
         <strong>{h.titulo}</strong>
       </div>
-      <p className="small">{h.detalle}</p>
+      <p className="small">{conGlosario(h.detalle)}</p>
       {h.tipo === 'ajuste_parametro' && (
         <p className="small">
           Su plantilla: <strong>{valor(h.valor_plantilla)}</strong> → según el pliego: <strong>{h.valor_pliego_texto ?? valor(h.valor_pliego)}</strong>

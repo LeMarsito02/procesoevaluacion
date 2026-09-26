@@ -375,9 +375,7 @@ export default function PasoEvaluacion(p: Props) {
                   <div className="req-h-label">{r.corto}</div>
                 </th>
               ))}
-              <th className="col-estado" style={{ verticalAlign: 'bottom', paddingBottom: 10 }}>
-                Estado
-              </th>
+
             </tr>
           </thead>
           <tbody>
@@ -398,7 +396,22 @@ export default function PasoEvaluacion(p: Props) {
                         <div className="prop-name" title={pr.nombre_proponente}>
                           {pr.nombre_proponente}
                         </div>
-                        <div className="prop-meta">{lista ? (tipo ? TIPO[tipo] ?? '' : '') : 'En espera…'}</div>
+                        <div className="prop-meta">
+                          {/* El estado va aquí, en la columna que queda fija al
+                              desplazarse: con ocho grupos de requisitos, verlo
+                              al final de la fila obligaba a ir hasta la
+                              derecha y volver. */}
+                          {!lista ? (
+                            <span className="pill pill-xs" data-estado="no_aplica">En espera</span>
+                          ) : res.pendientes > 0 ? (
+                            <span className="pill pill-xs" data-estado="revisar">{res.pendientes} por revisar</span>
+                          ) : res.noCumple > 0 ? (
+                            <span className="pill pill-xs" data-estado="revisado_no_cumple">No cumple</span>
+                          ) : (
+                            <span className="pill pill-xs" data-estado="cumple">Listo</span>
+                          )}
+                          {lista && tipo ? <span className="muted"> · {TIPO[tipo] ?? ''}</span> : null}
+                        </div>
                       </span>
                     </button>
                   </td>
@@ -415,25 +428,7 @@ export default function PasoEvaluacion(p: Props) {
                       />
                     </td>
                   ))}
-                  <td className="col-estado">
-                    {!lista ? (
-                      <span className="pill" data-estado="no_aplica">
-                        En espera
-                      </span>
-                    ) : res.pendientes > 0 ? (
-                      <span className="pill" data-estado="revisar">
-                        <span className="dot" /> {res.pendientes} por revisar
-                      </span>
-                    ) : res.noCumple > 0 ? (
-                      <span className="pill" data-estado="revisado_no_cumple">
-                        <span className="dot" /> No cumple
-                      </span>
-                    ) : (
-                      <span className="pill" data-estado="cumple">
-                        <span className="dot" /> Listo
-                      </span>
-                    )}
-                  </td>
+
                 </tr>
                 {abierta &&
                   personas.map((per) => (

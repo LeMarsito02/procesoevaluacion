@@ -743,3 +743,7 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
 .atajos { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 18px 0 4px; }
 .atajos kbd { font: inherit; font-size: 11px; padding: 1px 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface-2); color: var(--ink-2); }
 @media (hover: none) { .atajos { display: none; } }
+
+/* El estado del proponente, dentro de la columna que queda fija: cabe en la
+   línea de debajo del nombre sin robarle sitio a la matriz. */
+.pill-xs { padding: 1px 7px; font-size: 11px; }
