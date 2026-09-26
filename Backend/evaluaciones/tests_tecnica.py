@@ -745,6 +745,20 @@ class SoportesPorContenidoTests(SimpleTestCase):
         # Ninguno se descarta: el nombre solo ordena la búsqueda.
         self.assertEqual(len(soportes_candidatos(pdfs)), 3)
 
+    def test_los_metadatos_de_los_zip_de_mac_no_son_documentos(self):
+        """Un zip hecho en Mac trae, al lado de cada archivo, una copia de sus
+        metadatos ("._RUP.pdf"). No es un PDF legible: se colaba como un RUP o
+        un Formato 3 escaneado y ensuciaba los mensajes."""
+        import io, zipfile
+        from motor.procesamiento.zip_utils import extraer_pdfs
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as zf:
+            zf.writestr("oferta/Formato 3- Experiencia.pdf", b"%PDF-1.4 contenido")
+            zf.writestr("oferta/._Formato 3- Experiencia.pdf", b"\x00\x05\x16\x07basura")
+            zf.writestr("__MACOSX/oferta/._RUP.pdf", b"\x00\x05\x16\x07basura")
+        self.assertEqual(list(extraer_pdfs(buffer.getvalue())), ["oferta/Formato 3- Experiencia.pdf"])
+
     def test_el_certificado_del_rup_se_reconoce_por_su_texto(self):
         from motor.tecnica.longitud import es_el_rup
 

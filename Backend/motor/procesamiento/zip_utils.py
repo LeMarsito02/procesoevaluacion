@@ -45,6 +45,8 @@ def _extraer_rar(contenido: bytes, _profundidad: int, _ruta: str, extensiones: t
             if not archivo.is_file():
                 continue
             relativo = archivo.relative_to(destino).as_posix()
+            if _es_basura_de_macos(relativo):
+                continue
             ruta_completa = f"{_ruta}/{relativo}" if _ruta else relativo
             lower = archivo.name.lower()
             try:
@@ -91,6 +93,15 @@ def _deduplicar_por_contenido(pdfs: dict[str, bytes]) -> dict[str, bytes]:
 _ULTIMO_ZIP: tuple[bytes, str, PdfsProponente] | None = None
 
 
+def _es_basura_de_macos(nombre: str) -> bool:
+    """Los zip hechos en Mac traen, al lado de cada archivo, una copia de sus
+    metadatos ("__MACOSX/._Formato 3.pdf") que no es un PDF legible. Leerlas
+    solo gasta tiempo y confunde los mensajes: un "._RUP.pdf" sin texto parecía
+    un RUP escaneado."""
+    base = nombre.rsplit("/", 1)[-1]
+    return base.startswith("._") or nombre.startswith("__MACOSX/") or "/__MACOSX/" in nombre
+
+
 def extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> dict[str, bytes]:
     if _profundidad > 0 or _ruta:
         return _extraer_pdfs(zip_bytes, _profundidad, _ruta)
@@ -124,6 +135,8 @@ def _extraer_pdfs(
                 if info.is_dir():
                     continue
                 nombre = info.filename
+                if _es_basura_de_macos(nombre):
+                    continue
                 ruta_completa = f"{_ruta}/{nombre}" if _ruta else nombre
                 try:
                     contenido = zf.read(info)
