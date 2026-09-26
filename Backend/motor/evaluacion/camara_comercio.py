@@ -90,8 +90,13 @@ MESES = {
 _PREFIJO_FECHA = r"(?:LUGAR Y\s+)?FECHA(?:\s+DE)?\s+EXPEDICION\s*:?\s*(?:[A-ZÑ][A-ZÑ .]*,\s*)?"
 _FECHA_NUMERICA_RE = re.compile(_PREFIJO_FECHA + r"(\d{2,4})/(\d{2})/(\d{2,4})")
 _FECHA_MES_TEXTO_RE = re.compile(_PREFIJO_FECHA + r"(\d{1,2})\s+DE\s+([A-Z]+)\s+DE\s+(\d{4})")
+# La Cámara de Bogotá pone la fecha en la misma línea del código, y no siempre
+# igual: "CODIGO VERIFICACION: X 14 DE JULIO DE 2026" en la sede virtual y
+# "CODIGO DE VERIFICACION: X 17 DE JULIO DE 2026 HORA 10:48" en la mesa de
+# operaciones. Exigir el "HORA" y el código sin el "DE" dejaba fuera RUP que sí
+# traían su fecha, y el integrante se quedaba sin RUP que verificar.
 _FECHA_TRAS_CODIGO_VERIFICACION_RE = re.compile(
-    r"CODIGO VERIFICACION:?\s*\S+\s+(\d{1,2})\s+DE\s+([A-Z]+)\s+DE\s+(\d{4})\s+HORA"
+    r"CODIGO\s+(?:DE\s+)?VERIFICACION:?\s*\S+\s+(\d{1,2})\s+DE\s+([A-Z]+)\s+DE\s+(\d{4})"
 )
 
 

@@ -187,6 +187,40 @@ def _sigla_en(nombre: str, rup: Rup) -> bool:
     return bool(palabras) and all(re.search(rf"\b{re.escape(p)}\b", rup.encabezado) for p in palabras)
 
 
+def rups_escaneados(pdfs: dict[str, bytes]) -> list[str]:
+    """Los archivos que son el RUP pero llegan escaneados: se reconoce el título
+    y no traen una sola letra de texto.
+
+    Importa decirlo y no acusar al proponente de no haberlo aportado. Y no basta
+    con leerlos por OCR para acreditar la experiencia: la suma sale de los
+    valores en SMMLV de cada contrato, y un dígito mal leído la cambiaría. Eso
+    lo revisa una persona."""
+    from motor.procesamiento.pdf_utils import abrir_pdf
+
+    escaneados = []
+    for archivo in encontrar_documentos(pdfs, TITULO_RUP_RE, PISTAS_RUP):
+        letras = 0
+        try:
+            with abrir_pdf(pdfs[archivo]) as pdf:
+                for page in pdf.pages[:4]:
+                    letras += len(page.chars)
+                    page.flush_cache()
+        except Exception:  # noqa: BLE001
+            continue
+        if letras < 40:
+            escaneados.append(archivo)
+    return escaneados
+
+
+def _porque_falta_el_rup(pdfs: dict[str, bytes]) -> str:
+    escaneados = rups_escaneados(pdfs)
+    if not escaneados:
+        return ""
+    nombres = ", ".join(a.rsplit("/", 1)[-1] for a in escaneados)
+    return (f": la oferta trae un RUP escaneado ({nombres}) del que no se puede leer el texto. Revísalo a mano, no lo "
+            "pidas como subsanación")
+
+
 def integrantes_del_proponente(
     pdfs: dict[str, bytes], rups: list[tuple[str, Rup]], plural: bool, codigo_proceso: str | None,
 ) -> tuple[list[IntegranteTecnico], list[str]]:
@@ -196,7 +230,7 @@ def integrantes_del_proponente(
             rup = rups[0][1]
             return [IntegranteTecnico(nombre=rup.nombre, nit=rup.nit, participacion=1.0, rup=rup)], avisos
         if not rups:
-            avisos.append("no se encontró el RUP del proponente")
+            avisos.append("no se encontró el RUP del proponente" + _porque_falta_el_rup(pdfs))
             return [], avisos
         avisos.append(f"se encontraron {len(rups)} RUP de un proponente individual; se usan todos")
         return [IntegranteTecnico(nombre=r.nombre, nit=r.nit, participacion=None, rup=r) for _, r in rups], avisos
@@ -238,8 +272,9 @@ def integrantes_del_proponente(
         sin_rup[0].rup = sin_usar[0][1]
         avisos.append(f"el RUP de {sin_rup[0].nombre} está a nombre de {sin_usar[0][1].nombre}; verifica que sea el mismo")
     else:
+        detalle = _porque_falta_el_rup(pdfs)
         for integrante in sin_rup:
-            avisos.append(f"no se encontró el RUP de {integrante.nombre}")
+            avisos.append(f"no se encontró el RUP de {integrante.nombre}{detalle}")
     if not del_formato2:
         avisos.append("no se leyeron los integrantes del Formato 2; se toman los RUP aportados")
         integrantes = [IntegranteTecnico(nombre=r.nombre, nit=r.nit, participacion=None, rup=r) for _, r in rups]
