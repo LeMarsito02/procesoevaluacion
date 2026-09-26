@@ -245,6 +245,43 @@ def _texto_pagina_sin_memoria(page) -> str:
         return texto
 
 
+def enderezar_pdf(contenido: bytes) -> bytes | None:
+    """El PDF con las páginas giradas para que su texto quede derecho.
+
+    Unos pocos proponentes exportan el formato con la página girada. pdfplumber
+    entrega los caracteres tal como están escritos, así que el texto sale al
+    revés ("otamroF 3 - aicneirepxE") y no se reconoce ni el título ni la tabla:
+    el documento parecería no haberse aportado. Devuelve None si el texto ya
+    está derecho o si no se puede girar."""
+    try:
+        with abrir_pdf(contenido) as pdf:
+            letras = [c for page in pdf.pages[:2] for c in page.chars[:400]]
+            if not letras or sum(1 for c in letras if c.get("upright")) * 2 >= len(letras):
+                return None
+            a, b, c, d = letras[0].get("matrix", (1, 0, 0, 1))[:4]
+    except Exception:  # noqa: BLE001
+        return None
+    if b > 0 and c < 0:
+        giro = 90
+    elif b < 0 and c > 0:
+        giro = 270
+    elif a < 0 and d < 0:
+        giro = 180
+    else:
+        return None
+    try:
+        import pikepdf
+
+        with pikepdf.open(io.BytesIO(contenido)) as doc:
+            for pagina in doc.pages:
+                pagina.Rotate = (int(pagina.get("/Rotate", 0)) + giro) % 360
+            salida = io.BytesIO()
+            doc.save(salida)
+        return salida.getvalue()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @contextmanager
 def abrir_pdf(contenido: bytes) -> Iterator[pdfplumber.PDF]:
     """Igual que `pdfplumber.open`, pero si pdfminer no puede abrir el

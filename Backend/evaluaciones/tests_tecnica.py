@@ -153,6 +153,55 @@ class Formato3Tests(SimpleTestCase):
         self.assertEqual(c.terminacion, date(2021, 3, 10))
         self.assertEqual(c.valor_rup, 2500.5)
 
+    def test_encabezado_partido_con_el_titulo_arriba(self):
+        """Hay formatos que parten el título de la columna en dos renglones
+        ("EXPERIENCIA" arriba y "REQUERIDA PARA LA ACTIVIDAD" en la fila del
+        consecutivo) y ponen "No." y "Objeto" en esa misma fila. Sin juntar los
+        dos renglones no se ubicaba el objeto y los contratos salían vacíos."""
+        filas = [
+            ["No. de", "Número", "EXPERIENCIA", "", "Contrato o Resolución", "", "CONTRATO", "FORMAS DE EJECUCION", ""],
+            ["Orden", "Consecutivo del reporte del contrato en el RUP", "REQUERIDA PARA LA ACTIVIDAD",
+             "Entidad Contratante", "No.", "Objeto", "EJECUTADO IDENTIFICADO", "I,C,UT, OTRA", "%"],
+            ["1", "005", "GENERAL", "MUNICIPIO DE PUEBLO NUEVO", "039-06", "MEJORAMIENTO DE VIAS URBANAS", "811015", "C", "40%"],
+        ]
+        formato = leer_filas(filas, "f3.pdf")
+        self.assertEqual(len(formato.contratos), 1)
+        c = formato.contratos[0]
+        self.assertEqual((c.consecutivos, c.contratante, c.numero_contrato), (["5"], "MUNICIPIO DE PUEBLO NUEVO", "039-06"))
+        self.assertEqual((c.objeto, c.porcentaje, c.forma), ("MEJORAMIENTO DE VIAS URBANAS", "40%", "C"))
+
+    def test_segundo_consecutivo_del_mismo_contrato_no_es_otro_contrato(self):
+        """Un contrato que los dos integrantes reportaron en su RUP lleva los
+        dos consecutivos, en dos renglones: el segundo solo trae el número. Es
+        el mismo contrato, y contarlo como uno aparte dejaba un contrato sin
+        contratante ni objeto que mandaba el lote a revisión."""
+        filas = [
+            ["No. de Orden", "Número consecutivo del reporte del contrato en el RUP", "EXPERIENCIA REQUERIDA",
+             "Entidad Contratante", "Contrato o Resolución", None],
+            [None, None, None, None, "No.", "Objeto"],
+            ["1", "40", "GENERAL", "MUNICIPIO DE ALFA", "2216-2019", "MEJORAMIENTO DE LA VIA A BETA"],
+            [None, "31", None, None, None, None],
+            ["2", "9", "GENERAL", "MUNICIPIO DE BETA", "1641-2007", "MANTENIMIENTO DE LA VIA A GAMMA"],
+        ]
+        formato = leer_filas(filas, "f3.xlsx")
+        self.assertEqual([c.consecutivos for c in formato.contratos], [["40", "31"], ["9"]])
+
+    def test_las_firmas_del_final_no_son_un_contrato(self):
+        """Debajo de la tabla van las firmas, y un número suelto de esa zona
+        (una cédula, un teléfono) parecía el consecutivo de otro contrato."""
+        filas = [
+            ["No. de Orden", "Número consecutivo del reporte del contrato en el RUP", "EXPERIENCIA REQUERIDA",
+             "Entidad Contratante", "Contrato o Resolución", None],
+            [None, None, None, None, "No.", "Objeto"],
+            ["1", "20", "GENERAL", "MUNICIPIO DE ALFA", "1122-11", "MEJORAMIENTO DE LA VIA A BETA"],
+            [None, None, None, None, None, None],
+            ["FIRMAS:", None, None, None, None, None],
+            [None, "ANA PEREZ C.C. 31", None, None, None, None],
+        ]
+        formato = leer_filas(filas, "f3.xlsx")
+        self.assertEqual(len(formato.contratos), 1)
+        self.assertEqual(formato.contratos[0].consecutivos, ["20"])
+
 
 def _parametros(longitud: float | None = None) -> ParametrosTecnicos:
     return ParametrosTecnicos(

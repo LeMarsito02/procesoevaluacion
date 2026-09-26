@@ -9,7 +9,7 @@ from datetime import date
 from motor.evaluacion.camara_comercio import PISTAS_RUP, TITULO_RUP_RE, encontrar_documentos
 from motor.evaluacion.personalizado import esta_firmado
 from motor.evaluacion.proponente_plural import datos_formato2, integrantes_formato2
-from motor.procesamiento.pdf_utils import buscar_pagina
+from motor.procesamiento.pdf_utils import buscar_pagina, enderezar_pdf
 from motor.tecnica.experiencia import IntegranteTecnico, ResultadoLote, evaluar_experiencia
 from motor.tecnica.formato3 import Formato3, leer_excel, leer_pdf
 from motor.tecnica.longitud import area_del_contrato, longitud_del_contrato, soporte_del_contrato
@@ -94,6 +94,25 @@ def _buscar_formato3(pdfs: dict[str, bytes], excels: dict[str, bytes]) -> tuple[
         if (formato := leer_pdf(pdfs[archivo], archivo)) is not None:
             return formato, None
         ilegible = ilegible or archivo
+    if ilegible is None:
+        # Ningún archivo trae el título: puede venir en una página girada, que
+        # se lee al revés. Se enderezan solo los que por el nombre podrían ser
+        # el formato, y solo en este caso, para no encarecer la lectura normal.
+        for archivo in candidatos:
+            if not _PISTA_FORMATO3_RE.search(normalizar(archivo)):
+                continue
+            derecho = enderezar_pdf(pdfs[archivo])
+            if derecho is None:
+                continue
+            try:
+                texto = buscar_pagina(derecho, lambda t: bool(_TITULO_FORMATO3_RE.search(normalizar(t))), max_paginas=2)
+            except Exception:  # noqa: BLE001
+                continue
+            if texto is None:
+                continue
+            if (formato := leer_pdf(derecho, archivo)) is not None:
+                return formato, None
+            ilegible = ilegible or archivo
     return None, ilegible
 
 
