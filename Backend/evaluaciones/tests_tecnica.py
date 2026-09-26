@@ -107,6 +107,32 @@ class RupTests(SimpleTestCase):
         self.assertAlmostEqual(consorcio.valor_aportado, 1600.0)
         self.assertEqual(consorcio.clases, {"721411"})
 
+    def test_el_valor_en_smmlv_en_las_redacciones_de_cada_camara(self):
+        """Cali escribe "EXPRESADO SMMLV: $ 679,34" (sin el "EN" y con signo de
+        pesos) y Barranquilla "EJECUTADO (SMMLV): 90,39". Sin leer el valor, el
+        contrato se descartaba con "el RUP no trae el valor del contrato en
+        SMMLV" y el proponente se quedaba sin experiencia."""
+        molde = """CAMARA DE COMERCIO DE VILLA FICTICIA
+CERTIFICADO DE INSCRIPCION Y CLASIFICACION EN EL REGISTRO DE PROPONENTES
+NOMBRE:VIAS INVENTADAS S.A.S.
+NIT:900111222-3
+EXPERIENCIA
+NUMERO CONSECUTIVO DEL REPORTE DEL CONTRATO EJECUTADO: 7
+CONTRATO CELEBRADO POR: EL PROPONENTE
+NOMBRE DEL CONTRATISTA: VIAS INVENTADAS S.A.S.
+NOMBRE DEL CONTRATANTE: MUNICIPIO DE ALFA
+{valor}
+"""
+        for linea, esperado in (
+            ("VALOR CONTRATADO EN SMMLV: 1.234,50", 1234.50),
+            ("VALOR DEL CONTRATO EJECUTADO EXPRESADO EN SMMLV: 679,34", 679.34),
+            ("VALOR DEL CONTRATO EJECUTADO EXPRESADO SMMLV: $ 679,34", 679.34),
+            ("VALOR DEL CONTRATO EJECUTADO (SMMLV): 90,39", 90.39),
+        ):
+            with self.subTest(linea=linea):
+                rup = leer_rup(molde.format(valor=linea))
+                self.assertEqual(rup.experiencias["7"].valor_smmlv, esperado)
+
     def test_formato_bogota_campos_partidos_y_tabla_de_codigos(self):
         rup = leer_rup(RUP_BOGOTA)
         self.assertEqual(rup.nombre, "PAVIMENTOS DE MENTIRA S.A.S")
@@ -724,6 +750,36 @@ class SoportesPorContenidoTests(SimpleTestCase):
 
         self.assertTrue(es_el_rup("CAMARA DE COMERCIO CERTIFICADO DE INSCRIPCION Y CLASIFICACION REGISTRO UNICO DE PROPONENTES"))
         self.assertFalse(es_el_rup("CERTIFICACION DE OBRA CONTRATO DE OBRA N 001 DE 2013 OBJETO DEL CONTRATO REMODELACION"))
+
+    def test_el_acta_anexa_detras_del_formato_3(self):
+        """Hay proponentes que entregan en un mismo PDF el Formato 3 y, detrás,
+        las actas de sus contratos. Las páginas de atrás sirven de soporte; las
+        del propio formato no, porque citan los números de todos los contratos
+        y darían por soportado cualquiera."""
+        from motor.tecnica.longitud import es_un_anexo, _puede_ser_acta
+
+        formato = ("FORMATO 3 - EXPERIENCIA - DOCUMENTO TIPO DE INTERVENTORIA DE OBRA PUBLICA "
+                   "NUMERO CONSECUTIVO DEL REPORTE 1832 980 083")
+        acta = "INSTITUTO NACIONAL DE VIAS CERTIFICA QUE EL CONTRATO 1832 DE 2013 FUE EJECUTADO"
+        rup = "CAMARA DE COMERCIO CERTIFICADO DE INSCRIPCION Y CLASIFICACION EN EL REGISTRO UNICO DE PROPONENTES"
+        self.assertFalse(es_un_anexo(formato))
+        self.assertFalse(es_un_anexo(rup))
+        self.assertFalse(es_un_anexo("   "))
+        self.assertTrue(es_un_anexo(acta))
+        self.assertTrue(_puede_ser_acta("Formato 3 con soporte.pdf", acta))
+
+    def test_la_certificacion_del_contador_no_es_el_acta_del_contrato(self):
+        """El pliego (3.5.6) pide el acta de recibo o de liquidación, o la
+        certificación del contratante. La certificación del contador sobre los
+        libros del propio proponente empieza por "CERTIFICA QUE" y cita el
+        número del contrato, pero no es ninguno de los dos."""
+        from motor.tecnica.longitud import _puede_ser_acta
+
+        contable = ("CERTIFICA QUE UNA VEZ REVISADOS LOS ASIENTOS DE LOS LIBROS CONTABLES QUE REPOSAN EN LA "
+                    "EMPRESA, EL CONTRATO SPE-INT-518-02 FUE FACTURADO POR VALOR DE")
+        self.assertFalse(_puede_ser_acta("certificacion.pdf", contable))
+        acta = "ACTA DE LIQUIDACION DEL CONTRATO 518 DE 2002 SUSCRITA ENTRE LAS PARTES"
+        self.assertTrue(_puede_ser_acta("acta.pdf", acta))
 
     def test_el_numero_del_contrato_no_es_el_ano(self):
         """"001 DE 2013" identifica el contrato 1: descartarlo por corto

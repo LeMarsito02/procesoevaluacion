@@ -40,7 +40,15 @@ _CONSECUTIVO_RE = re.compile(r"NUMERO CONSECUTIVO DEL (?:REPORTE DEL )?CONTRATO(
 _CELEBRADO_RE = re.compile(r"CONTRATO CELEBRADO POR\s*:\s*(?:\d+\s*-\s*)?(.+?)(?=\n\s*NOMBRE DEL CONTRATISTA)", re.S)
 _CONTRATISTA_RE = re.compile(r"NOMBRE DEL CONTRATISTA\s*:\s*(.+?)(?=\n\s*NOMBRE DEL CONTRATANTE)", re.S)
 _CONTRATANTE_RE = re.compile(r"NOMBRE DEL CONTRATANTE\s*:\s*(.+?)(?=\n\s*VALOR)", re.S)
-_VALOR_RE = re.compile(r"VALOR (?:CONTRATADO|DEL CONTRATO EJECUTADO EXPRESADO) EN SMMLV\s*:\s*([\d.,]+)")
+# Cada cámara escribe el valor a su manera: "VALOR CONTRATADO EN SMMLV: 1.234",
+# Cali "VALOR DEL CONTRATO EJECUTADO EXPRESADO SMMLV: $ 679,34" (sin el "EN" y
+# con signo de pesos) y Barranquilla "VALOR DEL CONTRATO EJECUTADO (SMMLV):
+# 90,39" (entre paréntesis). Sin el valor no se puede sumar la experiencia y el
+# contrato se descarta, así que valen las tres.
+_VALOR_RE = re.compile(
+    r"VALOR (?:TOTAL )?(?:CONTRATADO|DEL CONTRATO(?: EJECUTADO)?(?: EXPRESADO)?)"
+    r"\s*(?:\(SMMLV\)|(?:EN\s+)?SMMLV)\s*:\s*\$?\s*([\d.,]+)"
+)
 _PARTICIPACION_RE = re.compile(r"PORCENTAJE DE PARTICIPACION[^:]*:\s*([\d.,]+)\s*%?")
 _CODIGO_RE = re.compile(r"^\s*(\d{2})\s+(\d{2})\s+(\d{2})\s+(\d{2})\s*:|\|\s*(\d{2})\s*\|\s*(\d{2})\s*\|\s*(\d{2})\s*\|\s*(\d{2})\s*\|", re.M)
 _TAMANO_RE = re.compile(

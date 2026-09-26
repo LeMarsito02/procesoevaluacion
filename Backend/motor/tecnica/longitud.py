@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 from motor.llm.cliente import cita_literal, consultar_json
-from motor.procesamiento.pdf_utils import extraer_texto, texto_completo
+from motor.procesamiento.pdf_utils import extraer_texto, paginas_de_texto, texto_completo
 from motor.tecnica.rup import normalizar, numero
 
 PAGINAS_POR_SOPORTE = 15
@@ -307,11 +307,61 @@ _ES_ACTA_ADENTRO_RE = re.compile(
 )
 
 
+# La certificación del contador sobre los libros del propio proponente no es
+# ninguno de los documentos que pide el pliego (3.5.6: acta de recibo o de
+# liquidación, o certificación del contratante), aunque empiece por "CERTIFICA
+# QUE" y cite el número del contrato.
+_CERTIFICACION_CONTABLE_RE = re.compile(
+    r"ASIENTOS\s+(?:DE\s+LOS\s+)?LIBROS|LIBROS\s+(?:OFICIALES\s+)?(?:DE\s+)?CONTABL|"
+    r"LIBROS\s+DE\s+CONTABILIDAD|ESTADOS\s+FINANCIEROS\s+CERTIFICADOS"
+)
+
+
 def _puede_ser_acta(archivo: str, texto: str) -> bool:
     inicio = texto[:1500]
-    if _ES_FORMATO3_RE.search(inicio) or es_el_rup(texto):
+    if _ES_FORMATO3_RE.search(inicio) or es_el_rup(texto) or _CERTIFICACION_CONTABLE_RE.search(inicio):
         return False
     return bool(_ES_ACTA_RE.search(inicio) or _ES_ACTA_RE.search(normalizar(archivo)) or _ES_ACTA_ADENTRO_RE.search(texto))
+
+
+def es_un_anexo(texto: str) -> bool:
+    """La página trae algo distinto del Formato 3 y del RUP, así que puede ser
+    uno de los documentos que el proponente anexó detrás."""
+    return bool(texto.strip()) and not _ES_FORMATO3_RE.search(texto[:800]) and not es_el_rup(texto)
+
+
+def _paginas_de_los_anexos(pdfs: dict[str, bytes], textos: dict[str, str], archivo: str, paginas: int) -> list[str]:
+    """Las páginas del archivo que no son el Formato 3 ni el RUP.
+
+    Hay proponentes que entregan en un solo PDF el Formato 3 y, detrás, las
+    actas y certificaciones de sus contratos ("Formato 3 Experiencia Con
+    Soporte.pdf", "...-Anexos.pdf"). Mirando solo el principio, el archivo
+    entero se descartaba y todos sus contratos quedaban sin soporte."""
+    clave = f"{archivo}#anexos{paginas}"
+    if clave not in textos:
+        try:
+            leidas = [normalizar(x) for x in paginas_de_texto(pdfs[archivo], max_paginas=paginas)]
+        except Exception:  # noqa: BLE001
+            leidas = []
+        utiles = [x for x in leidas if es_un_anexo(x)]
+        textos[clave] = "\f".join(utiles)
+    return [x for x in textos[clave].split("\f") if x]
+
+
+def _textos_para_juzgarlo(pdfs: dict[str, bytes], textos: dict[str, str], archivo: str, tablas: bool,
+                          paginas_anexos: int) -> list[str]:
+    """Con qué textos hay que juzgar si el archivo es el soporte de un
+    contrato: el del archivo completo, o el de cada anexo por separado cuando
+    empieza con el Formato 3 o con el RUP.
+
+    Cada anexo se juzga solo, y a propósito: el Formato 3 lista los números de
+    todos los contratos, y si se juzgara el archivo entero de una vez bastaría
+    que una página dijera "acta" y otra citara el contrato para dar por
+    soportado un contrato que no lo está."""
+    texto = _texto_soporte(pdfs, textos, archivo, tablas=tablas)
+    if not (_ES_FORMATO3_RE.search(texto[:1500]) or es_el_rup(texto)):
+        return [texto]
+    return _paginas_de_los_anexos(pdfs, textos, archivo, paginas_anexos) or [texto]
 
 
 def _es_del_contrato(archivo: str, texto: str, numeros: list[str], palabras: set[str], objeto: str) -> bool:
@@ -336,9 +386,9 @@ def soporte_del_contrato(pdfs: dict[str, bytes], textos: dict[str, str], numero_
     candidatos = soportes_candidatos(pdfs)
     for tablas in (False, True):  # la lectura cara solo si con la normal no aparece
         for archivo in candidatos:
-            texto = _texto_soporte(pdfs, textos, archivo, tablas=tablas)
-            if _puede_ser_acta(archivo, texto) and _es_del_contrato(archivo, texto, numeros, palabras, objeto):
-                return archivo
+            for texto in _textos_para_juzgarlo(pdfs, textos, archivo, tablas, PAGINAS_SOPORTE_DEL_CONTRATO):
+                if _puede_ser_acta(archivo, texto) and _es_del_contrato(archivo, texto, numeros, palabras, objeto):
+                    return archivo
     return None
 
 

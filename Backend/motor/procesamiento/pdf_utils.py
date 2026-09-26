@@ -322,6 +322,22 @@ def extraer_texto(contenido: bytes, max_paginas: int | None = None) -> str:
         return "\n".join(partes)
 
 
+def paginas_de_texto(contenido: bytes, max_paginas: int | None = None) -> list[str]:
+    """El texto de cada página por separado, con la misma economía de memoria
+    que `extraer_texto`.
+
+    Sirve para los PDF que juntan varios documentos: un mismo archivo puede
+    traer el Formato 3 en la primera página y las actas de los contratos en
+    las siguientes, y hay que poder mirar cada parte por separado."""
+    with abrir_pdf(contenido) as pdf:
+        paginas = pdf.pages[:max_paginas] if max_paginas is not None else pdf.pages
+        textos = []
+        for page in paginas:
+            textos.append(texto_pagina(page))
+            page.flush_cache()
+        return textos
+
+
 def buscar_pagina(contenido: bytes, coincide, max_paginas: int = 6) -> str | None:
     """Recorre las primeras páginas del PDF y devuelve el texto leído hasta
     la primera página en la que se cumple `coincide(texto)`, o None.
