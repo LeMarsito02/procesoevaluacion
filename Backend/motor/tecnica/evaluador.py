@@ -117,6 +117,7 @@ def _detalle_lote(lote: ResultadoLote, resultado: ResultadoTecnico) -> dict:
         # pliego y se resuelve una vez para todos los proponentes; lo de la
         # oferta hay que mirarlo aquí.
         "experiencia_acreditada": lote.experiencia_acreditada,
+        "presentado": lote.presentado,
         "revisiones": [
             {"clave": r.clave, "ambito": r.ambito, "que": r.que, "donde": r.donde}
             for r in lote.revisiones
@@ -159,6 +160,17 @@ def evaluar_experiencia_lote(proponente: Proponente, proceso: ProcesoDocumentoBa
     if indice >= len(resultado.lotes):
         return ResultadoRequisito(**_base(proponente, numero), error="El pliego no tiene ese lote.")
     lote = resultado.lotes[indice]
+    if not lote.presentado:
+        # Igual que en financiera: un lote al que no se presenta se da por
+        # cumplido sin mirar nada, así que el motivo dice de dónde salió esa
+        # lectura y a qué lotes sí se presenta.
+        return ResultadoRequisito(
+            **_base(proponente, numero),
+            cumple=True,
+            motivo="; ".join(dict.fromkeys(lote.motivos)) or None,
+            archivo_evaluado=resultado.formato3,
+            detalle={**_detalle_lote(lote, resultado), "no_aplica": True},
+        )
     motivo = "; ".join(dict.fromkeys(lote.motivos)) or None
     if lote.valor_a_certificar is not None and (lote.cumple or lote.experiencia_acreditada):
         certifica = (

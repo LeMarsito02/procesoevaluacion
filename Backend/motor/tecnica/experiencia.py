@@ -119,6 +119,9 @@ class ResultadoLote:
     # esto es True y el lote no cumple, lo que falta es del proceso: quien
     # revisa no tiene que volver a mirar los contratos.
     experiencia_acreditada: bool = False
+    # El proponente se presentó a este lote. Si no, no se evalúa: el informe no
+    # puede decir que cumple (ni que le falta) un lote que no pidió.
+    presentado: bool = True
 
     @property
     def revisiones_del_proceso(self) -> list[PuntoDeRevision]:
@@ -144,7 +147,11 @@ _FAMILIAS: dict[str, tuple[str, str]] = {
     "vías": (
         r"VIA|VIAL|CARRETERA|PAVIMENT|CALZADA|CORREDOR|TRONCAL|AUTOPISTA|PLACA\s*HUELLA",
         r"\bVIA|\bVIAL|CARRETERA|CALLE|PAVIMENT|MALLA VIAL|RED VIAL|CORREDOR|TRAMO|AUTOPISTA|PISTA|CALZADA"
-        r"|AVENIDA|CARRERA\b|TRONCAL|PLACA HUELLA|PUENTE|ANDEN|CICLORRUTA|GLORIETA",
+        r"|AVENIDA|CARRERA\b|TRONCAL|PLACA HUELLA|PUENTE|ANDEN|CICLORRUTA|GLORIETA"
+        # Obra vial con otros nombres, y "vías" pegado a la palabra de al lado
+        # porque el PDF perdió los espacios ("MEJORAMIENTODEVIASRURALES").
+        r"|VARIANTE|VIADUCTO|INTERCAMBIADOR|PASO\s*(?:ELEVADO|DEPRIMIDO|NACIONAL)|INTERSECCION|ASFALT|AFIRMADO"
+        r"|(?:DE|DEL|LAS?|EN)VIAS?\b|VIAS?(?:RURALES|URBANAS|TERCIARIAS|SECUNDARIAS|PRIMARIAS|NACIONALES)",
     ),
     "edificaciones": (
         r"EDIFICAC|EDIFICIO|BIEN(?:ES)?\s+DE\s+INTERES\s+CULTURAL|PATRIMONI|INFRAESTRUCTURA\s+SOCIAL",
@@ -217,21 +224,114 @@ def familia_del_lote(lote: LoteTecnico) -> str | None:
     return _familia_de(materia or normalizar(lote.experiencia_general))
 
 
+def _nombra_la_actividad(texto: str, actividad: str) -> bool:
+    """El objeto nombra la actividad, aunque la lectura del PDF le haya comido
+    o cambiado letras: "NTERVENTORIA", "LNTERENTORIA", "INTERVENTORTIA".
+
+    Se tolera una letra en las palabras de seis a nueve letras y dos en las más
+    largas, siempre sobre la palabra completa. Así no se confunden actividades
+    distintas: "INTERVENCION" no es "INTERVENTORIA" (les separan cuatro
+    letras)."""
+    if re.search(rf"\b{re.escape(actividad)}", texto):
+        return True
+    if len(actividad) < 6:
+        return False
+    tope = 2 if len(actividad) >= 10 else 1
+    # Solo el principio de cada palabra, y con una letra de diferencia en el
+    # largo. Buscar la actividad en cualquier parte de la palabra confundiría
+    # actividades que se distinguen por el prefijo: "CONSTRUCCIÓN" no es
+    # "RECONSTRUCCIÓN", y en un concurso de interventoría dar por buena una obra
+    # sería aprobar experiencia que el pliego no pide.
+    for palabra in re.findall(r"[A-Z]{4,}", texto):
+        for largo in (len(actividad) - 1, len(actividad), len(actividad) + 1):
+            if largo < 4 or largo > len(palabra):
+                continue
+            if _distancia(palabra[:largo], actividad, tope) <= tope:
+                return True
+    return False
+
+
+def _distancia(a: str, b: str, tope: int) -> int:
+    """Distancia de edición entre dos palabras, cortada en `tope` (lo que pase
+    de ahí no interesa y no vale la pena calcularlo)."""
+    if abs(len(a) - len(b)) > tope:
+        return tope + 1
+    previa = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        fila = [i]
+        for j, cb in enumerate(b, 1):
+            fila.append(min(previa[j] + 1, fila[j - 1] + 1, previa[j - 1] + (ca != cb)))
+        previa = fila
+        if min(previa) > tope:
+            return tope + 1
+    return previa[-1]
+
+
+def objeto_ilegible(texto: str) -> bool:
+    """El objeto no se pudo leer: llega con las letras entrelazadas de dos
+    columnas ("ICMMD NO E EU T P NJN E A OTR") o tapado ("#####").
+
+    Importa distinguirlo de un objeto que es de otra cosa: descartar el
+    contrato porque no pudimos leerlo deja al proponente sin experiencia que sí
+    tiene. Un objeto ilegible va a revisión."""
+    limpio = texto.strip()
+    if not limpio:
+        return False
+    if len(re.findall(r"#", limpio)) >= 10:
+        return True
+    palabras = limpio.split()
+    if len(palabras) < 8:
+        return False
+    # Solo cuentan las de una letra: "DE", "LA", "AL" son palabras corrientes,
+    # pero un objeto de verdad no trae cinco letras sueltas.
+    sueltas = sum(1 for p in palabras if len(p) == 1 and p.isalpha())
+    return sueltas >= 5 and sueltas >= len(palabras) * 0.15
+
+
+_DE_INTERVENTORIA_RE = re.compile(r"INTERVENTORIA|INTERVENTORIAS|SUPERVISION")
+
+
+def pide_interventoria(lote: LoteTecnico) -> bool:
+    """El pliego pide experiencia en la interventoría de una obra, no en la obra.
+
+    "INTERVENTORÍA A PROYECTOS DE: CONSTRUCCIÓN O RECONSTRUCCIÓN O
+    MEJORAMIENTO…": lo que se exige es la interventoría, y las demás palabras
+    describen la obra que se interventó. Si se tomaran como actividades válidas,
+    un contrato de obra pura ("RECONSTRUCCIÓN DE LA VÍA ALFA") acreditaría
+    experiencia que el pliego no pide.
+
+    Se distingue de "INTERVENTORÍA Y/O CONSTRUCCIÓN DE VÍAS", donde las dos
+    valen, en que allí la interventoría va sola en su trozo de la frase."""
+    antes, _ = _actividades_y_materia(lote)
+    primero = _CONECTOR_RE.split(antes)[0]
+    palabras = primero.split()
+    for i, palabra in enumerate(palabras):
+        if not _DE_INTERVENTORIA_RE.match(palabra.strip(" .,:")):
+            continue
+        for siguiente in palabras[i + 1:]:
+            raiz = re.sub(r"(CION|MIENTO|ACION|CIONES)$", "", siguiente.strip(" .,:"))
+            if len(raiz) >= 5 and re.match(_ACTIVIDADES_OBRA, raiz):
+                return True
+    return False
+
+
 def objeto_valido(objeto: str, lote: LoteTecnico) -> bool | None:
     """True si el objeto nombra una actividad de la experiencia general del
     lote y la clase de obra que pide el proceso; False si claramente es de
     otra cosa; None si no se puede decir (lo resuelve quien revisa con la
     certificación)."""
     texto = normalizar(objeto)
-    if not texto.strip():
+    if not texto.strip() or objeto_ilegible(texto):
         return None
     actividades = actividades_del_lote(lote)
+    if pide_interventoria(lote):
+        actividades = [a for a in actividades if _DE_INTERVENTORIA_RE.match(a)] or actividades
     familia = familia_del_lote(lote)
     if not actividades or familia is None:
         # Sin la experiencia general del pliego no hay con qué comparar: no se
         # descarta nada por el objeto.
         return None
-    tiene_actividad = any(re.search(rf"\b{re.escape(a)}", texto) for a in actividades)
+    tiene_actividad = any(_nombra_la_actividad(texto, a) for a in actividades)
     tiene_materia = bool(re.search(_FAMILIAS[familia][1], texto))
     if tiene_actividad and tiene_materia:
         return True

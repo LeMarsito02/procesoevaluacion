@@ -290,6 +290,7 @@ def evaluar_proponente_tecnico(
         )
         resultado.avisos.append(motivo_sin_formato3)
     textos: dict[str, str] = {}
+    presentados = _lotes_a_los_que_se_presenta(pdfs, parametros, formato3, resultado)
     resultado.lotes = evaluar_experiencia(
         formato3, integrantes, parametros, fecha_cierre, plural,
         lambda c: longitud_del_contrato(pdfs, textos, c.numero_contrato, c.contratante, c.objeto),
@@ -312,8 +313,51 @@ def evaluar_proponente_tecnico(
                motivos=["el programa no verifica este factor: revísalo a mano con lo que pide el pliego"]),
     ], parametros.puntajes, parametros.factores_nombrados)
     for lote in resultado.lotes:
+        numero = _numero_del_lote(lote.lote)
+        if presentados is not None and numero is not None and numero not in presentados:
+            # Un lote al que no se presentó no se evalúa. Se dice de dónde salió
+            # la lectura y a qué lotes sí se presenta: si nos equivocamos, que se
+            # vea en el informe en vez de dejar un lote sin mirar y en silencio.
+            lote.presentado = False
+            lote.cumple = None
+            lote.revisiones = []
+            lote.motivos = [
+                f"N.A. — el proponente no se presenta al {lote.lote.lower()}. Según la carta de presentación, la "
+                f"garantía de seriedad y el Formato 3 se presenta al lote " + ", ".join(sorted(presentados))
+            ]
+            continue
         for aviso in avisos:
             lote.motivos.append(aviso)
             if lote.cumple:
                 lote.cumple = False
     return resultado
+
+
+def _numero_del_lote(nombre: str) -> str | None:
+    m = re.search(r"\d+", nombre)
+    return m.group(0) if m else None
+
+
+def _lotes_a_los_que_se_presenta(
+    pdfs: dict[str, bytes], parametros: ParametrosTecnicos, formato3: Formato3 | None, resultado: ResultadoTecnico,
+) -> set[str] | None:
+    """Los números de lote a los que se presenta la oferta, o None si no se
+    pudo saber (entonces se evalúan todos).
+
+    Se unen tres fuentes: la carta de presentación, la garantía de seriedad y la
+    columna de lotes del Formato 3. La unión es a propósito, por cuál es el daño
+    de equivocarse: un lote que se dé por no presentado se queda sin evaluar, y
+    si en realidad se presentó nadie miraría su experiencia. Así hace falta que
+    las tres fuentes callen para dejar un lote fuera."""
+    from motor.financiera.capacidad import lotes_de_la_oferta
+
+    if len(parametros.lotes) < 2:
+        return None
+    numeros = [n for l in parametros.lotes if (n := _numero_del_lote(l.nombre))]
+    elegidos, avisos_lotes = lotes_de_la_oferta(pdfs, numeros)
+    resultado.avisos.extend(avisos_lotes)
+    del_formato3 = {
+        n for c in (formato3.contratos if formato3 else []) for n in re.findall(r"\d+", c.lotes or "") if n in numeros
+    }
+    juntos = (elegidos or set()) | del_formato3
+    return juntos or None

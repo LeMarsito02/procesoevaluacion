@@ -431,6 +431,90 @@ class ExperienciaTests(SimpleTestCase):
         self.assertTrue(any("área intervenida (15,230.50 m²)" in m and "aclaración" in m for m in lote2.motivos), lote2.motivos)
 
 
+class ObjetoDelContratoTests(SimpleTestCase):
+    """El objeto decide si un contrato cuenta, así que los dos errores cuestan:
+    descartar uno bueno deja al proponente sin experiencia que tiene, y aceptar
+    uno de otra cosa es aprobar lo que el pliego no pide."""
+
+    def _lote(self, general: str) -> LoteTecnico:
+        return LoteTecnico("LOTE 1", 2_000_000_000, general, "", fraccion_un_contrato=0.7)
+
+    def test_en_un_concurso_de_meritos_la_obra_pura_no_acredita_interventoria(self):
+        """El pliego pide "INTERVENTORÍA A PROYECTOS DE: CONSTRUCCIÓN O
+        RECONSTRUCCIÓN O MEJORAMIENTO…": esas palabras describen la obra que se
+        interventó, no lo que se exige. Tomarlas como actividades válidas daba
+        por buena la obra misma."""
+        lote = self._lote("INTERVENTORÍA A PROYECTOS DE: CONSTRUCCIÓN O RECONSTRUCCIÓN O MEJORAMIENTO "
+                          "EN PAVIMENTO ASFÁLTICO DE VÍAS PRIMARIAS O SECUNDARIAS")
+        self.assertTrue(objeto_valido("INTERVENTORIA TECNICA AL MEJORAMIENTO DE LA VIA ALFA - BETA", lote))
+        for obra in ("RECONSTRUCCION DE LA VIA ALFA - BETA",
+                     "MEJORAMIENTO Y PAVIMENTACION DE LA VIA ALFA DEL MUNICIPIO",
+                     "CONSTRUCCION DE LA VIA VEREDA EL ROSAL"):
+            with self.subTest(obra=obra):
+                self.assertIsNone(objeto_valido(obra, lote))
+        # Cuando el pliego acepta las dos ("interventoría Y/O construcción"),
+        # la obra sigue valiendo.
+        ambas = self._lote("INTERVENTORÍA Y/O CONSTRUCCIÓN O MEJORAMIENTO DE VÍAS URBANAS")
+        self.assertTrue(objeto_valido("CONSTRUCCION DE LA VIA VEREDA EL ROSAL", ambas))
+
+    def test_el_objeto_que_no_se_pudo_leer_va_a_revision_y_no_se_descarta(self):
+        """Llega con las letras de dos columnas entrelazadas o tapado con
+        almohadillas. Descartarlo dejaba al proponente sin un contrato que sí
+        tenía."""
+        from motor.tecnica.experiencia import objeto_ilegible
+
+        lote = self._lote("INTERVENTORÍA A PROYECTOS DE: CONSTRUCCIÓN DE VÍAS PRIMARIAS")
+        entrelazado = "ICMMD NO E EU T P NJN E A OTR ICR AR V ITP BA E AI NLMOM ET ISE O E N N RAT T IA ODOE L T D AE"
+        self.assertTrue(objeto_ilegible(entrelazado))
+        self.assertIsNone(objeto_valido(entrelazado, lote))
+        self.assertTrue(objeto_ilegible("#" * 60))
+        self.assertIsNone(objeto_valido("#" * 60, lote))
+        # Un objeto corriente no es ilegible por traer preposiciones cortas.
+        self.assertFalse(objeto_ilegible("INTERVENTORIA TECNICA AL MEJORAMIENTO DE LA VIA ALFA - BETA"))
+        self.assertFalse(objeto_valido("SUMINISTRO DE PAPELERIA PARA LA ALCALDIA MUNICIPAL", lote))
+
+    def test_la_lectura_del_pdf_come_letras_y_espacios(self):
+        """Los objetos llegan con una letra perdida ("NTERVENTORIA"), con dos
+        ("LNTERENTORIA") o sin espacios ("MEJORAMIENTODEVIASRURALES"), y la
+        experiencia es la misma."""
+        lote = self._lote("INTERVENTORÍA A PROYECTOS DE: CONSTRUCCIÓN O MEJORAMIENTO EN PAVIMENTO "
+                          "ASFÁLTICO DE VÍAS PRIMARIAS O SECUNDARIAS")
+        for objeto in ("NTERVENTORIA PARA LAS OBRAS DE CONSTRUCCION DE LA VARIANTE SAN FRANCISCO - MOCOA",
+                       "LNTERENTORIA PARA EL MANTENIMIENTO Y REHABILITACION DE LA CARRETERA DABEIBA",
+                       "INTERVENTORIATECNICA,FINANCIERAYAMBIENTALPARAELMEJORAMIENTODEVIASRURALES",
+                       "INTERVENTORIA PARA LA CONSTRUCCION DEL INTERCAMBIADOR EL BOSQUE (PASO ELEVADO)",
+                       "INTERVENTORIA DE LAS OBRAS DE MEJORAMIENTO: REFUERZO CON MEZCLA ASFALTICA"):
+            with self.subTest(objeto=objeto[:40]):
+                self.assertTrue(objeto_valido(objeto, lote), objeto)
+        # Una actividad parecida no es la misma: intervención no es interventoría.
+        self.assertIsNone(objeto_valido("CONTROL Y SEGUIMIENTO A LA INTERVENCION CORRECTIVA EN VIAS DETERIORADAS", lote))
+
+
+class LotesDeLaOfertaTests(SimpleTestCase):
+    """Un lote al que el proponente no se presenta no se evalúa: el informe no
+    puede decir que cumple (ni que le falta) un lote que no pidió. Pero darlo
+    por no presentado cuando sí se presentó lo dejaría sin mirar, así que hacen
+    falta tres fuentes calladas para dejar un lote fuera."""
+
+    def test_la_columna_de_lotes_del_formato_3_cuenta_como_fuente(self):
+        from motor.tecnica.proponente import ResultadoTecnico, _lotes_a_los_que_se_presenta
+
+        parametros = _parametros()
+        formato3 = Formato3("f3", [_fila(1, "12", "VIAS ALFA")])
+        formato3.contratos[0].lotes = "LOTE 1 Y 2"
+        # Sin carta ni garantía (no hay documentos), lo dice el Formato 3.
+        self.assertEqual(_lotes_a_los_que_se_presenta({}, parametros, formato3, ResultadoTecnico()), {"1", "2"})
+        formato3.contratos[0].lotes = "LOTE 2"
+        self.assertEqual(_lotes_a_los_que_se_presenta({}, parametros, formato3, ResultadoTecnico()), {"2"})
+
+    def test_sin_ninguna_fuente_se_evaluan_todos_los_lotes(self):
+        from motor.tecnica.proponente import ResultadoTecnico, _lotes_a_los_que_se_presenta
+
+        formato3 = Formato3("f3", [_fila(1, "12", "VIAS ALFA")])
+        self.assertIsNone(_lotes_a_los_que_se_presenta({}, _parametros(), formato3, ResultadoTecnico()))
+        self.assertIsNone(_lotes_a_los_que_se_presenta({}, _parametros(), None, ResultadoTecnico()))
+
+
 class ParametrosTests(SimpleTestCase):
     def test_codigos_unspsc_con_la_tabla_partida(self):
         texto = (
