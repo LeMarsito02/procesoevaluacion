@@ -249,6 +249,27 @@ class ExperienciaTests(SimpleTestCase):
         self.assertFalse(lote1.cumple)
         self.assertIn("se requieren 1,500.00", " ".join(lote1.motivos))
 
+    def test_el_formato_que_no_se_pudo_leer_no_se_pide_como_subsanacion(self):
+        """Cuando el proponente sí aportó el Formato 3 y lo que falló fue
+        nuestra lectura, el lote va a revisión pero el motivo no puede decir que
+        no se encontró: pedirle que lo subsane sería pedirle algo que entregó."""
+        lotes = evaluar_experiencia(None, [], _parametros(), self.cierre, False)
+        self.assertEqual([l.cumple for l in lotes], [False, False])
+        self.assertIn("no se encontró el Formato 3", lotes[0].motivos[0])
+        lotes = evaluar_experiencia(None, [], _parametros(), self.cierre, False,
+                                   motivo_sin_formato3="lo aportó pero no se pudo leer su tabla")
+        self.assertEqual([l.motivos for l in lotes], [["lo aportó pero no se pudo leer su tabla"]] * 2)
+
+    def test_el_objeto_que_quedo_vacio_se_dice_como_es(self):
+        """Un contrato cuyo objeto no se pudo leer salía con el motivo «» y
+        parecía que el objeto no correspondía."""
+        integrante = IntegranteTecnico("VIAS ALFA S.A.S.", None, 1.0, _rup("VIAS ALFA S.A.S.", _exp("12", 1600)))
+        lote1, _ = evaluar_experiencia(Formato3("f3", [_fila(1, "12", "VIAS ALFA", objeto="")]),
+                                       [integrante], _parametros(), self.cierre, False)
+        motivos = " ".join(lote1.motivos)
+        self.assertIn("el Formato 3 no trae el objeto del contrato", motivos)
+        self.assertNotIn("«»", motivos)
+
     def test_contrato_de_dos_integrantes_cuenta_uno_con_la_suma_de_participaciones(self):
         a = IntegranteTecnico("ANA PRUEBA GOMEZ", None, 0.5, _rup("ANA PRUEBA GOMEZ", _exp("204", 4000, participacion=0.2, celebrado="CONSORCIO")))
         b = IntegranteTecnico("B&C INVENTOS SAS", None, 0.5, _rup("B&C INVENTOS SAS", _exp("65", 4000, participacion=0.15, celebrado="CONSORCIO")))

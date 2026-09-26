@@ -282,11 +282,13 @@ def evaluar_proponente_tecnico(
     resultado.avisos.extend(avisos)
     formato3, formato3_ilegible = _buscar_formato3(pdfs, excels)
     resultado.formato3 = formato3.archivo if formato3 else None
+    motivo_sin_formato3 = None
     if formato3 is None and formato3_ilegible:
-        resultado.avisos.append(
+        motivo_sin_formato3 = (
             f"el proponente aportó el Formato 3 ('{formato3_ilegible.rsplit('/', 1)[-1]}') pero no se pudo leer su "
             "tabla: revísalo a mano, no se lo pidas como subsanación"
         )
+        resultado.avisos.append(motivo_sin_formato3)
     textos: dict[str, str] = {}
     resultado.lotes = evaluar_experiencia(
         formato3, integrantes, parametros, fecha_cierre, plural,
@@ -294,6 +296,7 @@ def evaluar_proponente_tecnico(
         verificador_de_socios(pdfs, integrantes, fecha_cierre),
         lambda c: area_del_contrato(pdfs, textos, c.numero_contrato, c.contratante, c.objeto),
         lambda c: soporte_del_contrato(pdfs, textos, c.numero_contrato, c.contratante, c.objeto),
+        motivo_sin_formato3=motivo_sin_formato3,
     )
     # Concursos de méritos: el formato con que el proponente acepta el personal
     # clave. Es habilitante, así que va aparte del puntaje.

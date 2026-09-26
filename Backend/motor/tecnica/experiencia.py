@@ -417,7 +417,12 @@ def evaluar_lote(
                     f"contrato {c.orden}: experiencia de un socio o accionista de {nombre} (3.5.2 E): "
                     + (explicacion or "verifica que la sociedad tenga menos de tres años y el documento de conformación")
                 )
-        if objeto[id(c)] is None and c in validos:
+        if not c.objeto.strip() and c in validos:
+            resultado.motivos.append(
+                f"contrato {c.orden}: el Formato 3 no trae el objeto del contrato (la casilla quedó vacía o no se pudo "
+                "leer): míralo en el documento para saber si corresponde a la experiencia del lote"
+            )
+        elif objeto[id(c)] is None and c in validos:
             resultado.motivos.append(f"contrato {c.orden}: revisa que el objeto corresponda a la experiencia general del lote: «{c.objeto[:160]}»")
         elif objeto[id(c)] is False and c.valor_aportado is not None:
             resultado.motivos.append(f"contrato {c.orden}: el objeto no corresponde a la experiencia general del lote (no se tuvo en cuenta): «{c.objeto[:160]}»")
@@ -713,13 +718,14 @@ def evaluar_experiencia(
     formato3: Formato3 | None, integrantes: list[IntegranteTecnico], parametros: ParametrosTecnicos,
     fecha_cierre: date, plural: bool, buscar_longitud: BuscarLongitud | None = None,
     verificar_socio: VerificarSocio | None = None, buscar_area: BuscarArea | None = None,
-    buscar_soporte: BuscarSoporte | None = None,
+    buscar_soporte: BuscarSoporte | None = None, motivo_sin_formato3: str | None = None,
 ) -> list[ResultadoLote]:
     if formato3 is None:
-        return [
-            ResultadoLote(lote=l.nombre, cumple=False, motivos=["no se encontró el Formato 3 – Experiencia (el pliego permite subsanarlo)"])
-            for l in parametros.lotes
-        ]
+        # Si el formato se aportó y lo que falló fue nuestra lectura, el motivo
+        # lo dice quien llama: pedirle al proponente que subsane algo que sí
+        # entregó sería una subsanación indebida.
+        motivo = motivo_sin_formato3 or "no se encontró el Formato 3 – Experiencia (el pliego permite subsanarlo)"
+        return [ResultadoLote(lote=l.nombre, cumple=False, motivos=[motivo]) for l in parametros.lotes]
     contratos = [cruzar_contrato(f, integrantes, parametros, parametros.lotes, fecha_cierre) for f in formato3.contratos]
     return [
         evaluar_lote(l, contratos, integrantes, parametros, plural, buscar_longitud, verificar_socio, buscar_area, buscar_soporte)
