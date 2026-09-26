@@ -190,6 +190,75 @@ Los procesos se descubren con `manage.py buscar_procesos_secop`. Los documentos 
 se pueden bajar por comandos: el portal responde con un reCAPTCHA a lo que no venga
 de un navegador, y eso no se fuerza.
 
+## 3 quater. Qué mejorar en cada área, por lo que pesa
+
+Sale de las mediciones contra informes reales y de los dos registros. Cada línea
+trae cuántas revisiones costó, porque esa es la unidad: una lectura que falla en
+30 de 97 ofertas cuesta 30 revisiones.
+
+### Jurídica — una sola causa explica casi todo
+
+En ICCU-LP-022 (97 proponentes) los cuatro certificados de antecedentes son lo
+peor del área, y **fallan por lo mismo**:
+
+| Certificado | Se resuelve solo | Revisiones | Causa dominante |
+|---|---|---|---|
+| Medidas correctivas (RNMC) | 36 % | 62 | «no se encontró por título» (37) |
+| Responsabilidad fiscal (Contraloría) | 39 % | 59 | «no se encontró por título» (33) |
+| Antecedentes disciplinarios (Procuraduría) | 41 % | 57 | «no se encontró por título» (31) |
+| Antecedentes judiciales (Policía) | 44 % | 54 | «no se encontró por título» (35) |
+
+**136 revisiones de un solo proceso** por no encontrar un documento que casi
+siempre está en la oferta. Vale la pena averiguar por qué no se encuentra antes de
+tocar nada: si son escaneos sin texto, si el título cambia, o si vienen dentro de
+un PDF combinado con otros documentos. Es la mejora más rentable del proyecto.
+
+Lo demás del área, en orden:
+
+- **Aval del ingeniero** (53 % en LP-022): el COPNIA no se encuentra (8) o está
+  expedido hace más de tres meses (6). Lo segundo no es un fallo: es el criterio
+  del abogado y debe seguir yendo a revisión.
+- **Seguridad social** (66 %): en proponentes plurales se confirma el formato de
+  un integrante y no de los demás (19).
+- **Carta de presentación** (77 %): el objeto de la carta no se parece al del
+  Documento Base (7).
+
+### Técnica — la experiencia, y dos factores de puntaje
+
+- **Experiencia por lote**: es lo que menos se decide solo (11 % en el lote 2 de
+  LP-022, 26 % en el lote 1). Las causas concretas, del registro de LP-027 y
+  CM-043: el acta o certificación de un contrato que no aparece en la oferta, el
+  área intervenida que no se puede dar por cumplida, y el objeto de un contrato
+  que no se puede ni aceptar ni descartar.
+- **Vinculación de personas con discapacidad** (40 %) y **empresas de mujeres**
+  (43 %): los dos factores de puntaje que más revisión piden.
+- El **Formato 3 en PDF con el encabezado partido** sigue yendo a revisión con el
+  motivo correcto.
+
+### Financiera — el capital de trabajo y la capacidad residual
+
+- **Capital de trabajo por lote**: 13 % y 16 %, lo peor de todo el sistema (150
+  revisiones entre los dos lotes de LP-022).
+- **Capacidad residual** (19 %): el Formato 5C no se encuentra, o el saldo de los
+  contratos en ejecución no se puede leer.
+- **Validez de los documentos** (51 %): el certificado de la Junta Central de
+  Contadores vencido al cierre (criterio resuelto: va a revisión) y los estados
+  financieros de un integrante que no aparecen.
+- **El ingreso operacional** que no se lee de los estados financieros: en LP-027
+  fue la causa financiera número uno (4 de 11 ofertas).
+
+En cambio los indicadores financieros y organizacionales ya van al 90 %.
+
+### Por dónde empezaría
+
+1. Los cuatro antecedentes jurídicos: una sola causa, 136 revisiones.
+2. El ingreso operacional y el Formato 5C: destraban capital de trabajo y
+   capacidad residual, que son lo peor del sistema.
+3. El acta o certificación de contrato que no aparece: la causa técnica número uno.
+
+Estas cifras son de la medición del 22/09/2026 para jurídica; el motor cambió
+bastante desde entonces, así que conviene volver a medirla antes de decidir.
+
 ## 4. Verificación continua
 
 1. Ofertas de 3 o 4 procesos más.
