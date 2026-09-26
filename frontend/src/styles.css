@@ -675,3 +675,11 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
 .param-fin-lotes { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .param-fin-umbrales { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-top: 12px; }
 .param-fin-umbrales .acciones { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; }
+
+/* El resultado en palabras llanas, debajo del detalle técnico. Se distingue de
+   los datos verificables con un borde al costado: quien revisa tiene que ver de
+   un golpe qué salió del documento y qué es una redacción del asistente. */
+.explicacion-ia { display: flex; flex-direction: column; gap: 6px; border-left: 3px solid var(--accent, #6b7cff); background: var(--surface-2); border-radius: 0 10px 10px 0; padding: 10px 12px; font-size: 13px; color: var(--ink-2); }
+.explicacion-ia-titulo { display: flex; align-items: center; gap: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3, var(--ink-2)); }
+.explicacion-ia p { margin: 0; overflow-wrap: anywhere; }
+.explicacion-ia-pedir { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

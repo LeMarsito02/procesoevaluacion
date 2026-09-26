@@ -476,6 +476,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
         <PanelProponente
           key={`${panel.hoja}-${panel.requisito ?? ''}`}
           proponente={panelProponente}
+          evaluacionId={id}
+          proponenteId={panelProponente.id}
           resultados={resultados[panel.hoja]}
           revisiones={revisiones}
           requisitoDestacado={panel.requisito}

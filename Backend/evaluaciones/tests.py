@@ -4422,3 +4422,41 @@ class FechasDanadasPorElOcrTests(TestCase):
         self.assertEqual(_fecha_de_la_franja("ESTATURA G.S. RH SEXO OB-FEB-2013VALLEDUPAR — FECHA Y LUGAR DE EXPEDICION"), date(2013, 2, 8))
         self.assertEqual(_fecha_de_la_franja("GS. AH SEXO 19-AG0-1976 BOGOTA D.C. FECHA Y LUGAR DE"), date(1976, 8, 19))
         self.assertEqual(_fecha_de_la_franja("SEXO 03-0CT-1997 BOGOTA D.C FECHA Y LUGAR DE EXPEDICION"), date(1997, 10, 3))
+
+
+class ExplicacionEnPalabrasTests(SimpleTestCase):
+    """La explicación del asistente acompaña al detalle técnico y no decide
+    nada. Lo único que puede hacer daño es que meta un dato que no venía: quien
+    revisa lo leería como si saliera del documento."""
+
+    def _explicar(self, respuesta):
+        from motor.llm import explicacion
+
+        with mock.patch.object(explicacion, "consultar_json", return_value=respuesta):
+            return explicacion.explicar(
+                titulo="Capacidad residual del proponente",
+                motivo="No se pudo calcular la capacidad residual: falta el saldo de los contratos en ejecución.",
+                datos="CO (mayor ingreso operacional) $32.900.045.880\nSCE sin leer",
+                por_revisar=["el saldo de los contratos en ejecución no se pudo leer del Formato 5C"],
+            )
+
+    def test_una_cifra_que_no_venia_descarta_la_explicacion(self):
+        buena = ("El programa no pudo calcular la capacidad residual porque no leyó el saldo de los contratos en "
+                 "ejecución. El mayor ingreso operacional que encontró fue de $32.900.045.880. Habría que mirar el "
+                 "Formato 5C.")
+        self.assertEqual(self._explicar({"explicacion": buena}), buena)
+        inventada = ("El programa no pudo calcular la capacidad residual. El proponente declaró $1.234.567.890 en "
+                     "contratos en ejecución.")
+        self.assertIsNone(self._explicar({"explicacion": inventada}))
+
+    def test_sin_modelo_o_con_respuesta_inservible_no_hay_explicacion(self):
+        self.assertIsNone(self._explicar(None))
+        self.assertIsNone(self._explicar({}))
+        self.assertIsNone(self._explicar({"explicacion": "No sé."}))
+
+    def test_las_cifras_pequenas_no_cuentan_como_inventadas(self):
+        """"dos contratos", "el 60%" y los números de uno o dos dígitos
+        aparecen en cualquier frase: compararlos daría falsos positivos."""
+        texto = ("El programa revisó 2 contratos y encontró que falta el saldo de los contratos en ejecución; el "
+                 "mayor ingreso operacional fue de $32.900.045.880 y habría que mirar el Formato 5C.")
+        self.assertEqual(self._explicar({"explicacion": texto}), texto)

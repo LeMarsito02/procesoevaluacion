@@ -171,6 +171,14 @@ class RevisionOut(Schema):
     fecha: datetime
 
 
+class ExplicacionOut(Schema):
+    """La explicación en palabras llanas de un resultado. `texto` es None
+    cuando el modelo local no está disponible o no se pudo verificar lo que
+    respondió: entonces la pantalla se queda con el detalle técnico."""
+
+    texto: str | None = None
+
+
 class EvaluacionDetalleOut(Schema):
     evaluacion: EvaluacionResumenOut
     documento_base: ProcesoDocumentoBase
@@ -1131,3 +1139,67 @@ def documento(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, ar
         raise HttpError(404, "No se encontró ese documento dentro de la oferta del proponente.")
     auditar(request, "documento.visto", objeto=evaluacion, hoja=proponente.hoja, archivo=archivo)
     return HttpResponse(contenido, content_type="application/pdf")
+
+
+_CLAVES_QUE_NO_EXPLICAN = {
+    "contratos", "integrantes", "revisiones", "rups", "aporte_por_integrante", "lotes_presentados",
+    "tarjetas", "estados", "no_aplica", "presentado",
+}
+
+
+def _lineas_del_detalle(detalle: dict | None, profundidad: int = 0) -> list[str]:
+    """El detalle del motor en líneas de texto legibles, sin las listas largas
+    (contratos, integrantes): lo que se explica es el resultado, no el volcado
+    completo."""
+    if not isinstance(detalle, dict) or profundidad > 2:
+        return []
+    lineas = []
+    for clave, valor in detalle.items():
+        if clave in _CLAVES_QUE_NO_EXPLICAN:
+            continue
+        nombre = str(clave).replace("_", " ")
+        if isinstance(valor, dict):
+            lineas.extend(f"{nombre}: {x}" for x in _lineas_del_detalle(valor, profundidad + 1))
+        elif isinstance(valor, (str, int, float, bool)) and str(valor).strip():
+            lineas.append(f"{nombre}: {valor}")
+    return lineas
+
+
+@router.get("/{evaluacion_id}/proponentes/{proponente_id}/explicacion/{numero}", response=ExplicacionOut)
+def explicacion_del_resultado(
+    request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, numero: int
+) -> ExplicacionOut:
+    """El resultado de un requisito contado en palabras llanas por el modelo
+    local, para acompañar al detalle técnico (que no se reemplaza: es el dato
+    que se puede verificar contra el documento).
+
+    El modelo no decide nada. Recibe lo que el motor ya calculó y solo lo
+    redacta; si añade una cifra que no venía, la respuesta se descarta y esto
+    devuelve None."""
+    from motor.llm.explicacion import explicar
+
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    resultado = (
+        Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente, requisito=numero)
+        .values_list("datos", flat=True)
+        .first()
+    )
+    if resultado is None:
+        raise HttpError(404, "Ese requisito todavía no se evaluó para este proponente.")
+    catalogo = {r.get("numero"): r.get("nombre") for r in servicios.catalogo(servicios.definicion_de(evaluacion))}
+    detalle = resultado.get("detalle") if isinstance(resultado, dict) else None
+    por_revisar = []
+    for area in (detalle or {}).values():
+        if isinstance(area, dict):
+            por_revisar.extend(
+                str(r.get("que")) for r in (area.get("revisiones") or []) if isinstance(r, dict) and r.get("que")
+            )
+    texto = explicar(
+        titulo=str(catalogo.get(numero) or f"Requisito {numero}"),
+        motivo=str(resultado.get("motivo") or ("Cumple." if resultado.get("cumple") else "")),
+        datos="\n".join(_lineas_del_detalle(detalle))[:2500],
+        por_revisar=por_revisar[:8],
+    )
+    return ExplicacionOut(texto=texto)

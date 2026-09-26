@@ -311,3 +311,11 @@ export const listarTipos = () => pedirJson<TipoEvaluacion[]>('/api/evaluaciones/
 
 export const actualizarPlantillaEvaluacion = (id: string) =>
   enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/actualizar-plantilla`, 'POST')
+
+/** La explicación en palabras llanas de un resultado, redactada por el modelo
+ * local. `texto` viene en null cuando el modelo no está disponible o no se pudo
+ * verificar lo que respondió: la pantalla se queda con el detalle técnico. */
+export const explicacionDelResultado = (evaluacionId: string, proponenteId: string, requisito: number) =>
+  pedirJson<{ texto: string | null }>(
+    `/api/evaluaciones/${evaluacionId}/proponentes/${proponenteId}/explicacion/${requisito}`,
+  )
