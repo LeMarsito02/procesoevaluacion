@@ -1,4 +1,5 @@
 import type { DetalleTecnico as Detalle } from '../api'
+import { conGlosario } from '../glosario'
 
 const smmlv = (v: number | null | undefined) =>
   v == null ? '—' : v.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -12,6 +13,27 @@ function Marca({ valor }: { valor: boolean | null | undefined }) {
 /** Desglose de la experiencia de un lote: cada contrato del Formato 3 tal
  * como quedó verificado en el RUP. En fichas, sin tabla ancha, para que el
  * panel lateral no necesite desplazamiento horizontal. */
+/** Cuánta de la experiencia exigida quedó acreditada. Es la pregunta que se
+ * hace quien revisa —¿alcanza o no?— y en dos cifras sueltas hay que dividir
+ * mentalmente; en una barra se ve de un golpe. */
+function BarraExperiencia({ certificado, exigido }: { certificado: number; exigido: number }) {
+  const proporcion = exigido > 0 ? certificado / exigido : 0
+  const alcanza = proporcion >= 1
+  return (
+    <div className="barra-medida" data-alcanza={alcanza}>
+      <div className="barra-medida-pista">
+        <div className="barra-medida-relleno" style={{ width: `${Math.min(100, Math.round(proporcion * 100))}%` }} />
+      </div>
+      <span className="small">
+        {alcanza
+          ? `Alcanza (${Math.round(proporcion * 100)} % de lo exigido)`
+          : `Falta el ${Math.max(0, Math.round((1 - proporcion) * 100))} % de lo exigido`}
+      </span>
+    </div>
+  )
+}
+
+
 export default function DetalleTecnico({ detalle }: { detalle: Detalle }) {
   if (!detalle.contratos) return null
   const integrantes = detalle.integrantes ?? []
@@ -22,12 +44,16 @@ export default function DetalleTecnico({ detalle }: { detalle: Detalle }) {
           Certifica <strong>{smmlv(detalle.valor_certificado)}</strong> SMMLV
           {detalle.valor_a_certificar != null && (
             <>
-              {' '}de <strong>{smmlv(detalle.valor_a_certificar)}</strong> ({porcentaje(detalle.factor)} del presupuesto)
+              {' · '}se exigen <strong>{smmlv(detalle.valor_a_certificar)}</strong>
+              {detalle.factor != null && ` (${porcentaje(detalle.factor)} del presupuesto del lote)`}
             </>
           )}
         </span>
+        {detalle.valor_a_certificar ? (
+          <BarraExperiencia certificado={detalle.valor_certificado ?? 0} exigido={detalle.valor_a_certificar} />
+        ) : null}
         <span>
-          Un contrato por el porcentaje exigido: <Marca valor={detalle.un_contrato_70} />
+          Al menos un contrato llega al porcentaje exigido: <Marca valor={detalle.un_contrato_70} />
         </span>
         {detalle.longitud_minima_km != null && (
           <span>
@@ -70,7 +96,7 @@ export default function DetalleTecnico({ detalle }: { detalle: Detalle }) {
             </span>
             {c.objeto && <span className="muted">{c.objeto}</span>}
             {c.problemas.map((p) => (
-              <span key={p} className="contrato-ficha-problema">{p}</span>
+              <span key={p} className="contrato-ficha-problema">{conGlosario(p)}</span>
             ))}
           </div>
         </div>

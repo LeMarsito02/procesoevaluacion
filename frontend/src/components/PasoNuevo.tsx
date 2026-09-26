@@ -31,10 +31,21 @@ export default function PasoNuevo(props: Props) {
   const inputOfertas = useRef<HTMLInputElement>(null)
   const inputArchivo = useRef<HTMLInputElement>(null)
   const [arrastrando, setArrastrando] = useState(false)
+  // Las ofertas llegan de una de dos formas, y antes las dos casillas estaban
+  // una debajo de la otra con una nota explicando cuál manda. Se elige primero
+  // y solo se muestra la que corresponde.
+  const [origen, setOrigen] = useState<'archivos' | 'carpeta'>(carpetaDrive.trim() ? 'carpeta' : 'archivos')
 
   // Las ofertas pueden venir de una carpeta compartida o subidas a mano: hace
   // falta una de las dos, no las dos.
-  const listo = codigoProceso.trim() && fechaCierre && archivo && (carpetaDrive.trim() || ofertas.length > 0)
+  const falta = [
+    !codigoProceso.trim() && 'el código del proceso',
+    !fechaCierre && 'la fecha de cierre',
+    !archivo && 'el PDF del Documento Base',
+    !(carpetaDrive.trim() || ofertas.length > 0) &&
+      (origen === 'archivos' ? 'los .zip de las ofertas' : 'el enlace de la carpeta con las ofertas'),
+  ].filter(Boolean) as string[]
+  const listo = falta.length === 0
 
   function soltar(e: React.DragEvent) {
     e.preventDefault()
@@ -138,8 +149,42 @@ export default function PasoNuevo(props: Props) {
           />
         </div>
 
-        <div className="field">
-          <label htmlFor="ofertas">Las ofertas en .zip (opcional, si no están en una carpeta compartida)</label>
+        <div className="field" style={{ marginBottom: 16 }}>
+          <label>¿Dónde están las ofertas?</label>
+          <div className="opciones-origen" role="radiogroup" aria-label="Dónde están las ofertas">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={origen === 'archivos'}
+              className="opcion-origen"
+              data-activa={origen === 'archivos'}
+              onClick={() => setOrigen('archivos')}
+            >
+              <Icono nombre="subir" tam={17} />
+              <span>
+                <strong>En mi equipo</strong>
+                <span className="small muted">Un .zip por proponente</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={origen === 'carpeta'}
+              className="opcion-origen"
+              data-activa={origen === 'carpeta'}
+              onClick={() => setOrigen('carpeta')}
+            >
+              <Icono nombre="carpeta" tam={17} />
+              <span>
+                <strong>En una carpeta compartida</strong>
+                <span className="small muted">Google Drive u OneDrive</span>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div className="field" hidden={origen !== 'archivos'}>
+          <label htmlFor="ofertas">Los .zip de las ofertas</label>
           <div className="acciones">
             <button type="button" className="btn btn-secondary" onClick={() => inputOfertas.current?.click()}>
               <Icono nombre="carpeta" tam={15} /> Elegir los .zip de las ofertas
@@ -158,6 +203,7 @@ export default function PasoNuevo(props: Props) {
           </div>
           <input
             ref={inputOfertas}
+            id="ofertas"
             type="file"
             multiple
             accept=".zip,.rar,.7z"
@@ -181,10 +227,8 @@ export default function PasoNuevo(props: Props) {
           </span>
         </div>
 
-        <div className="field">
-          <label htmlFor="drive">
-            Carpeta con las ofertas (Google Drive u OneDrive){ofertas.length > 0 ? ' — no se usa si subió los .zip' : ''}
-          </label>
+        <div className="field" hidden={origen !== 'carpeta'}>
+          <label htmlFor="drive">Enlace de la carpeta con las ofertas</label>
           <div className="input-group">
             <Icono nombre="carpeta" tam={16} />
             <input
@@ -193,7 +237,6 @@ export default function PasoNuevo(props: Props) {
               placeholder="https://drive.google.com/drive/folders/… o https://1drv.ms/f/…"
               value={carpetaDrive}
               onChange={(e) => props.onCambiar({ carpetaDrive: e.target.value })}
-              disabled={ofertas.length > 0}
             />
           </div>
           <span className="hint">
@@ -209,11 +252,17 @@ export default function PasoNuevo(props: Props) {
           </div>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24, gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn btn-ghost" type="button" onClick={props.onCancelar}>
             Cancelar
           </button>
-          <button className="btn btn-primary btn-lg" type="submit" disabled={!listo || analizando}>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            {falta.length > 0 && !analizando && (
+              <span className="small muted">
+                Falta {falta.length > 1 ? `${falta.slice(0, -1).join(', ')} y ${falta[falta.length - 1]}` : falta[0]}.
+              </span>
+            )}
+            <button className="btn btn-primary btn-lg" type="submit" disabled={!listo || analizando}>
             {analizando ? (
               <>
                 <span className="spinner" /> Leyendo documento y buscando ofertas…
@@ -223,7 +272,8 @@ export default function PasoNuevo(props: Props) {
                 Continuar <Icono nombre="flecha" />
               </>
             )}
-          </button>
+            </button>
+          </div>
         </div>
       </form>
     </main>

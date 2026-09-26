@@ -1,4 +1,5 @@
 import type { PuntoDeRevision } from '../api'
+import { conGlosario } from '../glosario'
 
 /** Lo que falta por mirar en este punto del informe, separado por ámbito.
  * Importa la separación: lo que sale del pliego es igual para todos los
@@ -30,7 +31,7 @@ export default function QueFaltaRevisar({
           <ul>
             {deLaOferta.map((r) => (
               <li key={r.clave}>
-                {r.que}
+                {conGlosario(r.que)}
                 {r.donde && <span className="small muted"> · {r.donde}</span>}
               </li>
             ))}
@@ -42,7 +43,7 @@ export default function QueFaltaRevisar({
           <h4>Por resolver una vez en el proceso ({delProceso.length})</h4>
           <ul>
             {delProceso.map((r) => (
-              <li key={r.clave}>{r.que}</li>
+              <li key={r.clave}>{conGlosario(r.que)}</li>
             ))}
           </ul>
         </div>

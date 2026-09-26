@@ -10,7 +10,10 @@
   --surface-2: #f7f9fd;
   --ink: #00143c;
   --ink-2: #3d4b66;
-  --ink-3: #6f7c96;
+  /* Los tres colores de texto cumplen 4.5:1 sobre los fondos donde se usan
+     (blanco, papel, las tarjetas de aviso). Los tonos anteriores se quedaban
+     entre 3.3 y 4.2, que en 12 o 13 px se lee con esfuerzo. */
+  --ink-3: #606b87;
   --line: #e1e7f2;
   --line-strong: #c9d3e5;
 
@@ -18,11 +21,11 @@
   --brand-hover: #003bb8;
   --brand-bright: #0a84fa;
   --brand-soft: #e8f0fe;
-  --gold: #0a84fa;
+  --gold: #0b63b8;
   --gold-soft: #e6f3ff;
   --teal: #00c9a7;
 
-  --ok: #0a8f78;
+  --ok: #07806b;
   --ok-soft: #e0f7f2;
   --warn: #a15c07;
   --warn-soft: #fdf1dc;
@@ -51,6 +54,10 @@
 }
 
 * { box-sizing: border-box; }
+/* `hidden` tiene que ganarle a cualquier display de clase: sin esto, un campo
+   con .field { display: flex } se sigue viendo aunque el componente lo marque
+   como oculto. */
+[hidden] { display: none !important; }
 body { margin: 0; min-height: 100vh; background: var(--paper); }
 button, input, select, textarea { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; color: var(--ink); }
@@ -247,6 +254,7 @@ button.kpi:hover { box-shadow: var(--shadow); }
 
 /* ---------- Progreso ---------- */
 .progreso-card { display: flex; align-items: center; gap: 24px; }
+.progreso-texto { flex: 1; min-width: 0; }
 .anillo { position: relative; width: 96px; height: 96px; flex: none; }
 .anillo svg { transform: rotate(-90deg); }
 .anillo-text { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--serif); font-size: 22px; font-weight: 600; }
@@ -282,6 +290,14 @@ button.kpi:hover { box-shadow: var(--shadow); }
 .motivo { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; color: var(--ink-2); overflow-wrap: anywhere; }
 .motivo[data-tono='warn'] { background: var(--warn-soft); border-color: #f1d9ad; color: #5e3a06; }
 .motivo[data-tono='bad'] { background: var(--bad-soft); border-color: #f3c6c1; color: #7a1a12; }
+/* Varios motivos se leen en lista: en un párrafo con puntos y comas hay que
+   releer para saber cuántas cosas pasan. */
+.motivo-lista { margin: 0; padding: 10px 12px 10px 28px; display: flex; flex-direction: column; gap: 6px; }
+.motivo-lista li::marker { color: currentColor; opacity: 0.55; }
+
+/* Siglas y términos del oficio, explicados al pasar el cursor. */
+.termino { text-decoration: none; border-bottom: 1px dotted currentColor; cursor: help; }
+@media (hover: none) { .termino { border-bottom-style: none; } }
 /* Lo que falta por mirar en un requisito, separado entre lo de la oferta y lo
    del proceso: es la diferencia entre revisar una vez y revisarlo trece. */
 .que-falta { display: flex; flex-direction: column; gap: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--ink-2); }
@@ -577,7 +593,11 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
   .topbar-inner[data-con-pasos='false'] .menu-usuario { margin-left: auto; }
   .card-head { flex-wrap: wrap; }
   .plantilla-archivo { flex-wrap: wrap; overflow-wrap: anywhere; }
-  .progreso-card { flex-wrap: wrap; }
+  /* En pantalla angosta el anillo y el texto no caben lado a lado: el título
+     queda partido en tiras de dos palabras. Se apilan, con el anillo arriba. */
+  .progreso-card { flex-wrap: wrap; align-items: flex-start; }
+  .progreso-card .anillo svg { width: 64px; height: 64px; }
+  .progreso-texto { flex: 1 1 100%; }
   .progreso-card > .btn { width: 100%; justify-content: center; }
   .page-head-acciones { width: 100%; }
   .page-head-acciones .btn { flex: 1 1 auto; justify-content: center; }
@@ -683,3 +703,43 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
 .explicacion-ia-titulo { display: flex; align-items: center; gap: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3, var(--ink-2)); }
 .explicacion-ia p { margin: 0; overflow-wrap: anywhere; }
 .explicacion-ia-pedir { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ¿La experiencia acreditada alcanza lo que exige el pliego? En dos cifras hay
+   que dividir mentalmente; en una barra se ve de un golpe. */
+.barra-medida { display: flex; align-items: center; gap: 10px; }
+.barra-medida-pista { flex: 1; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.barra-medida-relleno { height: 100%; border-radius: 999px; background: var(--warn); transition: width 0.3s ease; }
+.barra-medida[data-alcanza='true'] .barra-medida-relleno { background: var(--ok); }
+.barra-medida span { color: var(--warn); white-space: nowrap; }
+.barra-medida[data-alcanza='true'] span { color: var(--ok); }
+
+/* En la decisión sobre un requisito los dos botones pesan igual. Uno verde
+   sólido frente a otro pálido empuja a marcar "Cumple", y aprobar sin haber
+   mirado es justo lo que no puede pasar aquí: la decisión la toma quien
+   revisa, no el color del botón. */
+.decision .btn-ok { background: var(--surface); color: var(--ok); border-color: #a9ddd0; }
+.decision .btn-ok:hover:not(:disabled) { background: var(--ok-soft); color: #087a66; }
+
+/* Índice de lo que falta en este proponente: con veinte requisitos, buscar los
+   tres pendientes a fuerza de rueda del ratón es trabajo que la pantalla puede
+   ahorrar. */
+.indice-pendientes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.chip-req { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 4px; border-radius: 999px; border: 1px solid #f1d9ad; background: var(--warn-soft); color: #5e3a06; font-size: 12.5px; cursor: pointer; }
+.chip-req:hover { background: #fbe8c8; }
+.chip-req-num { display: inline-flex; align-items: center; justify-content: center; min-width: 19px; height: 19px; border-radius: 999px; background: #fff; color: var(--warn); font-size: 11px; font-weight: 700; }
+
+/* Elegir de dónde vienen las ofertas antes de pedir los datos: antes los dos
+   campos estaban uno debajo del otro con una nota explicando cuál mandaba. */
+.opciones-origen { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.opcion-origen { display: flex; align-items: flex-start; gap: 10px; text-align: left; padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.opcion-origen > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.opcion-origen strong { color: var(--ink); font-weight: 600; }
+.opcion-origen:hover { border-color: var(--brand); }
+.opcion-origen[data-activa='true'] { border-color: var(--brand); background: var(--brand-soft); box-shadow: inset 0 0 0 1px var(--brand); }
+@media (max-width: 560px) { .opciones-origen { grid-template-columns: 1fr; } }
+
+/* Atajos para moverse entre proponentes sin soltar el teclado: con cien
+   ofertas, ir y volver con el ratón cuesta la tarde. */
+.atajos { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 18px 0 4px; }
+.atajos kbd { font: inherit; font-size: 11px; padding: 1px 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface-2); color: var(--ink-2); }
+@media (hover: none) { .atajos { display: none; } }

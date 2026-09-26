@@ -31,6 +31,21 @@ export default function PasoInforme(p: Props) {
   const listos = resumenes.filter((r) => r.pendientes === 0 && r.noCumple === 0).length
   const faltan = p.proponentes.length - evaluados.length
 
+  /** Descargar con pendientes no se bloquea —a veces hay que sacar un borrador—
+   * pero sí se confirma: en el Excel esas verificaciones salen como NO CUMPLE,
+   * y eso en el informe oficial es rechazar a un proponente por algo que nadie
+   * llegó a mirar. */
+  function descargar() {
+    if (pendientes > 0) {
+      const seguir = window.confirm(
+        `Quedan ${pendientes} verificaciones sin revisar. En el Excel saldrán como NO CUMPLE, ` +
+          `con el motivo que encontró el programa.\n\n¿Descargar el informe así?`,
+      )
+      if (!seguir) return
+    }
+    p.onGenerar()
+  }
+
   return (
     <main className="page page-narrow">
       <div className="page-head">
@@ -74,8 +89,9 @@ export default function PasoInforme(p: Props) {
         <div className="callout callout-warn" style={{ marginBottom: 20, alignItems: 'center' }}>
           <Icono nombre="alerta" />
           <div style={{ flex: 1 }}>
-            <strong>Quedan {pendientes} verificaciones sin revisar.</strong> En el Excel aparecerán como “NO CUMPLE” con el
-            motivo que encontró el sistema. Le recomendamos revisarlas antes de descargar.
+            <strong>Quedan {pendientes} verificaciones sin revisar.</strong> Si descarga el informe ahora, esas
+            verificaciones salen como “NO CUMPLE” con el motivo que encontró el programa: estaría rechazando por algo
+            que nadie llegó a mirar. Revíselas primero.
           </div>
           <button className="btn btn-secondary btn-sm" type="button" onClick={p.onRevisarPendientes}>
             Revisar ahora
@@ -107,7 +123,12 @@ export default function PasoInforme(p: Props) {
           <strong>{p.nombreArchivo}</strong>
           <div className="small muted">Plantilla oficial con un resultado por requisito y por proponente.</div>
         </div>
-        <button className="btn btn-primary btn-lg" type="button" onClick={p.onGenerar} disabled={p.generando || evaluados.length === 0}>
+        <button
+          className={pendientes > 0 ? 'btn btn-secondary btn-lg' : 'btn btn-primary btn-lg'}
+          type="button"
+          onClick={descargar}
+          disabled={p.generando || evaluados.length === 0}
+        >
           {p.generando ? (
             <>
               <span className="spinner" /> Generando…

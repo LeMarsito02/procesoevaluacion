@@ -6,7 +6,9 @@ import { fuenteDe } from '../historico'
 import Icono from './Icono'
 import DetalleFinanciero from './DetalleFinanciero'
 import DetalleTecnico from './DetalleTecnico'
+import { conGlosario } from '../glosario'
 import ExplicacionIA from './ExplicacionIA'
+import Motivos from './Motivos'
 import QueFaltaRevisar from './QueFaltaRevisar'
 
 const TIPO: Record<string, string> = {
@@ -72,7 +74,19 @@ export default function PanelProponente(p: Props) {
 
   useEffect(() => {
     function tecla(e: KeyboardEvent) {
+      // Al escribir en un campo las teclas son texto, no atajos.
+      const foco = document.activeElement
+      if (foco instanceof HTMLInputElement || foco instanceof HTMLTextAreaElement || foco instanceof HTMLSelectElement) {
+        if (e.key === 'Escape') p.onCerrar()
+        return
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      // Solo atajos para moverse. Decidir "cumple" o "no cumple" con una tecla
+      // es demasiado fácil de pulsar sin querer, y eso queda en el informe.
       if (e.key === 'Escape') p.onCerrar()
+      else if (e.key === 'ArrowRight') p.onSiguiente?.()
+      else if (e.key === 'ArrowLeft') p.onAnterior?.()
+      else if (e.key.toLowerCase() === 'p') p.onSiguientePendiente?.()
     }
     window.addEventListener('keydown', tecla)
     return () => window.removeEventListener('keydown', tecla)
@@ -83,6 +97,21 @@ export default function PanelProponente(p: Props) {
       document.getElementById(`req-${p.requisitoDestacado}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
     }
   }, [p.requisitoDestacado])
+
+  /** Abre un requisito y lo trae a la vista. Desde el índice de pendientes de
+   * la cabecera: con veinte requisitos, encontrar los tres que faltan a fuerza
+   * de rueda del ratón es el trabajo que la pantalla debería ahorrar. */
+  function irAlRequisito(numero: number) {
+    setAbiertos((prev) => new Set(prev).add(numero))
+    window.requestAnimationFrame(() => {
+      document.getElementById(`req-${numero}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
+  }
+
+  const pendientes = REQUISITOS.filter((info) => {
+    const r = porReq.get(info.numero)
+    return r && esPendiente(estadoDe(r, p.revisiones))
+  })
 
   function alternar(numero: number) {
     setAbiertos((prev) => {
@@ -122,6 +151,17 @@ export default function PanelProponente(p: Props) {
             )}
             {resumen.revisados > 0 && <span className="pill" data-estado="no_aplica">{resumen.revisados} decididos por usted</span>}
           </div>
+          {pendientes.length > 0 && (
+            <div className="indice-pendientes">
+              <span className="small muted">Ir a:</span>
+              {pendientes.map((info) => (
+                <button key={info.numero} type="button" className="chip-req" onClick={() => irAlRequisito(info.numero)}>
+                  <span className="chip-req-num">{info.numero}</span>
+                  {info.corto}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="drawer-body">
@@ -154,12 +194,10 @@ export default function PanelProponente(p: Props) {
                     {abierto && (
                       <div className="req-body">
                         <div className="req-verifica">
-                          <strong style={{ color: 'var(--ink-2)' }}>Qué se verifica:</strong> {info.verifica}
+                          <strong style={{ color: 'var(--ink-2)' }}>Qué se verifica:</strong> {conGlosario(info.verifica)}
                         </div>
                         {texto && estado !== 'revisado_cumple' && (
-                          <div className="motivo" data-tono={estado === 'revisar' ? 'warn' : estado === 'error' ? 'bad' : undefined}>
-                            {texto}
-                          </div>
+                          <Motivos motivo={texto} tono={estado === 'revisar' ? 'warn' : estado === 'error' ? 'bad' : undefined} />
                         )}
                         {r.detalle?.contratos && <DetalleTecnico detalle={r.detalle} />}
                         {r.detalle?.financiera && <DetalleFinanciero detalle={r.detalle} />}
@@ -240,7 +278,7 @@ export default function PanelProponente(p: Props) {
                             </button>
                           </div>
                         )}
-                        <div className="acciones" style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+                        <div className="acciones decision" style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
                           {!p.onRevisar ? (
                             <span className="small muted">
                               {decision === undefined ? 'Solo lectura' : <>Decisión registrada: <strong>{decision ? 'Cumple' : 'No cumple'}</strong></>}
@@ -282,6 +320,10 @@ export default function PanelProponente(p: Props) {
             </div>
           ))}
           {p.extra}
+          <p className="small muted atajos">
+            Atajos: <kbd>←</kbd> <kbd>→</kbd> cambian de proponente · <kbd>P</kbd> salta al siguiente pendiente ·{' '}
+            <kbd>Esc</kbd> cierra este panel.
+          </p>
         </div>
 
         <div className="drawer-foot">

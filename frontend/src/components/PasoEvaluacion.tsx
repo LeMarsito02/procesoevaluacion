@@ -212,7 +212,7 @@ export default function PasoEvaluacion(p: Props) {
       {(evaluando || faltan > 0) && (
         <section className="card progreso-card" style={{ marginBottom: 20 }}>
           <Anillo pct={pct} />
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="progreso-texto">
             {p.progreso ? (
               <>
                 <h2 style={{ fontSize: 18, display: 'flex', alignItems: 'center', gap: 10 }}>

@@ -1,4 +1,5 @@
 import type { DetalleTecnico as Detalle, IntegranteFinanciero } from '../api'
+import { conGlosario } from '../glosario'
 
 const pesos = (v: number | null | undefined) =>
   v == null ? '—' : `$${v.toLocaleString('es-CO', { maximumFractionDigits: 0 })}`
@@ -50,8 +51,9 @@ export default function DetalleFinanciero({ detalle }: { detalle: Detalle }) {
       <div className="detalle-tecnico-resumen">
         {'liquidez' in f && (
           <span>
-            Liquidez <strong>{razon(f.liquidez)}</strong> · endeudamiento <strong>{razon(f.endeudamiento)}</strong> ·
-            cobertura de intereses <strong>{razon(f.cobertura, 2)}</strong>
+            {conGlosario('Liquidez')} <strong>{razon(f.liquidez, 2)}</strong> · {conGlosario('endeudamiento')}{' '}
+            <strong>{razon(f.endeudamiento, 2)}</strong> · {conGlosario('cobertura de intereses')}{' '}
+            <strong>{razon(f.cobertura, 2)}</strong>
           </span>
         )}
         {'roa' in f && (
@@ -66,7 +68,7 @@ export default function DetalleFinanciero({ detalle }: { detalle: Detalle }) {
         )}
         {f.exigida != null && (
           <span>
-            Capacidad residual del proponente <strong>{f.crp != null ? pesos(f.crp) : 'sin calcular'}</strong> · exigida{' '}
+            {conGlosario('Capacidad residual')} del proponente <strong>{f.crp != null ? pesos(f.crp) : 'sin calcular'}</strong> · exigida{' '}
             {pesos(f.exigida)}
           </span>
         )}
@@ -74,15 +76,16 @@ export default function DetalleFinanciero({ detalle }: { detalle: Detalle }) {
       {f.integrantes?.map((r) => (
         <div key={r.nombre} className="contrato-ficha" data-problema={r.crp == null}>
           <div className="contrato-ficha-titulo">
-            {r.nombre} · CRP {r.crp != null ? pesos(r.crp) : 'sin calcular'}
+            {r.nombre} · {conGlosario('CRP')} {r.crp != null ? pesos(r.crp) : 'sin calcular'}
           </div>
           <div className="contrato-ficha-datos">
-            <span>CO (mayor ingreso operacional) {pesos(r.co)}</span>
+            <span>{conGlosario('CO (mayor ingreso operacional)')} {pesos(r.co)}</span>
             <span>
-              E {r.e != null ? razon(r.e, 2) : '—'} → {r.puntos_e ?? '—'} pts · CT {r.profesionales ?? 0} profesionales →{' '}
-              {r.puntos_ct ?? 0} pts · CF liquidez {razon(r.liquidez, 2)} → {r.puntos_cf ?? '—'} pts
+              {conGlosario('E')} {r.e != null ? razon(r.e, 2) : '—'} → {r.puntos_e ?? '—'} pts ·{' '}
+              {conGlosario('CT')} {r.profesionales ?? 0} profesionales → {r.puntos_ct ?? 0} pts ·{' '}
+              {conGlosario('CF')} liquidez {razon(r.liquidez, 2)} → {r.puntos_cf ?? '—'} pts
             </span>
-            <span>SCE (saldo de contratos en ejecución) {r.sce != null ? pesos(r.sce) : 'sin leer'}</span>
+            <span>{conGlosario('SCE (saldo de contratos en ejecución)')} {r.sce != null ? pesos(r.sce) : 'sin leer'}</span>
           </div>
         </div>
       ))}
