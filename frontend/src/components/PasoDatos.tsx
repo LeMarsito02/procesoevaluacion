@@ -9,6 +9,8 @@ export type BaseCalculo = 'lote_mayor_valor' | 'presupuesto_total'
 
 interface Props {
   codigoProceso: string
+  /** Área de la evaluación ("Técnica"). Sin ella —creando el proceso— no hay área todavía. */
+  areaNombre?: string
   fechaCierre: string
   objetoGeneral: string
   lotes: Lote[]
@@ -56,7 +58,7 @@ export default function PasoDatos(p: Props) {
       <fieldset className="fieldset-limpio" disabled={p.soloLectura}>
       <div className="page-head">
         <div>
-          <div className="eyebrow">Evaluación jurídica</div>
+          <div className="eyebrow">{p.areaNombre ? `Evaluación ${p.areaNombre.toLowerCase()}` : 'Proceso nuevo'}</div>
           <h1>Verifique los datos del proceso</h1>
           <p>
             Esto es lo que se leyó del Documento Base. Si algo no coincide, corríjalo antes de evaluar: estos valores se

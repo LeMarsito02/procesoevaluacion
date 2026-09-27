@@ -110,7 +110,6 @@ export default function PaginaEvaluacion({ id }: { id: string }) {
 }
 
 function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
-  const { confirmar } = useDialogos()
   const sesion = useSesion()!
   const id = inicial.evaluacion.id
   const [resumen, setResumen] = useState<EvaluacionResumen>(inicial.evaluacion)
@@ -406,6 +405,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
 
       {paso === 'datos' && (
         <PasoDatos
+          areaNombre={resumen.tipo_nombre}
           codigoProceso={codigo}
           fechaCierre={fechaCierre}
           {...propsDatos(datos, fechaCierre)}
@@ -447,6 +447,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
 
       {paso === 'evaluacion' && (
         <PasoEvaluacion
+          areaNombre={resumen.tipo_nombre}
           proponentes={proponentes}
           resultados={resultados}
           revisiones={revisiones}
@@ -507,6 +508,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
 
       {paso === 'informe' && (
         <PasoInforme
+          areaNombre={resumen.tipo_nombre}
           codigoProceso={codigo}
           nombreArchivo={`INFORME EVALUACION ${resumen.tipo.toUpperCase()} ${codigo}${resumen.estado === 'aprobada' ? '' : ' (BORRADOR)'}.xlsx`}
           proponentes={proponentes}
@@ -693,6 +695,7 @@ function BarraEvaluacion({
   onCambio: (r: EvaluacionResumen) => void
   onAviso: (t: string) => void
 }) {
+  const { confirmar } = useDialogos()
   const [equipo, setEquipo] = useState<MiembroCarga[] | null>(null)
   const [ocupado, setOcupado] = useState(false)
 

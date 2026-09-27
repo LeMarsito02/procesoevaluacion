@@ -18,6 +18,8 @@ export interface ProgresoEvaluacion {
 }
 
 interface Props {
+  /** Área de la evaluación ("Técnica"), para el rótulo de la pantalla. */
+  areaNombre: string
   proponentes: Proponente[]
   resultados: Record<string, ResultadoRequisito[]>
   revisiones: Revisiones
@@ -190,7 +192,7 @@ export default function PasoEvaluacion(p: Props) {
     <main className="page">
       <div className="page-head">
         <div>
-          <div className="eyebrow">Evaluación jurídica</div>
+          <div className="eyebrow">Evaluación {p.areaNombre.toLowerCase()}</div>
           <h1>Evaluación y revisión</h1>
           <p>
             Haga clic en un proponente o en cualquier casilla para ver el detalle. Solo necesita revisar las casillas en{' '}

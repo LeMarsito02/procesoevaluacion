@@ -307,6 +307,7 @@ export default function Previsualizacion() {
       <section>
         <h2 style={{ fontSize: 18, marginBottom: 12 }}>Pantalla de evaluación y revisión</h2>
         <PasoEvaluacion
+          areaNombre="Técnica"
           proponentes={PROPONENTES}
           resultados={RESULTADOS}
           revisiones={{}}

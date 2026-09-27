@@ -4,6 +4,8 @@ import Icono from './Icono'
 import { useDialogos } from '../dialogos'
 
 interface Props {
+  /** Área de la evaluación ("Técnica"), para el rótulo y el título. */
+  areaNombre: string
   codigoProceso: string
   /** Nombre de archivo que genera el servidor. */
   nombreArchivo: string
@@ -60,8 +62,8 @@ export default function PasoInforme(p: Props) {
     <main className="page page-narrow">
       <div className="page-head">
         <div>
-          <div className="eyebrow">Evaluación jurídica</div>
-          <h1>Informe de evaluación jurídica</h1>
+          <div className="eyebrow">Evaluación {p.areaNombre.toLowerCase()}</div>
+          <h1>Informe de evaluación {p.areaNombre.toLowerCase()}</h1>
           <p>Descargue el Excel con el resultado de cada proponente, listo para el informe del proceso {p.codigoProceso}.</p>
         </div>
       </div>
