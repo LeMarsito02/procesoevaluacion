@@ -98,6 +98,16 @@ class Factor:
     no_aplica: bool = False
 
 
+# El número con que un pliego llama a sus formatos no identifica nada: el
+# emprendimiento de mujeres es el Formato 12 en un proceso de obra y el 13 en
+# uno de interventoría, donde el 12 es el factor de sostenibilidad; el de
+# discapacidad es el 8 en obra y el 6 en interventoría. Lo que no cambia es el
+# tema, así que el título se busca con el número que sea: exigir uno fijo dejaba
+# el documento en la oferta sin encontrar y el factor entero a revisión en todas
+# las ofertas del proceso.
+NUMERO = r"\d{1,2}"
+
+
 def _buscar_formato(pdfs: dict[str, bytes], titulo: re.Pattern, pista: re.Pattern | None = None):
     """(archivo, texto normalizado) de los PDF cuyo título calza, uno a uno:
     primero los que lo sugieren por el nombre; quien llama se detiene en el
@@ -145,17 +155,17 @@ _JURAMENTO = re.compile(r"GRAVEDAD\s+DE(?:L)?\s+JURAMENTO|BAJO\s+JURAMENTO")
 def factor_calidad(pdfs: dict[str, bytes], codigo_proceso: str | None) -> list[Factor]:
     gerencia = _compromiso_firmado(
         pdfs, Factor("gerencia_proyectos", "4.2.1 Programa de gerencia de proyectos (Formato 7A)", 5),
-        re.compile(r"FORMATO\s*7\s*A\b.{0,20}PROGRAMA\s+DE\s+GERENCIA|PROGRAMA\s+DE\s+GERENCIA\s+DE\s+PROYECTOS", re.S),
+        re.compile(rf"FORMATO\s*{NUMERO}\s*A\b.{{0,20}}PROGRAMA\s+DE\s+GERENCIA|PROGRAMA\s+DE\s+GERENCIA\s+DE\s+PROYECTOS", re.S),
         _FORMATO7_PISTA, _JURAMENTO, codigo_proceso,
     )
     plan = _compromiso_firmado(
         pdfs, Factor("plan_calidad", "4.2.3 Plan de calidad (Formato 7C)", 5),
-        re.compile(r"FORMATO\s*7\s*C\b.{0,20}PLAN\s+DE\s+CALIDAD", re.S),
+        re.compile(rf"FORMATO\s*{NUMERO}\s*C\b.{{0,20}}PLAN\s+DE\s+CALIDAD", re.S),
         _FORMATO7_PISTA, re.compile(r"ISO|PLAN\s+DE\s+CALIDAD|COMPROM"), codigo_proceso,
     )
     ambiental = _compromiso_firmado(
         pdfs, Factor("criterios_ambientales", "4.2.4 Criterios ambientales y sociales (Formato 14)", 20),
-        re.compile(r"FORMATO\s*14\b.{0,60}AMBIENTAL", re.S),
+        re.compile(rf"FORMATO\s*{NUMERO}\b.{{0,60}}AMBIENTAL", re.S),
         re.compile(r"FORMA\w*\s*14|AMBIENTAL|PONDERABLE|PUNTAJE"), _JURAMENTO, codigo_proceso,
     )
     return [gerencia, plan, ambiental]
@@ -265,8 +275,8 @@ def mipyme(integrantes: list[IntegranteTecnico], plural: bool, minimo_participac
     return factor
 
 
-_FORMATO9A = re.compile(r"FORMATO\s*9\s*A\b.{0,30}SERVICIOS\s+NACIONALES|PROMOCION\s+DE\s+SERVICIOS\s+NACIONALES", re.S)
-_FORMATO9B = re.compile(r"FORMATO\s*9\s*B\b.{0,40}COMPONENTE\s+NACIONAL", re.S)
+_FORMATO9A = re.compile(rf"FORMATO\s*{NUMERO}\s*A\b.{{0,30}}SERVICIOS\s+NACIONALES|PROMOCION\s+DE\s+SERVICIOS\s+NACIONALES", re.S)
+_FORMATO9B = re.compile(rf"FORMATO\s*{NUMERO}\s*B\b.{{0,40}}COMPONENTE\s+NACIONAL", re.S)
 
 
 _AL_MENOS_RE = re.compile(r"AL\s+MENOS\s+(?:EL\s+)?[^%\d\n]{0,40}?(\d{2,3}(?:[.,]\d+)?)\s*%")
@@ -338,7 +348,7 @@ def industria_nacional(
     return factor
 
 
-_FORMATO8 = re.compile(r"FORMATO\s*8\b.{0,80}DISCAPACIDAD", re.S)
+_FORMATO_DISCAPACIDAD = re.compile(rf"FORMATO\s*{NUMERO}\b.{{0,80}}DISCAPACIDAD", re.S)
 _PLANTA_RE = re.compile(r"PLANTA\s+DE\s+PERSONAL\s+(\d{1,5})\s+(\d{1,4})\b")
 _MINTRABAJO_RE = re.compile(r"CONSTATACION\s+DE\s+VINCULACION|MINISTERIO\s+DE(?:L)?\s+TRABAJO.{0,600}DISCAPACIDAD", re.S)
 _TOTAL_RE = re.compile(r"NUMERO\s+TOTAL\s+DE\s+TRABAJADORES\s*:?\s*(\d{1,5})\b")
@@ -445,13 +455,13 @@ def discapacidad(
         texto = normalizar(" ".join(extraer_texto(pdfs[archivo], max_paginas=3).split()))
         certificados.append((leer_certificado_discapacidad(archivo, texto), texto))
     formatos = []
-    for archivo, _ in _buscar_formato(pdfs, _FORMATO8, re.compile(r"FORMA\w*\s*8|DISCAPACI")):
+    for archivo, _ in _buscar_formato(pdfs, _FORMATO_DISCAPACIDAD, re.compile(r"FORMA\w*\s*8|DISCAPACI")):
         texto = normalizar(" ".join(extraer_texto(pdfs[archivo], max_paginas=3).split()))
         formatos.append((archivo, texto))
     if not certificados:
         factor.motivos.append("no se encontró la constancia del Ministerio de Trabajo")
     if not formatos:
-        factor.motivos.append("no se encontró el Formato 8")
+        factor.motivos.append("no se encontró el formato de vinculación de personas con discapacidad")
     for integrante in candidatos:
         faltas = []
         suyos = [(c, t) for c, t in certificados if _es_de(integrante, c.identificacion, t)]
@@ -488,7 +498,7 @@ def discapacidad(
     return factor
 
 
-_FORMATO12 = re.compile(r"FORMATO\s*12\s*[AB]?\b.{0,60}(?:EMPRENDIMIENTO|MUJER)", re.S)
+_FORMATO_MUJERES = re.compile(rf"FORMATO\s*{NUMERO}\s*[AB]?\b.{{0,60}}(?:EMPRENDIMIENTO|MUJER)", re.S)
 _DECLARACION_ACCIONES_RE = re.compile(r"MAS\s+DEL\s+CINCUENTA\s+POR\s+CIENTO\s*\(?\s*50\s*%?\s*\)?\s*DE\s+LAS\s+ACCIONES")
 _CUADRO_RE = re.compile(
     r"SIGUIENTE\s+CUADRO(.{0,2500}?)(?:DE\s+IGUAL\s+(?:MANERA|FORMA)|MANIFESTAMOS|EN\s+CONSTANCIA|ATENTAMENTE|CODIGO\s+CCE|FIRMA)", re.S
@@ -520,13 +530,13 @@ def emprendimiento_mujeres(pdfs: dict[str, bytes], integrantes: list[IntegranteT
 
     factor = Factor("mujeres", "4.6 Emprendimientos y empresas de mujeres (Formato 12)", 0.25)
     encontrados = 0
-    for archivo, _ in _buscar_formato(pdfs, _FORMATO12, re.compile(r"FORMA\w*\s*12|MUJER|EMPRENDIMIENTO")):
+    for archivo, _ in _buscar_formato(pdfs, _FORMATO_MUJERES, re.compile(r"FORMA\w*\s*1[23]|MUJER|EMPRENDIMIENTO")):
         encontrados += 1
         texto = normalizar(" ".join(extraer_texto(pdfs[archivo], max_paginas=4).split()))
         factor.archivo = factor.archivo or archivo
         integrante = next((i for i in integrantes if _es_de(i, "", texto)), None)
         nombre = integrante.nombre if integrante else "integrante no identificado"
-        if re.search(r"FORMATO\s*12\s*B|ESTABLECIMIENTO\s+DE\s+COMERCIO", texto):
+        if re.search(rf"FORMATO\s*{NUMERO}\s*B\b|ESTABLECIMIENTO\s+DE\s+COMERCIO", texto):
             factor.motivos.append(f"{nombre}: Formato 12B (persona natural con establecimiento de comercio); verifica la cédula y la matrícula")
             continue
         if not _DECLARACION_ACCIONES_RE.search(texto.replace("(50%)", "(50 %)")):
@@ -565,5 +575,5 @@ def emprendimiento_mujeres(pdfs: dict[str, bytes], integrantes: list[IntegranteT
             return factor
         factor.motivos.append(f"{nombre}: {'; '.join(faltas)}")
     if not encontrados:
-        factor.motivos.append("no se encontró el Formato 12")
+        factor.motivos.append("no se encontró el formato de emprendimientos y empresas de mujeres")
     return factor
