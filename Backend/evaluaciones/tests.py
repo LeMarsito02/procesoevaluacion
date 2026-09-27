@@ -2298,6 +2298,66 @@ class OfertasSubidasAManoTests(SimpleTestCase):
         self.assertIn("Vuelve a subirla", str(caso.exception))
 
 
+class NombreDelProponenteTests(SimpleTestCase):
+    """Las ofertas que se bajan del SECOP no dicen de quién son: el portal las
+    nombra «p100 Download.zip» o «CO1.RPL.5801690_20260923122433.zip». El nombre
+    está dentro de la oferta, en la carta de presentación y en el Formato 2."""
+
+    def test_los_nombres_del_portal_no_identifican_a_nadie(self):
+        for nombre in ["Download", "DESCARGA", "oferta", "propuesta", "documentos", "sin nombre",
+                       "CO1.RPL.5801690_20260923122433", "  ", "123", "1. "]:
+            self.assertTrue(servicios.nombre_de_nadie(nombre), nombre)
+
+    def test_un_nombre_de_verdad_no_se_toca(self):
+        for nombre in ["CONSORCIO MARANATHA", "GAMMA LTDA", "BUILDING SAS", "AR&S S.A.S",
+                       "UNION TEMPORAL SAN LUCAS A2I", "9D SOLUCIONES"]:
+            self.assertFalse(servicios.nombre_de_nadie(nombre), nombre)
+
+    def test_se_lee_de_la_carta_de_presentacion(self):
+        from motor.evaluacion.nombre_declarado import EN_LA_CARTA_RE, _norm
+
+        texto = _norm("quien obra en mi calidad de representante legal del Consorcio Maranatha, "
+                      "en adelante el Consorcio, identificado con NIT 901.000.000-1")
+        self.assertEqual(EN_LA_CARTA_RE.search(texto).group(1).strip(), "CONSORCIO MARANATHA")
+
+    def test_se_lee_del_formato_2(self):
+        from motor.evaluacion.nombre_declarado import SE_DENOMINA_RE, _norm
+
+        texto = _norm("1. El Consorcio se denomina CONSORCIO SAN JUAN MC 027 y está conformado por")
+        self.assertEqual(SE_DENOMINA_RE.search(texto).group(1).strip(), "CONSORCIO SAN JUAN MC 027")
+
+    def test_la_forma_juridica_sola_no_es_un_nombre(self):
+        from motor.evaluacion.nombre_declarado import _limpiar
+
+        self.assertIsNone(_limpiar("CONSORCIO"))
+        self.assertIsNone(_limpiar("UNION TEMPORAL"))
+        self.assertEqual(_limpiar("  CONSORCIO RR . "), "CONSORCIO RR")
+
+    def test_entre_los_dos_documentos_gana_el_nombre_mas_corto(self):
+        """Los formatos son escaneos y la tabla de al lado deja basura pegada
+        («CONSORCIO EDUCATIVO 26 3»): el nombre bueno es el que los dos
+        documentos comparten."""
+        from motor.evaluacion import nombre_declarado
+
+        with mock.patch.object(nombre_declarado, "de_la_carta", return_value="CONSORCIO EDUCATIVO 26"), \
+             mock.patch.object(nombre_declarado, "del_formato2", return_value="CONSORCIO EDUCATIVO 26 3"):
+            self.assertEqual(nombre_declarado.leer({}, "ICCU-LP-027-2026")[0], "CONSORCIO EDUCATIVO 26")
+
+    def test_si_los_dos_documentos_dicen_nombres_distintos_no_se_elige(self):
+        from motor.evaluacion import nombre_declarado
+
+        with mock.patch.object(nombre_declarado, "de_la_carta", return_value="CONSORCIO MARANATHA"), \
+             mock.patch.object(nombre_declarado, "del_formato2", return_value="CONSORCIO SAN JUAN"):
+            self.assertIsNone(nombre_declarado.leer({}, "ICCU-LP-027-2026"))
+
+    def test_con_un_solo_documento_se_usa_y_se_dice_de_donde_salio(self):
+        from motor.evaluacion import nombre_declarado
+
+        with mock.patch.object(nombre_declarado, "de_la_carta", return_value=None), \
+             mock.patch.object(nombre_declarado, "del_formato2", return_value="CONSORCIO RR"):
+            self.assertEqual(nombre_declarado.leer({}, "ICCU-LP-027-2026"), ("CONSORCIO RR", "el Formato 2"))
+
+
 class UnZipConTodasLasOfertasTests(SimpleTestCase):
     """Hay entidades que publican un solo archivo con todas las ofertas adentro,
     cada una en su propio zip o cada una en su carpeta. Se reparte antes de
@@ -3333,6 +3393,71 @@ class RegistroDeLoQueNoAutomatizamosTests(BaseEvaluaciones):
         servicios.asumir_requisitos_del_pliego(proceso, [clave], self.jefe)
         primero = RequisitoNoAutomatizado.objects.first()
         self.assertEqual(primero.clave, clave)
+
+
+class RenombrarAlProponenteSinNombreTests(BaseEvaluaciones):
+    """Al terminar de evaluar una oferta cuyo archivo no decía de quién era, el
+    proponente se queda con el nombre que declaran sus documentos."""
+
+    def _evaluar(self, hoja="P-01"):
+        from evaluaciones.models import Evaluacion
+
+        c, ev = self.crear()
+        evaluacion = Evaluacion.objects.get(pk=ev["id"])
+        proponente = evaluacion.proceso.proponentes.get(hoja=hoja)
+        proponente.nombre = "Download"
+        proponente.nombre_archivo = "p1 Download.zip"
+        proponente.save(update_fields=["nombre", "nombre_archivo"])
+        servicios.guardar_resultados(
+            evaluacion, proponente, resultados_falsos(servicios.proponente_motor(proponente), evaluacion.proceso)
+        )
+        proponente.refresh_from_db()
+        return proponente
+
+    def test_toma_el_nombre_que_dicen_sus_documentos(self):
+        with mock.patch("motor.integrations.drive.download_file_bytes", return_value=b"zip"), \
+             mock.patch("motor.procesamiento.zip_utils.pdfs_con_aportados", return_value={}), \
+             mock.patch("motor.evaluacion.nombre_declarado.leer",
+                        return_value=("CONSORCIO MARANATHA", "la carta de presentación")):
+            proponente = self._evaluar()
+        self.assertEqual(proponente.nombre, "CONSORCIO MARANATHA")
+        # Queda dicho de dónde salió: quien evalúa no se encuentra un nombre
+        # aparecido de la nada.
+        self.assertIn("la carta de presentación", proponente.advertencia)
+        self.assertIn("p1 Download.zip", proponente.advertencia)
+
+    def test_si_los_documentos_no_lo_dicen_se_queda_como_estaba(self):
+        with mock.patch("motor.integrations.drive.download_file_bytes", return_value=b"zip"), \
+             mock.patch("motor.procesamiento.zip_utils.pdfs_con_aportados", return_value={}), \
+             mock.patch("motor.evaluacion.nombre_declarado.leer", return_value=None):
+            proponente = self._evaluar()
+        self.assertEqual(proponente.nombre, "Download")
+
+    def test_un_proponente_con_nombre_no_se_renombra(self):
+        """Si el archivo sí decía de quién era la oferta, el nombre es ese: no se
+        lee ningún documento ni se cambia nada."""
+        from evaluaciones.models import Evaluacion
+
+        c, ev = self.crear()
+        evaluacion = Evaluacion.objects.get(pk=ev["id"])
+        proponente = evaluacion.proceso.proponentes.get(hoja="P-02")
+        with mock.patch("motor.evaluacion.nombre_declarado.leer") as leer:
+            servicios.guardar_resultados(
+                evaluacion, proponente, resultados_falsos(servicios.proponente_motor(proponente), evaluacion.proceso)
+            )
+        leer.assert_not_called()
+        proponente.refresh_from_db()
+        self.assertEqual(proponente.nombre, "Vías SAS")
+
+    def test_el_fallo_al_leer_el_nombre_no_tumba_la_evaluacion(self):
+        """El nombre es una etiqueta: si la oferta no se puede abrir, los
+        resultados de la evaluación se guardan igual."""
+        from evaluaciones.models import Resultado
+
+        with mock.patch("motor.integrations.drive.download_file_bytes", side_effect=OSError("sin red")):
+            proponente = self._evaluar()
+        self.assertEqual(proponente.nombre, "Download")
+        self.assertTrue(Resultado.objects.filter(proponente=proponente).exists())
 
 
 class RegistroDeCausasDeRevisionTests(BaseEvaluaciones):

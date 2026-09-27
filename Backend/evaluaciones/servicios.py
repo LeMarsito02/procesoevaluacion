@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict, dataclass
 from datetime import timedelta
 from uuid import UUID
@@ -167,6 +168,12 @@ def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultado
         anotar_causas_de_revision(evaluacion, resultados)
     except Exception:  # noqa: BLE001
         log.exception("no se pudieron anotar las causas de revisión")
+    try:
+        # Si el archivo no decía de quién era la oferta, ahora sí se sabe: lo
+        # dicen sus documentos. Tampoco cambia ningún resultado.
+        poner_el_nombre_que_dice_la_oferta(evaluacion, proponente)
+    except Exception:  # noqa: BLE001
+        log.exception("no se pudo leer el nombre del proponente %s", proponente.pk)
 
 
 def anotar_causas_de_revision(evaluacion: Evaluacion, resultados: list[ResultadoRequisito]) -> int:
@@ -287,6 +294,66 @@ def clave_persona(nombre: str, documento: str | None, tipo: str | None = None) -
     if len(digitos) >= 5:
         return digitos[:9] if tipo == "juridica" and len(digitos) >= 9 else digitos
     return " ".join(sorted(nombre.upper().split()))
+
+
+# Con qué nombres bautiza el portal las ofertas que no dicen de quién son: el
+# botón de descarga («p100 Download.zip») o el consecutivo de la oferta
+# («CO1.RPL.5801690_20260923122433.zip»). Un proponente así saldría en la
+# pantalla y en el informe con un nombre que no es de nadie.
+_NOMBRE_DE_NADIE_RE = re.compile(
+    r"^(?:DOWNLOAD|DESCARGA|OFERTA|PROPUESTA|DOCUMENTOS?|ARCHIVO|SIN\s+NOMBRE"
+    r"|CO1\.[A-Z]+\.[\d_]+|[\d_\-. ]+)$",
+    re.IGNORECASE,
+)
+# Cuando el certificado no dice la razón social, el motor describe a la empresa
+# por su NIT. Eso sirve para explicar un motivo, no para nombrar al proponente.
+_EMPRESA_SIN_RAZON_RE = re.compile(r"^LA EMPRESA CON NIT\b", re.IGNORECASE)
+
+
+def nombre_de_nadie(nombre: str) -> bool:
+    """El nombre que trae el archivo no identifica a ningún proponente."""
+    return not nombre.strip() or bool(_NOMBRE_DE_NADIE_RE.match(nombre.strip()))
+
+
+def poner_el_nombre_que_dice_la_oferta(evaluacion: Evaluacion, proponente: Proponente) -> str | None:
+    """Le pone al proponente el nombre que declaran sus propios documentos.
+
+    Solo cuando el nombre del archivo no identifica a nadie, que es como llegan
+    las ofertas bajadas del SECOP. El nombre sale de la carta de presentación y
+    del Formato 2 (ver motor/evaluacion/nombre_declarado.py) o, si es una
+    empresa que se presenta sola, de la razón social de su certificado de
+    cámara. Devuelve el nombre puesto, o None si los documentos no lo dicen."""
+    from evaluaciones.models import PersonaVerificada, TipoPersona
+    from motor.evaluacion import nombre_declarado
+    from motor.integrations.drive import download_file_bytes
+    from motor.procesamiento.zip_utils import pdfs_con_aportados
+
+    if not nombre_de_nadie(proponente.nombre):
+        return None
+    pdfs = pdfs_con_aportados(
+        download_file_bytes(proponente.drive_file_id), proponente_motor(proponente, evaluacion)
+    )
+    leido = nombre_declarado.leer(pdfs, evaluacion.proceso.codigo)
+    if leido is None:
+        # Una empresa que se presenta sola: su certificado de cámara ya dio la
+        # razón social. Si hay varias, es un proponente plural y su nombre es el
+        # del consorcio, no el de un integrante.
+        empresas = [
+            x.nombre
+            for x in PersonaVerificada.objects.filter(evaluacion=evaluacion, proponente=proponente, tipo=TipoPersona.JURIDICA)
+            if not _EMPRESA_SIN_RAZON_RE.match(x.nombre)
+        ]
+        if len(empresas) != 1:
+            return None
+        leido = (empresas[0], "el certificado de existencia y representación legal")
+    nombre, origen = leido
+    proponente.nombre = nombre
+    proponente.advertencia = (
+        f"el nombre del archivo («{proponente.nombre_archivo}») no dice de quién es la oferta: "
+        f"el nombre se tomó de {origen}"
+    )
+    proponente.save(update_fields=["nombre", "advertencia"])
+    return nombre
 
 
 def sincronizar_personas(evaluacion: Evaluacion, proponente: Proponente) -> None:
