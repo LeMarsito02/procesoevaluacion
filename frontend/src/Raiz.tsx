@@ -17,6 +17,8 @@ const PaginaMejoras = lazy(() => import('./paginas/PaginaMejoras'))
 const PaginaRendimiento = lazy(() => import('./paginas/PaginaRendimiento'))
 const PaginaSoporte = lazy(() => import('./paginas/PaginaSoporte'))
 const PaginaRestablecer = lazy(() => import('./paginas/PaginaRestablecer'))
+const PaginaAcerca = lazy(() => import('./paginas/PaginaAcerca'))
+import PantallaCompromiso from './paginas/PantallaCompromiso'
 
 import { encajar, navegar, useRuta } from './rutas'
 import { ContextoSesion, puedeCrearProcesos, puedeGestionarEquipo } from './sesion'
@@ -120,6 +122,16 @@ export default function Raiz() {
 
   if (!usuario) return <PaginaEntrar onEntrar={entrar} />
 
+  // Compromiso de uso (expediente LEG-004, 6.4): antes de usar la herramienta.
+  if (usuario.compromiso_pendiente) {
+    return (
+      <ContextoSesion.Provider value={{ usuario, salir }}>
+        <Topbar />
+        <PantallaCompromiso usuario={usuario} onAceptado={setUsuario} onSalir={salir} />
+      </ContextoSesion.Provider>
+    )
+  }
+
   if (usuario.rol === 'soporte' && !usuario.entidad) {
     return (
       <ContextoSesion.Provider value={{ usuario, salir }}>
@@ -154,6 +166,7 @@ export default function Raiz() {
   // El registro junta información de varias entidades: solo nosotros.
   else if (ruta === '/mejoras' && (usuario.rol === 'superadmin' || usuario.rol === 'soporte')) pagina = <PaginaMejoras />
   else if (ruta === '/cuenta') pagina = <PaginaCuenta />
+  else if (ruta === '/acerca') pagina = <PaginaAcerca />
   else pagina = <PaginaInicio />
 
   return (
@@ -180,6 +193,12 @@ export default function Raiz() {
       )}
       {conTopbar && <Topbar />}
       <Suspense fallback={<Cargando />}>{pagina}</Suspense>
+      <footer className="pie-version">
+        <span>MiEvaluador {usuario.version_sistema ? `v${usuario.version_sistema}` : ''} · LeMarTek Labs S.A.S.</span>
+        <button type="button" onClick={() => navegar('/acerca')}>
+          Acerca de MiEvaluador y transparencia algorítmica
+        </button>
+      </footer>
     </ContextoSesion.Provider>
   )
 }

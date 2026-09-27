@@ -753,3 +753,14 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Aviso permanente de herramienta de apoyo (expediente LEG-004, 6.3). */
+.aviso-apoyo { display: flex; align-items: center; gap: 8px; justify-content: center; padding: 6px 16px; font-size: 12.5px; color: var(--ink-2); background: var(--na-soft); border-bottom: 1px solid var(--line, #e3e6ec); text-align: center; }
+.pie-version { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; padding: 24px 16px 32px; font-size: 12px; color: var(--ink-2); }
+.pie-version button { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+.compromiso-texto { font-size: 15px; line-height: 1.6; padding: 16px; border-radius: 10px; background: var(--na-soft); margin: 12px 0 20px; }
+.muestra-lista { margin-top: 12px; border: 1px solid var(--line, #e3e6ec); border-radius: 10px; background: var(--surface, #fff); }
+.muestra-fila:first-child { border-top: 0; }
+.muestra-fila { display: grid; grid-template-columns: minmax(0, 1fr) 130px minmax(220px, 38%); gap: 12px; align-items: center; padding: 6px 14px; border-top: 1px solid var(--line, #e3e6ec); }
+.muestra-req { font-size: 13.5px; }
+.muestra-accion { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }

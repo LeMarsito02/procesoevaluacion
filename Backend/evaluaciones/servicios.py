@@ -143,16 +143,21 @@ def _documentos_aportados(p: Proponente, evaluacion: Evaluacion) -> list[tuple[s
 
 
 def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultados: list[ResultadoRequisito]) -> None:
+    from evaluaciones.cumplimiento import trazabilidad_resultado
+
     with transaction.atomic():
         for r in resultados:
+            datos = r.model_dump(mode="json")
             Resultado.objects.update_or_create(
                 evaluacion=evaluacion,
                 proponente=proponente,
                 requisito=r.requisito,
                 defaults={
                     "entidad_id": evaluacion.entidad_id,
-                    "datos": r.model_dump(mode="json"),
+                    "datos": datos,
                     "requiere_revision": requiere_revision(r),
+                    # Con qué versión y, si se usó IA, con qué modelo (LEG-004, 4.1 y 9.3).
+                    "trazabilidad": trazabilidad_resultado(datos),
                 },
             )
         sincronizar_personas(evaluacion, proponente)
@@ -255,7 +260,7 @@ def revisar_integrantes_compartidos(evaluacion: Evaluacion) -> int:
                 continue
             hojas = {p.id: p for p in Proponente.objects.filter(id__in=otros)}
             partes = [
-                f"{', '.join(sorted(set(n)))} también integra {hojas[p].hoja} {hojas[p].nombre_proponente} "
+                f"{', '.join(sorted(set(n)))} también integra {hojas[p].hoja} {hojas[p].nombre} "
                 f"({', '.join(sorted(l.lower() for l in lotes.get(p, set()) if l)) or 'otros lotes'})"
                 for p, n in otros.items() if p in hojas
             ]
@@ -918,6 +923,9 @@ def generar_informe_excel(evaluacion: Evaluacion) -> tuple[bytes, str]:
     )
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
     # Mismo nombre que usa la plantilla oficial ("INFORME EVALUACION JURIDICA …"), sin tildes.
+    from evaluaciones.cumplimiento import rotular_informe_de
+
+    contenido = rotular_informe_de(evaluacion, contenido)
     return contenido, f"INFORME EVALUACION {evaluacion.tipo.upper()} {proceso.codigo}{borrador}.xlsx"
 
 
@@ -939,13 +947,16 @@ def generar_informe_tecnico(evaluacion: Evaluacion) -> tuple[bytes, str]:
         proceso.codigo,
         proceso.objeto,
         lotes,
-        [(p.hoja, p.nombre_proponente) for p in proceso.proponentes.order_by("numero_orden")],
+        [(p.hoja, p.nombre) for p in proceso.proponentes.order_by("numero_orden")],
         resultados,
         {r.lote or 0: r.numero for r in experiencia},
         borrador=evaluacion.estado != EstadoEvaluacion.APROBADA,
         titulos={r.numero: r.titulo for r in definicion.requisitos},
     )
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
+    from evaluaciones.cumplimiento import rotular_informe_de
+
+    contenido = rotular_informe_de(evaluacion, contenido)
     return contenido, f"INFORME EVALUACION TECNICA {proceso.codigo}{borrador}.xlsx"
 
 
@@ -975,7 +986,7 @@ def generar_informe_financiero(evaluacion: Evaluacion) -> tuple[bytes, str]:
         proceso.codigo,
         proceso.objeto,
         lotes,
-        [(p.hoja, p.nombre_proponente) for p in proceso.proponentes.order_by("numero_orden")],
+        [(p.hoja, p.nombre) for p in proceso.proponentes.order_by("numero_orden")],
         resultados,
         generales,
         por_lote,
@@ -983,6 +994,9 @@ def generar_informe_financiero(evaluacion: Evaluacion) -> tuple[bytes, str]:
         titulos={r.numero: r.titulo for r in definicion.requisitos},
     )
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
+    from evaluaciones.cumplimiento import rotular_informe_de
+
+    contenido = rotular_informe_de(evaluacion, contenido)
     return contenido, f"INFORME EVALUACION FINANCIERA {proceso.codigo}{borrador}.xlsx"
 
 
@@ -1036,13 +1050,29 @@ def generar_informe_consolidado(proceso) -> tuple[bytes, str]:
         proceso.codigo,
         proceso.objeto,
         lotes_del_proceso(proceso),
-        [(p.hoja, p.nombre_proponente) for p in proceso.proponentes.order_by("numero_orden")],
+        [(p.hoja, p.nombre) for p in proceso.proponentes.order_by("numero_orden")],
         resultados,
         requisitos,
         borrador=not aprobadas,
+        puntajes_adoptados=hojas_con_puntaje_adoptado(evaluaciones["tecnica"]) if "tecnica" in evaluaciones else None,
+    )
+    from evaluaciones.cumplimiento import LEYENDA_PREINFORME, constancia, rotular_excel, titulo_adoptado
+
+    ordenadas = [evaluaciones[t] for t in ("juridica", "tecnica", "financiera") if t in evaluaciones]
+    contenido = rotular_excel(
+        contenido,
+        adoptado=aprobadas,
+        titulo=" · ".join(titulo_adoptado(e) for e in ordenadas) if aprobadas else LEYENDA_PREINFORME,
+        texto_constancia="\n\n".join(constancia(e) for e in ordenadas),
     )
     borrador = "" if aprobadas else " (BORRADOR)"
     return contenido, f"INFORME CONSOLIDADO {proceso.codigo}{borrador}.xlsx"
+
+
+def hojas_con_puntaje_adoptado(evaluacion: Evaluacion) -> set[str]:
+    from evaluaciones.puntaje import adopciones_vigentes
+
+    return {p.hoja for p in adopciones_vigentes(evaluacion)}
 
 
 def eliminar_proceso(proceso) -> dict[str, int]:
@@ -1059,6 +1089,13 @@ def eliminar_proceso(proceso) -> dict[str, int]:
     if proceso.evaluaciones.filter(estado=EstadoEvaluacion.APROBADA).exists():
         raise ValueError(
             "Este proceso tiene evaluaciones aprobadas: son el registro oficial de la decisión y no se pueden eliminar."
+        )
+    # Aunque se haya reabierto, si alguna vez se aprobó y generó expediente,
+    # ese expediente es el registro de la decisión (expediente LEG-004, 4.1).
+    if Expediente.objects.filter(evaluacion__proceso=proceso).exists():
+        raise ValueError(
+            "Este proceso ya tuvo un expediente de evaluación: es el registro oficial de la decisión y no se puede "
+            "eliminar. Puede archivarlo."
         )
     with transaction.atomic():
         evaluaciones = list(proceso.evaluaciones.all())

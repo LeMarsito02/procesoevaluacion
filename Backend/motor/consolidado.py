@@ -66,10 +66,16 @@ def generar_informe(
     resultados: dict[str, dict[tuple[str, int], ResultadoInforme]],
     requisitos: dict[str, dict[str, list[int]]],
     borrador: bool,
+    puntajes_adoptados: set[str] | None = None,
 ) -> bytes:
     """`resultados` y `requisitos` van por área ("juridica", "tecnica",
     "financiera"). `requisitos[area]` trae "generales" (valen para todos los
-    lotes) y "lote_0", "lote_1"… con los de cada lote."""
+    lotes) y "lote_0", "lote_1"… con los de cada lote.
+
+    El puntaje y el orden de elegibilidad son preliminares: el puntaje es
+    evaluación en sentido estricto y lo adopta el evaluador técnico
+    después de revisar la tabla. Con `puntajes_adoptados` (hojas cuyo puntaje ya
+    adoptó una persona), solo esos proponentes entran al orden."""
     libro = Workbook()
     hoja_resumen = libro.active
     hoja_resumen.title = "Consolidado"
@@ -81,7 +87,7 @@ def generar_informe(
         hoja_resumen.cell(row=fila, column=1, value=nombre.upper()).font = Font(bold=True)
         fila += 1
         _encabezado(hoja_resumen, fila, ["PROP.", "NOMBRE DEL PROPONENTE", *(t for _, t in areas), "HABILITADO",
-                                         "PUNTAJE", "ORDEN DE ELEGIBILIDAD"])
+                                         "PUNTAJE PRELIMINAR", "ORDEN DE ELEGIBILIDAD PRELIMINAR"])
         fila += 1
         filas = []
         for hoja, nombre_proponente in proponentes:
@@ -97,7 +103,11 @@ def generar_informe(
         # firme. Los que empatan comparten puesto y se marcan: el desempate lo
         # decide la entidad con los criterios del pliego, no el programa.
         elegibles = sorted(
-            [f for f in filas if f[5] == "CUMPLE" and isinstance(f[6], (int, float))],
+            [
+                f for f in filas
+                if f[5] == "CUMPLE" and isinstance(f[6], (int, float))
+                and (puntajes_adoptados is None or f[0] in puntajes_adoptados)
+            ],
             key=lambda f: -f[6],
         )
         orden: dict[int, object] = {}
@@ -108,9 +118,18 @@ def generar_informe(
             empatados = sum(1 for otro in elegibles if otro[6] == f[6])
             orden[id(f)] = f"{puesto} (empate entre {empatados})" if empatados > 1 else puesto
         for f in filas:
-            _fila(hoja_resumen, fila, [*f, orden.get(id(f), PENDIENTE if f[5] == PENDIENTE else "")])
+            sin_adoptar = (
+                puntajes_adoptados is not None and f[5] == "CUMPLE" and isinstance(f[6], (int, float))
+                and f[0] not in puntajes_adoptados
+            )
+            puesto = "PUNTAJE SIN ADOPTAR" if sin_adoptar else orden.get(id(f), PENDIENTE if f[5] == PENDIENTE else "")
+            _fila(hoja_resumen, fila, [*f, puesto])
             fila += 1
         fila += 1
+    hoja_resumen.cell(row=fila, column=1, value=(
+        "Puntaje y orden de elegibilidad preliminares: no producen efecto hasta que el comité los adopte y los "
+        "motive en el informe que suscribe."
+    )).font = Font(italic=True, size=9)
     for j, ancho in enumerate([8, 46, 14, 14, 14, 14, 12, 20], 1):
         hoja_resumen.column_dimensions[get_column_letter(j)].width = ancho
 

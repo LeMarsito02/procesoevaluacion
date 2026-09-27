@@ -44,6 +44,11 @@ class Proceso(models.Model):
     # Retención: fecha en que se borraron las copias de los documentos de los
     # proponentes (se conservan resultados, decisiones e informes).
     documentos_eliminados_en = models.DateTimeField(null=True, blank=True)
+    # Un proceso que ya tuvo expediente no se elimina (es registro de la
+    # decisión): se archiva. Archivado deja de aparecer en las listas, pero se
+    # conserva con todo lo suyo.
+    archivado_en = models.DateTimeField(null=True, blank=True)
+    archivado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     creado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
     creado_en = models.DateTimeField(auto_now_add=True)
 
@@ -94,6 +99,10 @@ class Evaluacion(models.Model):
     aprobada_en = models.DateTimeField(null=True, blank=True)
     # Versión de la plantilla de evaluación con la que se evalúa (None = la base del sistema).
     plantilla = models.ForeignKey("PlantillaEvaluacion", on_delete=models.PROTECT, null=True, blank=True, related_name="evaluaciones")
+    # Con qué se aprobó: versión de MiEvaluador y modelos de IA configurados
+    # (expediente LEG-004, numerales 6.2 y 9.3). Se fijan al aprobar.
+    version_sistema = models.CharField(max_length=40, blank=True)
+    modelos_ia = models.JSONField(null=True, blank=True)
     creada_en = models.DateTimeField(auto_now_add=True)
     actualizada_en = models.DateTimeField(auto_now=True)
 
@@ -114,6 +123,9 @@ class Resultado(models.Model):
     datos = models.JSONField()
     # Necesita revisión humana: error, o no cumple y no es "N.A.".
     requiere_revision = models.BooleanField()
+    # Con qué versión del sistema y, si se usó IA, con qué modelo se obtuvo
+    # este resultado: {"version_sistema": "1.1.0", "modelos_ia": {...}}.
+    trazabilidad = models.JSONField(null=True, blank=True)
     evaluado_en = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -527,3 +539,80 @@ class MedicionRendimiento(models.Model):
 
     class Meta:
         ordering = ["-creada_en"]
+
+
+class EstadoMuestra(models.TextChoices):
+    EN_CURSO = "en_curso", "En curso"
+    CON_HALLAZGOS = "con_hallazgos", "Con hallazgos"
+    CERRADA = "cerrada", "Cerrada conforme"
+    ANULADA = "anulada", "Anulada"
+
+
+class MuestraControl(models.Model):
+    """Muestra de control de una evaluación (expediente LEG-004, numeral 3.1).
+
+    Antes de aprobar, una persona revisa contra su soporte un grupo sorteado
+    de verificaciones que el sistema dio por cumplidas. Si encuentra
+    un error, todo ese requisito vuelve a revisión humana en el proceso. La
+    semilla se guarda para que cualquiera pueda reproducir el sorteo."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="muestras")
+    semilla = models.BigIntegerField()
+    # Parámetros con que se sorteó: {"verificaciones": 10, "universo_verificaciones": 162, ...}.
+    parametros = models.JSONField(default=dict)
+    ofertas_sorteadas = models.JSONField(default=list)  # hojas que tocó el sorteo
+    estado = models.CharField(max_length=20, choices=EstadoMuestra.choices, default=EstadoMuestra.EN_CURSO)
+    # Requisitos en los que la muestra encontró un error: todos sus resultados
+    # automáticos del proceso pasaron a revisión humana.
+    requisitos_ampliados = models.JSONField(default=list)
+    creada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    creada_en = models.DateTimeField(auto_now_add=True)
+    cerrada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    cerrada_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-creada_en"]
+
+
+class ItemMuestra(models.Model):
+    """Un resultado verificado por el sistema que entró en la muestra."""
+
+    CONFORME = "conforme"
+    NO_CONFORME = "no_conforme"
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    muestra = models.ForeignKey(MuestraControl, on_delete=models.CASCADE, related_name="items")
+    proponente = models.ForeignKey(Proponente, on_delete=models.CASCADE, related_name="+")
+    requisito = models.PositiveSmallIntegerField()
+    usa_ia = models.BooleanField(default=False)
+    resultado = models.CharField(max_length=20, blank=True, choices=[(CONFORME, "Conforme"), (NO_CONFORME, "No conforme")])
+    nota = models.TextField(blank=True)
+    soporte_visto = models.BooleanField(default=False)
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    fecha = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [models.UniqueConstraint(fields=["muestra", "proponente", "requisito"], name="item_muestra_unico")]
+
+
+class AdopcionPuntaje(models.Model):
+    """El evaluador técnico adopta el puntaje preliminar de un proponente
+    (expediente LEG-004, numeral 1.2): el puntaje es evaluación en sentido
+    estricto (art. 5, num. 2, Ley 1150 de 2007) y no se adopta por muestra."""
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="adopciones_puntaje")
+    proponente = models.ForeignKey(Proponente, on_delete=models.CASCADE, related_name="+")
+    puntaje = models.FloatField()
+    detalle = models.JSONField(default=dict)  # puntos por factor al momento de adoptar
+    nota = models.TextField(blank=True)
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    fecha = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["evaluacion", "proponente"], name="adopcion_puntaje_unica")]

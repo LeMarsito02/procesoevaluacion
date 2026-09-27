@@ -184,7 +184,7 @@ export default function PanelProponente(p: Props) {
                 const estado = estadoDe(r, p.revisiones)
                 const abierto = abiertos.has(info.numero)
                 const decision = p.revisiones[claveRevision(r.hoja, r.requisito)]
-                const texto = r.error ?? r.motivo
+                const texto = r.revision_forzada ?? r.error ?? r.motivo
                 const archivos = r.archivo_evaluado
                   ? [r.archivo_evaluado]
                   : ordenarArchivosPorRequisito(info.numero, r.archivos_disponibles)
@@ -296,8 +296,12 @@ export default function PanelProponente(p: Props) {
                           ) : decision === undefined ? (
                             esPendiente(estado) ? (
                               <>
-                                <span className="small muted" style={{ marginRight: 'auto' }}>
-                                  Su decisión:
+                                <span
+                                  className="small muted"
+                                  style={{ marginRight: 'auto' }}
+                                  title="Decida viendo la evidencia: abra el documento soporte primero (sin documento, explique en la justificación qué consultó)."
+                                >
+                                  {r.archivo_evaluado ? 'Abra el soporte y decida:' : 'Su decisión (explique qué consultó):'}
                                 </span>
                                 <button className="btn btn-ok btn-sm" type="button" onClick={() => p.onRevisar?.(r.hoja, r.requisito, true)}>
                                   <Icono nombre="check" tam={15} /> Cumple

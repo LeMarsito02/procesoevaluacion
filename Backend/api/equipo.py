@@ -54,6 +54,8 @@ class MiembroOut(UsuarioOut):
     ultimo_ingreso: datetime | None
     # Aún no ha entrado a cambiar la contraseña temporal que le entregaron.
     debe_cambiar_clave: bool
+    # Compromiso de uso aceptado (LEG-004, 6.4): evidencia para el acta de capacitación.
+    compromiso_aceptado_en: datetime | None = None
 
 
 class CredencialesOut(Schema):
@@ -126,7 +128,8 @@ def _areas(entidad: Entidad, tipos: list[str]) -> list[Area]:
 
 def _miembro_out(u: Usuario) -> MiembroOut:
     return MiembroOut(
-        **usuario_out(u).dict(), activo=u.is_active, ultimo_ingreso=u.last_login, debe_cambiar_clave=u.debe_cambiar_clave
+        **usuario_out(u).dict(), activo=u.is_active, ultimo_ingreso=u.last_login, debe_cambiar_clave=u.debe_cambiar_clave,
+        compromiso_aceptado_en=u.compromiso_aceptado_en
     )
 
 
@@ -388,7 +391,9 @@ def soporte_de_la_entidad(request: HttpRequest, entidad_id: UUID | None = None) 
     requiere_rol(request.auth, (Rol.ADMIN_ENTIDAD,))
     entidad = _entidad_objetivo(request.auth, entidad_id)
     accesos = AccesoSoporte.objects.filter(entidad=entidad).select_related("soporte", "otorgado_por")[:50]
-    personal = Usuario.objects.filter(rol=Rol.SOPORTE, is_active=True).order_by("nombre_completo")
+    # Soporte y superadministración de LeMarTek: ninguno ve los procesos de la
+    # entidad sin este permiso (expediente LEG-004, numeral 4.5).
+    personal = Usuario.objects.filter(rol__in=[Rol.SOPORTE, Rol.SUPERADMIN], is_active=True).order_by("nombre_completo")
     return {
         "accesos": [_acceso_out(a).dict() for a in accesos],
         "personal": [SoporteOut(id=u.id, nombre_completo=u.nombre_completo, email=u.email).dict() for u in personal],
@@ -399,13 +404,16 @@ def soporte_de_la_entidad(request: HttpRequest, entidad_id: UUID | None = None) 
 def otorgar_soporte(request: HttpRequest, datos: OtorgarSoporteIn, entidad_id: UUID | None = None):
     usuario: Usuario = request.auth
     requiere_rol(usuario, (Rol.ADMIN_ENTIDAD,))
+    if usuario.es_superadmin:
+        # El permiso lo da la entidad: LeMarTek no puede dárselo a sí misma.
+        raise HttpError(403, "El permiso de acceso lo otorga el administrador de la entidad.")
     entidad = _entidad_objetivo(usuario, entidad_id)
     if not 1 <= datos.horas <= 72:
         raise HttpError(400, "El acceso puede durar entre 1 y 72 horas.")
     motivo = " ".join(datos.motivo.split())
     if len(motivo) < 5:
         raise HttpError(400, "Indique el motivo del acceso (queda en la auditoría).")
-    soporte = Usuario.objects.filter(pk=datos.soporte_id, rol=Rol.SOPORTE, is_active=True).first()
+    soporte = Usuario.objects.filter(pk=datos.soporte_id, rol__in=[Rol.SOPORTE, Rol.SUPERADMIN], is_active=True).first()
     if soporte is None:
         raise HttpError(400, "Esa persona no es del soporte de LeMarTek.")
     with transaction.atomic():

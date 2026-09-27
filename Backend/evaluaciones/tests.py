@@ -83,6 +83,28 @@ class BaseEvaluaciones(BaseCuentas):
         self.assertEqual(r.status_code, 201, r.content)
         return c, r.json()[0]
 
+    def ver_soporte(self, usuario, evaluacion_id, hoja):
+        """Como si la persona abriera un documento del proponente (el endpoint
+        real descarga la oferta de Drive; aquí se registra el mismo evento)."""
+        from cuentas.models import EventoAuditoria
+
+        EventoAuditoria.objects.create(
+            usuario=usuario, entidad_id=usuario.entidad_id, accion="documento.visto", objeto_tipo="Evaluacion",
+            objeto_id=str(evaluacion_id), detalles={"hoja": hoja, "archivo": "documento.pdf"},
+        )
+
+    def hacer_muestra(self, c, usuario, evaluacion_id):
+        """Muestra de control completa: todo conforme, con el soporte abierto."""
+        r = c.post(f"/api/evaluaciones/{evaluacion_id}/muestra")
+        self.assertEqual(r.status_code, 200, r.content)
+        for item in r.json()["muestra"]["items"]:
+            self.ver_soporte(usuario, evaluacion_id, item["hoja"])
+            r2 = c.put(f"/api/evaluaciones/{evaluacion_id}/muestra/items/{item['id']}", {"conforme": True})
+            self.assertEqual(r2.status_code, 200, r2.content)
+        r = c.post(f"/api/evaluaciones/{evaluacion_id}/muestra/cerrar")
+        self.assertEqual(r.status_code, 200, r.content)
+        return r.json()
+
     def evaluar_todo(self, c, evaluacion_id):
         """Encola todo y deja que el trabajador real atienda la fila con el motor simulado."""
         detalle = c.get(f"/api/evaluaciones/{evaluacion_id}").json()
@@ -152,10 +174,23 @@ class CrearYAsignarTests(BaseEvaluaciones):
     def test_superadmin_crea_asigna_y_ve_equipo_de_cualquier_entidad(self):
         import pyotp
 
+        from cuentas.models import AccesoSoporte
+
         c = Cliente()
         c.entrar("santiagopebe01@lemartek.com")
         secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
-        c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
+        yo = c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()}).json()["usuario"]
+        c.post("/api/auth/compromiso", {"version": yo["compromiso_version"], "acepto": True})
+        # Sin permiso temporal de la entidad no trabaja en sus procesos.
+        r = c.post(
+            "/api/evaluaciones/procesos",
+            {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "entidad_id": str(self.otra.id)},
+        )
+        self.assertEqual(r.status_code, 403)
+        AccesoSoporte.objects.create(
+            entidad=self.otra, soporte=self.superadmin, otorgado_por=self.admin_otra, motivo="Acompañamiento",
+            expira_en=timezone.now() + timedelta(hours=4),
+        )
         # Debe elegir la entidad.
         r = c.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES})
         self.assertEqual(r.status_code, 400)
@@ -176,12 +211,14 @@ class CrearYAsignarTests(BaseEvaluaciones):
         self.assertNotIn("abogado@entidad.gov.co", equipo)
         detalle = self.evaluar_todo(c, ev["id"])
         for p in detalle["proponentes"]:
-            c.http.put(
+            r = c.http.put(
                 f"/api/evaluaciones/{ev['id']}/revisiones",
                 {"proponente_id": p["id"], "requisito": 2, "cumple": True, "nota": "Revisado por superadmin"},
                 content_type="application/json",
                 headers={"X-CSRFToken": c.csrf},
             )
+            self.assertEqual(r.status_code, 200, r.content)
+        self.hacer_muestra(c, self.superadmin, ev["id"])
         self.assertEqual(c.post(f"/api/evaluaciones/{ev['id']}/aprobar").json()["estado"], EstadoEvaluacion.APROBADA)
 
     def test_no_asigna_a_otra_area_ni_otra_entidad(self):
@@ -276,9 +313,19 @@ class TrabajoTests(BaseEvaluaciones):
             self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(self.abogado.get(f"/api/evaluaciones/{eid}").json()["evaluacion"]["avance"]["pendientes"], 0)
 
+        # Sin muestra de control no se aprueba lo que verificó el sistema.
+        r = self.jefe.post(f"/api/evaluaciones/{eid}/aprobar")
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("muestra de control", r.json()["detail"])
+        self.hacer_muestra(self.abogado, self.evaluador, eid)
+
         # El evaluador no aprueba; el jefe sí.
         self.assertEqual(self.abogado.post(f"/api/evaluaciones/{eid}/aprobar").status_code, 403)
-        self.assertEqual(self.jefe.post(f"/api/evaluaciones/{eid}/aprobar").json()["estado"], EstadoEvaluacion.APROBADA)
+        aprobada = self.jefe.post(f"/api/evaluaciones/{eid}/aprobar").json()
+        self.assertEqual(aprobada["estado"], EstadoEvaluacion.APROBADA)
+        ev = Evaluacion.objects.get(pk=eid)
+        self.assertTrue(ev.version_sistema)
+        self.assertIn("extraccion_documentos", ev.modelos_ia)
 
         # Aprobada: no se modifica hasta reabrir.
         r = self.abogado.http.put(
@@ -352,16 +399,34 @@ class AislamientoEvaluacionesTests(BaseEvaluaciones):
             fijar_entidad(SISTEMA)
         self.assertEqual(Proceso.objects.count(), 2)
 
-    def test_superadmin_ve_todas(self):
+    def test_superadmin_solo_ve_entidades_con_permiso_temporal(self):
+        """LEG-004, 4.5: LeMarTek no ve los procesos de una entidad sin un
+        permiso temporal que otorga el administrador de esa entidad."""
         import pyotp
 
-        self.crear()
+        from cuentas.models import AccesoSoporte
+
+        _, ev = self.crear()
         self.crear("abogado@otraentidad.gov.co", codigo="OTRA-001")
         c = Cliente()
         c.entrar("santiagopebe01@lemartek.com")
         secreto = c.post("/api/auth/2fa/configurar").json()["secreto"]
         c.post("/api/auth/2fa/verificar", {"codigo": pyotp.TOTP(secreto).now()})
-        self.assertEqual(len(c.get("/api/evaluaciones/procesos").json()), 2)
+        self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
+        self.assertEqual(c.get(f"/api/evaluaciones/{ev['id']}").status_code, 404)
+        # El superadmin no se puede dar el permiso a sí mismo.
+        r = c.post(f"/api/equipo/soporte?entidad_id={self.entidad1.id}", {"soporte_id": str(self.superadmin.id), "horas": 4, "motivo": "Revisión"})
+        self.assertEqual(r.status_code, 403)
+        # El administrador de la entidad sí se lo da.
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        r = admin.post("/api/equipo/soporte", {"soporte_id": str(self.superadmin.id), "horas": 4, "motivo": "Revisión de un caso"})
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual([p["codigo"] for p in c.get("/api/evaluaciones/procesos").json()], ["ENT-CM-037-2026"])
+        self.assertEqual(c.get(f"/api/evaluaciones/{ev['id']}").status_code, 200)
+        # Revocado, deja de verlos.
+        AccesoSoporte.objects.update(revocado_en=timezone.now())
+        self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
 
 
 class EntidadNueva(BaseEvaluaciones):
@@ -921,11 +986,14 @@ class HistoricoTests(BaseHistorico):
         self.assertEqual(r.status_code, 200)
         self.assertIn("BORRADOR", r["Content-Disposition"])
         texto = "\n".join(c.text for t in Document(io.BytesIO(r.content)).tables for fila in t.rows for c in fila.cells)
-        self.assertIn("Aprobado automáticamente por MiEvaluador", texto)
+        self.assertIn("Verificado por MiEvaluador – pendiente de adopción", texto)
+        self.assertNotIn("Aprobado automáticamente", texto)
         self.assertIn("Validado manualmente por Abogado Uno", texto)
         self.assertIn("COPNIA verificado en la página del Consejo", texto)
         self.assertIn("Certificado consultado y aportado por Abogado Uno", texto)
 
+        correr_fila()  # el certificado aportado reevalúa al proponente
+        self.hacer_muestra(self.abogado, self.evaluador, self.ev["id"])
         with self.captureOnCommitCallbacks(execute=True):
             self.assertEqual(self.jefe.post(f"/api/evaluaciones/{self.ev['id']}/aprobar").status_code, 200)
         exp = self.jefe.get(f"/api/evaluaciones/{self.ev['id']}/expedientes").json()
@@ -956,6 +1024,27 @@ class HistoricoTests(BaseHistorico):
             self.assertTrue(any("documentos evaluados" in n for n in nombres))
             self.assertTrue(any("antecedentes aportados" in n for n in nombres))
             self.assertNotIn("BORRADOR", " ".join(nombres))
+            # Control humano: acta de la muestra, bitácora e indicadores (LEG-004, 3.1 y 8).
+            self.assertTrue(any(n.startswith("control humano/ACTA MUESTRA DE CONTROL") for n in nombres))
+            self.assertIn("control humano/bitacora.csv", nombres)
+            bitacora = z.read("control humano/bitacora.csv").decode("utf-8-sig")
+            for accion in ("muestra.creada", "muestra.item", "muestra.cerrada", "evaluacion.aprobada", "revision.guardada"):
+                self.assertIn(accion, bitacora)
+            import json as _json
+
+            registro = _json.loads(z.read("registro.json"))
+            self.assertTrue(registro["evaluacion"]["version_sistema"])
+            self.assertEqual(registro["muestra_de_control"]["estado"], "cerrada")
+            self.assertGreater(registro["indicadores_de_revision"]["revisados_por_una_persona"], 0)
+            req1 = next(r for r in registro["proponentes"][0]["requisitos"] if r["numero"] == 1)
+            self.assertTrue(req1["forma_de_validacion"].startswith("Verificado por MiEvaluador – adoptado por Jefe Jurídico"))
+            self.assertTrue(req1["regla_aplicada"])
+            informe = next(n for n in nombres if n.startswith("informe/") and n.endswith(".docx"))
+            texto = "\n".join(p.text for p in Document(io.BytesIO(z.read(informe))).paragraphs)
+            self.assertIn("INFORME DE EVALUACIÓN JURÍDICA", texto)
+            self.assertIn("adoptado por Jefe Jurídico", texto)
+            self.assertNotIn("Pre-informe", texto)
+            self.assertIn("utilizó la herramienta tecnológica MiEvaluador", texto)
         # Si el expediente se anula mientras se arma, no revive al terminar.
         from evaluaciones.expediente import construir, solicitar
         from evaluaciones.models import EstadoExpediente, Expediente

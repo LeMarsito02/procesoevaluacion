@@ -15,13 +15,15 @@ export function estadoDe(r: ResultadoRequisito, revisiones: Revisiones): Estado 
   if (revision === true) return 'revisado_cumple'
   if (revision === false) return 'revisado_no_cumple'
   if (r.error) return 'error'
+  // Un error en la muestra de control envía el requisito a revisión humana en todas las ofertas.
+  if (r.revision_forzada) return 'revisar'
   if ((r.motivo ?? '').startsWith('N.A.')) return 'no_aplica'
   if (r.cumple === true) return 'cumple'
   return 'revisar'
 }
 
 export const ETIQUETA_ESTADO: Record<Estado, string> = {
-  cumple: 'Cumple',
+  cumple: 'Verificado',
   no_aplica: 'No aplica',
   revisar: 'Por revisar',
   error: 'No se pudo evaluar',

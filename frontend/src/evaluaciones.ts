@@ -64,6 +64,9 @@ export interface ProcesoResumen {
   creado_por: Persona
   proponentes: number
   evaluaciones: EvaluacionResumen[]
+  /** Archivar: quien puede eliminarlo, aunque ya tenga expediente (entonces no se elimina). */
+  puede_archivar?: boolean
+  archivado_en?: string | null
   /** Quien lo ve puede eliminarlo (administrador o quien lo creó, y sin evaluaciones aprobadas). */
   puede_eliminar: boolean
 }
@@ -123,7 +126,11 @@ export interface MiembroCarga extends Persona {
   pendientes: number
 }
 
-export const listarProcesos = () => pedirJson<ProcesoResumen[]>('/api/evaluaciones/procesos')
+export const listarProcesos = (archivados = false) =>
+  pedirJson<ProcesoResumen[]>(`/api/evaluaciones/procesos${archivados ? '?archivados=true' : ''}`)
+/** Archiva (o desarchiva) un proceso: se conserva con todo, pero sale de las listas. */
+export const archivarProceso = (id: string, archivar = true) =>
+  enviarJson<void>(`/api/evaluaciones/procesos/${id}/archivar${archivar ? '' : '?archivar=false'}`, 'POST')
 /** Elimina el proceso con todo lo suyo. `confirmacion` = su código, escrito a mano. */
 export const eliminarProceso = (id: string, confirmacion: string) =>
   enviarJson<void>(`/api/evaluaciones/procesos/${id}`, 'DELETE', { confirmacion })
@@ -183,6 +190,97 @@ export const verDocumentoProponente = (id: string, proponenteId: string, archivo
   descargarBlob(`/api/evaluaciones/${id}/proponentes/${proponenteId}/documento?archivo=${encodeURIComponent(archivo)}`).then((r) => r.blob)
 
 export type { AnalisisResponse }
+
+// --- Muestra de control (expediente LEG-004, numerales 3 y 3.1) ---
+export interface ItemMuestra {
+  id: number
+  proponente_id: string
+  hoja: string
+  proponente: string
+  requisito: number
+  usa_ia: boolean
+  resultado: 'conforme' | 'no_conforme' | null
+  nota: string
+  soporte_visto: boolean
+  usuario: string | null
+  fecha: string | null
+}
+
+export interface Muestra {
+  id: string
+  estado: 'en_curso' | 'con_hallazgos' | 'cerrada' | 'anulada'
+  estado_nombre: string
+  semilla: string
+  parametros: { verificaciones?: number; universo_ofertas?: number; universo_verificaciones?: number }
+  ofertas_sorteadas: string[]
+  requisitos_ampliados: number[]
+  creada_por: string
+  creada_en: string
+  cerrada_por: string | null
+  cerrada_en: string | null
+  items: ItemMuestra[]
+}
+
+export interface EstadoMuestra {
+  muestra: Muestra | null
+  motivo_para_no_aprobar: string | null
+  verificaciones_por_muestra: number
+}
+
+export const verMuestra = (id: string) => pedirJson<EstadoMuestra>(`/api/evaluaciones/${id}/muestra`)
+export const crearMuestra = (id: string) => enviarJson<EstadoMuestra>(`/api/evaluaciones/${id}/muestra`, 'POST')
+export const revisarItemMuestra = (id: string, itemId: number, conforme: boolean, nota = '') =>
+  enviarJson<EstadoMuestra>(`/api/evaluaciones/${id}/muestra/items/${itemId}`, 'PUT', { conforme, nota })
+export const cerrarMuestra = (id: string) => enviarJson<EstadoMuestra>(`/api/evaluaciones/${id}/muestra/cerrar`, 'POST')
+export const descargarActaMuestra = (id: string) => descargarBlob(`/api/evaluaciones/${id}/muestra/acta`)
+
+// --- Puntaje técnico: lo adopta una persona, en un solo acto ---
+export interface PuntajeProponente {
+  proponente_id: string
+  hoja: string
+  nombre: string
+  puntaje: number | null
+  resuelto: boolean
+  detalle: Record<string, number | string>
+  adoptado: boolean
+  adoptado_por: string | null
+  adoptado_en: string | null
+  adopcion_desactualizada: boolean
+}
+
+export const verPuntajes = (id: string) => pedirJson<PuntajeProponente[]>(`/api/evaluaciones/${id}/puntajes`)
+export const adoptarPuntajes = (id: string, nota = '') =>
+  enviarJson<PuntajeProponente[]>(`/api/evaluaciones/${id}/puntajes/adoptar`, 'POST', { nota })
+
+// --- Ficha de transparencia algorítmica (Directiva Conjunta 007 de 2025) ---
+export interface FichaTransparencia {
+  sistema: string
+  responsable: string
+  version: string
+  generada_en: string
+  finalidad: string
+  que_hace: string[]
+  que_no_hace: string[]
+  como_decide_el_sistema: string
+  control_humano: string[]
+  datos_tratados: string
+  modelos: { uso: string; modelo: string; licencia: string; donde_se_ejecuta: string }[]
+  atribucion: string | null
+  medicion: {
+    fecha: string
+    proponentes: number
+    decisiones: number
+    verificadas_por_el_sistema: number
+    verificaciones_contradichas_por_el_evaluador: number
+    limite_superior_de_error_95: number | null
+  } | null
+  aviso: string
+  como_pedir_explicaciones: string
+  marco: string[]
+}
+
+export const verFicha = () => pedirJson<FichaTransparencia>('/api/acerca')
+export const descargarFicha = () => descargarBlob('/api/acerca/ficha')
 
 export interface TrabajadorFila {
   id: string

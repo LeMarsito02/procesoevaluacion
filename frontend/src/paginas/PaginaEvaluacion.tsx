@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ResultadoRequisito } from '../api'
 import Icono from '../components/Icono'
 import AntecedentesProponente from '../components/AntecedentesProponente'
+import AvisoApoyo from '../components/AvisoApoyo'
+import ControlHumano from '../components/ControlHumano'
 import DocumentosFinales from '../components/DocumentosFinales'
 import ParametrosFinancieros from '../components/ParametrosFinancieros'
 import ParametrosPliego from '../components/ParametrosPliego'
@@ -180,6 +182,17 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   // Al adjuntar un certificado el servidor vuelve a evaluar al proponente: se
   // pide el estado para que el seguimiento de la fila se active y el
   // requisito se actualice solo en la pantalla.
+  /** Recarga resultados y estado (la muestra de control puede enviar requisitos a revisión). */
+  async function recargarTodo() {
+    try {
+      const d = await obtenerEvaluacion(id)
+      setResultados(agrupar(d.resultados))
+      setResumen(d.evaluacion)
+    } catch {
+      // Si falla, el usuario igual puede recargar la página.
+    }
+  }
+
   async function seguirReevaluacion() {
     try {
       const n = await novedadesEvaluacion(id, desde.current)
@@ -386,6 +399,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
         onCambio={(r) => setResumen(r)}
         onAviso={setAviso}
       />
+      <AvisoApoyo />
 
       {paso === 'datos' && (
         <PasoDatos
@@ -468,7 +482,23 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           onVolver={() => setPaso('evaluacion')}
           onRevisarPendientes={() => irSiguientePendiente(null)}
           onNuevaEvaluacion={() => navegar('/procesos/nuevo')}
-          extra={<DocumentosFinales resumen={resumen} />}
+          extra={
+            <>
+              <ControlHumano
+                evaluacionId={id}
+                tipo={resumen.tipo}
+                puedeTrabajar={resumen.puede_trabajar}
+                aprobada={resumen.estado === 'aprobada'}
+                pendientes={resumen.avance.pendientes}
+                resultados={resultados}
+                onVerDocumento={abrirDocumento}
+                onAviso={setAviso}
+                onCambio={recargarTodo}
+                onDescargar={descargar}
+              />
+              <DocumentosFinales resumen={resumen} />
+            </>
+          }
         />
       )}
 
@@ -757,7 +787,12 @@ function BarraEvaluacion({
                       : undefined
                 }
                 onClick={() => {
-                  if (window.confirm('¿Aprobar la evaluación? El informe quedará como definitivo y no se podrá modificar sin reabrirla.')) {
+                  if (
+                    window.confirm(
+                      '¿Aprobar la evaluación? Usted adopta lo verificado por MiEvaluador (con la muestra de control) y las decisiones del equipo. ' +
+                        'El informe quedará como adoptado y no se podrá modificar sin reabrirla.',
+                    )
+                  ) {
                     accion(() => aprobarEvaluacion(resumen.id), 'Evaluación aprobada')
                   }
                 }}

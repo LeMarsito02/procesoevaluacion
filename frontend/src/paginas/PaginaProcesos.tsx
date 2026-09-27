@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Icono from '../components/Icono'
-import { eliminarProceso, listarProcesos, type ProcesoResumen } from '../evaluaciones'
+import { archivarProceso, eliminarProceso, listarProcesos, type ProcesoResumen } from '../evaluaciones'
 import { formatFechaCorta } from '../format'
 import { mensajeDe } from '../http'
 import { navegar } from '../rutas'
@@ -16,12 +16,27 @@ export default function PaginaProcesos() {
   // Proceso que se va a eliminar (se confirma escribiendo su código).
   const [aEliminar, setAEliminar] = useState<ProcesoResumen | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
+  // Los archivados (procesos con expediente que ya no se trabajan) se ven aparte.
+  const [archivados, setArchivados] = useState(false)
 
   useEffect(() => {
-    listarProcesos()
+    setProcesos(null)
+    listarProcesos(archivados)
       .then(setProcesos)
       .catch((e: unknown) => setError(mensajeDe(e)))
-  }, [])
+  }, [archivados])
+
+  async function archivar(p: ProcesoResumen) {
+    const archivar = !archivados
+    if (archivar && !window.confirm(`¿Archivar el proceso ${p.codigo}? Se conserva con todo lo suyo, pero deja de aparecer en la lista.`)) return
+    try {
+      await archivarProceso(p.id, archivar)
+      setProcesos((lista) => (lista ?? []).filter((x) => x.id !== p.id))
+      setAviso(archivar ? `Se archivó el proceso ${p.codigo}.` : `El proceso ${p.codigo} volvió a la lista.`)
+    } catch (e) {
+      setError(mensajeDe(e))
+    }
+  }
 
   const visibles = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
@@ -41,6 +56,9 @@ export default function PaginaProcesos() {
           <div className="eyebrow">{usuario.entidad?.nombre ?? 'Todas las entidades'}</div>
           <h1>Procesos</h1>
           <p>Todos los procesos de la entidad con el avance de cada evaluación.</p>
+          <button type="button" className="enlace small" onClick={() => setArchivados((v) => !v)}>
+            {archivados ? 'Ver los procesos activos' : 'Ver los procesos archivados'}
+          </button>
         </div>
         {puedeCrear && (
           <button className="btn btn-primary" type="button" onClick={() => navegar('/procesos/nuevo')}>
@@ -126,6 +144,21 @@ export default function PaginaProcesos() {
                         }}
                       >
                         Eliminar proceso
+                      </button>
+                    )}
+                    {p.puede_archivar && (
+                      <button
+                        type="button"
+                        className="enlace"
+                        style={{ marginTop: 4, display: 'block' }}
+                        title={
+                          p.puede_eliminar
+                            ? 'Sale de la lista, pero se conserva'
+                            : 'Ya tuvo expediente de evaluación: es el registro de la decisión y no se elimina, se archiva'
+                        }
+                        onClick={() => void archivar(p)}
+                      >
+                        {archivados ? 'Desarchivar' : 'Archivar proceso'}
                       </button>
                     )}
                   </td>

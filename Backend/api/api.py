@@ -27,7 +27,7 @@ from api.auth import router as auth_router
 from api.configuracion import router as configuracion_router
 from api.equipo import equipo, plataforma
 from api.evaluaciones import router as evaluaciones_router
-from cuentas.seguridad import sesion_activa
+from cuentas.seguridad import sesion_activa, ve_datos_de
 from evaluaciones import pliego as pliego_servicio
 from evaluaciones.permisos import puede_crear_procesos
 from motor.esquemas.proceso import (
@@ -165,7 +165,7 @@ async def _analizar_pliego(
     base de datos solo se toca desde el hilo de la petición, que es el que
     tiene fijada la entidad para el aislamiento."""
     usuario = request.auth
-    entidad = usuario.entidad_id if not usuario.es_superadmin else entidad_id
+    entidad = usuario.entidad_id if not usuario.es_superadmin else (entidad_id if ve_datos_de(usuario, entidad_id) else None)
     if entidad is None:
         return None, "Elija la entidad para analizar el pliego contra su forma de evaluar."
     try:
@@ -219,7 +219,7 @@ def ver_pliego_analizado(request: HttpRequest, analisis_id: UUID, entidad_id: UU
     if not puede_crear_procesos(request.auth):
         raise HttpError(403, "Su rol no permite crear procesos.")
     usuario = request.auth
-    entidad = usuario.entidad_id if not usuario.es_superadmin else entidad_id
+    entidad = usuario.entidad_id if not usuario.es_superadmin else (entidad_id if ve_datos_de(usuario, entidad_id) else None)
     analisis = AnalisisPliego.objects.filter(pk=analisis_id, entidad_id=entidad).first()
     if analisis is None or not analisis.archivo:
         raise HttpError(404, "No se encontró el pliego.")
@@ -235,7 +235,7 @@ async def estado_pliego(request: HttpRequest, analisis_id: UUID, entidad_id: UUI
     from evaluaciones.models import AnalisisPliego
 
     usuario = request.auth
-    entidad = usuario.entidad_id if not usuario.es_superadmin else entidad_id
+    entidad = usuario.entidad_id if not usuario.es_superadmin else (entidad_id if ve_datos_de(usuario, entidad_id) else None)
     analisis = await sync_to_async(lambda: AnalisisPliego.objects.filter(pk=analisis_id, entidad_id=entidad).first())()
     if analisis is None:
         raise HttpError(404, "No se encontró el análisis del pliego.")
@@ -327,3 +327,6 @@ from api import historico as _historico  # noqa: E402,F401  (registra sus rutas 
 
 api.add_router("/evaluaciones", evaluaciones_router)
 api.add_router("/configuracion", configuracion_router)
+from api.transparencia import router as transparencia_router  # noqa: E402
+
+api.add_router("/acerca", transparencia_router)
