@@ -42,6 +42,7 @@ import { ErrorApi, mensajeDe } from '../http'
 import { establecerCatalogo, REQUISITOS } from '../requisitos'
 import { navegar } from '../rutas'
 import { useSesion } from '../sesion'
+import { useDialogos } from '../dialogos'
 
 function agrupar(lista: ResultadoRequisito[]): Record<string, ResultadoRequisito[]> {
   const salida: Record<string, ResultadoRequisito[]> = {}
@@ -109,6 +110,7 @@ export default function PaginaEvaluacion({ id }: { id: string }) {
 }
 
 function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
+  const { confirmar } = useDialogos()
   const sesion = useSesion()!
   const id = inicial.evaluacion.id
   const [resumen, setResumen] = useState<EvaluacionResumen>(inicial.evaluacion)
@@ -739,8 +741,16 @@ function BarraEvaluacion({
             className="btn btn-secondary btn-sm"
             disabled={ocupado}
             title="La entidad publicó una versión nueva de su plantilla de evaluación"
-            onClick={() => {
-              if (window.confirm('Hay una versión nueva de la plantilla de evaluación. ¿Actualizar? Se volverá a evaluar a todos los proponentes y se descartarán las decisiones de requisitos que ya no existan.')) {
+            onClick={async () => {
+              if (
+                await confirmar({
+                  titulo: '¿Actualizar a la plantilla nueva?',
+                  mensaje:
+                    'Se volverá a evaluar a todos los proponentes y se descartarán las decisiones de requisitos que ya no existan.',
+                  aceptar: 'Actualizar y reevaluar',
+                  peligro: true,
+                })
+              ) {
                 setOcupado(true)
                 actualizarPlantillaEvaluacion(resumen.id)
                   // El catálogo de requisitos cambia: se recarga la evaluación completa.
@@ -806,15 +816,18 @@ function BarraEvaluacion({
                       ? 'Quedan requisitos por revisar'
                       : undefined
                 }
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      '¿Aprobar la evaluación? Usted adopta lo verificado por MiEvaluador (con la muestra de control) y las decisiones del equipo. ' +
-                        'El informe quedará como adoptado y no se podrá modificar sin reabrirla.',
-                    )
-                  ) {
-                    accion(() => aprobarEvaluacion(resumen.id), 'Evaluación aprobada')
-                  }
+                onClick={async () => {
+                  const seguro = await confirmar({
+                    titulo: '¿Aprobar la evaluación?',
+                    mensaje: (
+                      <>
+                        Usted adopta lo que verificó MiEvaluador —con la muestra de control— y las decisiones del
+                        equipo. El informe queda <strong>adoptado</strong> y no se podrá modificar sin reabrirlo.
+                      </>
+                    ),
+                    aceptar: 'Aprobar la evaluación',
+                  })
+                  if (seguro) accion(() => aprobarEvaluacion(resumen.id), 'Evaluación aprobada')
                 }}
               >
                 {ocupado ? <span className="spinner" /> : <Icono nombre="check" tam={15} />} Aprobar

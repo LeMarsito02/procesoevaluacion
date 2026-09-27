@@ -9,6 +9,7 @@ import DetalleFinanciero from '../components/DetalleFinanciero'
 import PanelProponente from '../components/PanelProponente'
 import PasoEvaluacion from '../components/PasoEvaluacion'
 import PasoNuevo from '../components/PasoNuevo'
+import { useDialogos } from '../dialogos'
 import VisorDocumento from '../components/VisorDocumento'
 import Motivos from '../components/Motivos'
 import DetalleTecnico from '../components/DetalleTecnico'
@@ -185,6 +186,7 @@ export default function Previsualizacion() {
   // El panel lateral tapa el resto: se abre solo si se pide.
   const [verPanel, setVerPanel] = useState(window.location.hash.includes('panel'))
   const [verVisor, setVerVisor] = useState(window.location.hash.includes('visor'))
+  const { confirmar, pedirTexto } = useDialogos()
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', padding: 28, display: 'flex', flexDirection: 'column', gap: 24 }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -218,6 +220,54 @@ export default function Previsualizacion() {
             revisiones={(FINANCIERO.detalle as never as { revisiones: never[] }).revisiones}
             acreditada={false}
           />
+        </div>
+      </section>
+
+      <section style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
+        <h2 style={{ fontSize: 18 }}>Diálogos</h2>
+        <div className="acciones">
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() =>
+              void pedirTexto({
+                titulo: '¿Qué consultó para confirmar este requisito?',
+                mensaje: (
+                  <>
+                    Esta verificación no tiene un documento que abrir, así que su justificación es la evidencia.{' '}
+                    <strong>Queda en el acta de la muestra</strong>, a su nombre.
+                  </>
+                ),
+                etiqueta: 'Qué consultó',
+                placeholder: 'Ej.: el RUP del integrante, donde el indicador aparece en la página 3',
+                largo: true,
+                minimo: 15,
+                aceptar: 'Marcar conforme',
+              })
+            }
+          >
+            Pedir una justificación
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() =>
+              void confirmar({
+                titulo: '¿Descargar el informe con verificaciones sin revisar?',
+                mensaje: (
+                  <>
+                    Quedan <strong>12 verificaciones</strong> que nadie ha revisado. En el Excel saldrán como «NO
+                    CUMPLE» con el motivo que encontró el programa: estaría rechazando por algo que nadie llegó a mirar.
+                  </>
+                ),
+                aceptar: 'Descargar así',
+                cancelar: 'Volver a revisarlas',
+                peligro: true,
+              })
+            }
+          >
+            Confirmar algo delicado
+          </button>
         </div>
       </section>
 

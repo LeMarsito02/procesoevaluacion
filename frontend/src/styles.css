@@ -764,3 +764,26 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
 .muestra-fila { display: grid; grid-template-columns: minmax(0, 1fr) 130px minmax(220px, 38%); gap: 12px; align-items: center; padding: 6px 14px; border-top: 1px solid var(--line, #e3e6ec); }
 .muestra-req { font-size: 13.5px; }
 .muestra-accion { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
+
+/* Confirmaciones y preguntas de la aplicación. Antes las pintaba el navegador
+   ("localhost:5173 says"), sin poder dar contexto ni validar lo que se
+   escribe. */
+.dialogo {
+  position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto;
+  display: flex; flex-direction: column; gap: 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); padding: 22px;
+}
+.dialogo-cabeza { display: flex; align-items: flex-start; gap: 12px; }
+.dialogo-cabeza h2 { font-family: var(--serif); font-size: 19px; letter-spacing: -0.01em; line-height: 1.25; }
+.dialogo-icono { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; background: var(--brand-soft); color: var(--brand); }
+.dialogo-icono[data-peligro='true'] { background: var(--bad-soft); color: var(--bad); }
+.dialogo-cuerpo { color: var(--ink-2); font-size: 14px; overflow-wrap: anywhere; }
+.dialogo-cuerpo strong { color: var(--ink); }
+.dialogo-pie { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.dialogo-pie .btn { min-width: 110px; justify-content: center; }
+@media (max-width: 480px) {
+  .dialogo { width: calc(100vw - 24px); padding: 18px; }
+  .dialogo-pie .btn { flex: 1 1 auto; }
+}

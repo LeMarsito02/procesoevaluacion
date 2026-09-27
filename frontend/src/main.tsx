@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
+import { ProveedorDialogos } from './dialogos.tsx'
 import Raiz from './Raiz.tsx'
 
 const raiz = createRoot(document.getElementById('root')!)
@@ -14,14 +15,18 @@ if (import.meta.env.DEV && window.location.hash.startsWith('#/previsualizacion')
   void import('./paginas/Previsualizacion.tsx').then(({ default: Previsualizacion }) =>
     raiz.render(
       <StrictMode>
-        <Previsualizacion />
+        <ProveedorDialogos>
+          <Previsualizacion />
+        </ProveedorDialogos>
       </StrictMode>,
     ),
   )
 } else {
   raiz.render(
     <StrictMode>
-      <Raiz />
+      <ProveedorDialogos>
+        <Raiz />
+      </ProveedorDialogos>
     </StrictMode>,
   )
 }

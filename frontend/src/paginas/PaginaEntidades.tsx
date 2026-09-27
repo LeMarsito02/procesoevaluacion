@@ -15,8 +15,10 @@ import {
 } from '../cuentas'
 import { navegar } from '../rutas'
 import { mensajeDe } from '../http'
+import { useDialogos } from '../dialogos'
 
 export default function PaginaEntidades() {
+  const { confirmar } = useDialogos()
   const [entidades, setEntidades] = useState<Entidad[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creando, setCreando] = useState(false)
@@ -34,7 +36,15 @@ export default function PaginaEntidades() {
 
   async function alternar(e: Entidad) {
     const accion = e.activa ? 'suspender' : 'reactivar'
-    if (!window.confirm(`¿Seguro que desea ${accion} ${e.nombre}?${e.activa ? ' Sus usuarios perderán el acceso de inmediato.' : ''}`)) return
+    if (
+      !(await confirmar({
+        titulo: `¿${accion.charAt(0).toUpperCase()}${accion.slice(1)} ${e.nombre}?`,
+        mensaje: e.activa ? 'Sus usuarios perderán el acceso de inmediato.' : undefined,
+        aceptar: accion.charAt(0).toUpperCase() + accion.slice(1),
+        peligro: e.activa,
+      }))
+    )
+      return
     try {
       const nueva = await cambiarEstadoEntidad(e.id, !e.activa)
       setEntidades((l) => l?.map((x) => (x.id === e.id ? nueva : x)) ?? null)

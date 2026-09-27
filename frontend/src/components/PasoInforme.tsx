@@ -1,6 +1,7 @@
 import type { Proponente, ResultadoRequisito } from '../api'
 import { resumenProponente, type Revisiones } from '../estado'
 import Icono from './Icono'
+import { useDialogos } from '../dialogos'
 
 interface Props {
   codigoProceso: string
@@ -23,6 +24,7 @@ interface Props {
 }
 
 export default function PasoInforme(p: Props) {
+  const { confirmar } = useDialogos()
   const evaluados = p.proponentes.filter((pr) => p.resultados[pr.hoja])
   const resumenes = evaluados.map((pr) => ({ pr, ...resumenProponente(p.resultados[pr.hoja], p.revisiones) }))
   const pendientes = resumenes.reduce((s, r) => s + r.pendientes, 0)
@@ -35,12 +37,20 @@ export default function PasoInforme(p: Props) {
    * pero sí se confirma: en el Excel esas verificaciones salen como NO CUMPLE,
    * y eso en el informe oficial es rechazar a un proponente por algo que nadie
    * llegó a mirar. */
-  function descargar() {
+  async function descargar() {
     if (pendientes > 0) {
-      const seguir = window.confirm(
-        `Quedan ${pendientes} verificaciones sin revisar. En el Excel saldrán como NO CUMPLE, ` +
-          `con el motivo que encontró el programa.\n\n¿Descargar el informe así?`,
-      )
+      const seguir = await confirmar({
+        titulo: '¿Descargar el informe con verificaciones sin revisar?',
+        mensaje: (
+          <>
+            Quedan <strong>{pendientes} verificaciones</strong> que nadie ha revisado. En el Excel saldrán como
+            «NO CUMPLE» con el motivo que encontró el programa: estaría rechazando por algo que nadie llegó a mirar.
+          </>
+        ),
+        aceptar: 'Descargar así',
+        cancelar: 'Volver a revisarlas',
+        peligro: true,
+      })
       if (!seguir) return
     }
     p.onGenerar()

@@ -7,8 +7,10 @@ import { navegar } from '../rutas'
 import { puedeCrearProcesos, useSesion } from '../sesion'
 import { porcentajeAvance, textoCierre } from './avance'
 import { EstadoEvaluacionPill } from './TarjetaEvaluacion'
+import { useDialogos } from '../dialogos'
 
 export default function PaginaProcesos() {
+  const { confirmar } = useDialogos()
   const { usuario } = useSesion()!
   const [procesos, setProcesos] = useState<ProcesoResumen[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -28,7 +30,15 @@ export default function PaginaProcesos() {
 
   async function archivar(p: ProcesoResumen) {
     const archivar = !archivados
-    if (archivar && !window.confirm(`¿Archivar el proceso ${p.codigo}? Se conserva con todo lo suyo, pero deja de aparecer en la lista.`)) return
+    if (
+      archivar &&
+      !(await confirmar({
+        titulo: `¿Archivar el proceso ${p.codigo}?`,
+        mensaje: 'Se conserva con todo lo suyo, pero deja de aparecer en la lista.',
+        aceptar: 'Archivar',
+      }))
+    )
+      return
     try {
       await archivarProceso(p.id, archivar)
       setProcesos((lista) => (lista ?? []).filter((x) => x.id !== p.id))

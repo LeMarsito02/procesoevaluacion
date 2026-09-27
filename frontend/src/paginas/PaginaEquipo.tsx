@@ -24,6 +24,7 @@ import {
 } from '../cuentas'
 import { useSesion } from '../sesion'
 import { mensajeDe } from '../http'
+import { useDialogos } from '../dialogos'
 
 type Pestana = 'usuarios' | 'actividad' | 'soporte'
 
@@ -55,6 +56,7 @@ const ACCIONES: Record<string, string> = {
 }
 
 export default function PaginaEquipo() {
+  const { confirmar } = useDialogos()
   const sesion = useSesion()!
   const yo = sesion.usuario
   const esSuper = yo.rol === 'superadmin'
@@ -126,7 +128,14 @@ export default function PaginaEquipo() {
   }
 
   async function reiniciar(u: Miembro) {
-    if (!window.confirm(`¿Darle una contraseña temporal nueva a ${u.nombre_completo}? La actual dejará de servir.`)) return
+    if (
+      !(await confirmar({
+        titulo: `¿Darle una contraseña temporal nueva a ${u.nombre_completo}?`,
+        mensaje: 'La actual dejará de servir de inmediato.',
+        aceptar: 'Generar contraseña',
+      }))
+    )
+      return
     setGuardandoId(u.id)
     try {
       const nuevas = await reiniciarClave(u.id)
@@ -296,8 +305,16 @@ export default function PaginaEquipo() {
                               type="button"
                               className={`btn btn-sm ${u.activo ? 'btn-ghost' : 'btn-secondary'}`}
                               disabled={guardandoId === u.id}
-                              onClick={() => {
-                                if (!u.activo || window.confirm(`¿Desactivar a ${u.nombre_completo}? Perderá el acceso de inmediato.`)) {
+                              onClick={async () => {
+                                if (
+                                  !u.activo ||
+                                  (await confirmar({
+                                    titulo: `¿Desactivar a ${u.nombre_completo}?`,
+                                    mensaje: 'Perderá el acceso de inmediato.',
+                                    aceptar: 'Desactivar',
+                                    peligro: true,
+                                  }))
+                                ) {
                                   cambiar(u, { activo: !u.activo })
                                 }
                               }}

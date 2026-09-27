@@ -20,10 +20,12 @@ import { mensajeDe } from '../http'
 import { REQUISITOS } from '../requisitos'
 import { useSesion } from '../sesion'
 import EditorEvaluacion from './configuracion/EditorEvaluacion'
+import { useDialogos } from '../dialogos'
 
 const fecha = (iso: string) => new Date(iso).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })
 
 export default function PaginaConfiguracion() {
+  const { confirmar } = useDialogos()
   const { usuario } = useSesion()!
   const esSuper = usuario.rol === 'superadmin'
   const [entidades, setEntidades] = useState<Entidad[]>([])
@@ -161,9 +163,15 @@ export default function PaginaConfiguracion() {
                   onSubir={(archivo) => accion(() => subirPlantilla(t.tipo, archivo, esSuper ? entidadId : null), 'Plantilla subida')}
                   onEditar={setEditando}
                   onActivar={(p) => accion(() => activarPlantilla(p.id), 'Plantilla activada')}
-                  onBorrar={(p) =>
-                    window.confirm(`¿Eliminar la plantilla «${p.nombre_original}»?`) && accion(() => borrarPlantilla(p.id), 'Plantilla eliminada')
-                  }
+                  onBorrar={async (p) => {
+                    const seguro = await confirmar({
+                      titulo: `¿Eliminar la plantilla «${p.nombre_original}»?`,
+                      mensaje: 'Las evaluaciones que ya la usaron conservan su informe.',
+                      aceptar: 'Eliminar',
+                      peligro: true,
+                    })
+                    if (seguro) accion(() => borrarPlantilla(p.id), 'Plantilla eliminada')
+                  }}
                   onDescargar={(p) => descargarPlantilla(p).catch((e: unknown) => setError(mensajeDe(e)))}
                 />
               ))}

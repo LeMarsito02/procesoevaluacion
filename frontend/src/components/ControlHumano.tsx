@@ -26,6 +26,7 @@ import {
 import { mensajeDe } from '../http'
 import { REQUISITOS } from '../requisitos'
 import Icono from './Icono'
+import { useDialogos } from '../dialogos'
 
 interface Props {
   evaluacionId: string
@@ -46,6 +47,7 @@ function tituloRequisito(numero: number) {
 }
 
 export default function ControlHumano(p: Props) {
+  const { confirmar, pedirTexto } = useDialogos()
   const [estado, setEstado] = useState<EstadoMuestra | null>(null)
   const [puntajes, setPuntajes] = useState<PuntajeProponente[] | null>(null)
   const [ocupado, setOcupado] = useState<string | null>(null)
@@ -232,9 +234,27 @@ export default function ControlHumano(p: Props) {
                             className="btn btn-ok btn-sm"
                             disabled={ocupado !== null}
                             title="Revisé el soporte y la verificación del sistema es correcta"
-                            onClick={() => {
-                              const nota = archivo ? '' : window.prompt('¿Qué consultó para confirmar este requisito? (queda en el acta)') ?? ''
-                              if (!archivo && nota.trim().length < 15) return
+                            onClick={async () => {
+                              let nota = ''
+                              if (!archivo) {
+                                // Sin documento que abrir, la ley pide dejar dicho qué se consultó.
+                                const escrito = await pedirTexto({
+                                  titulo: '¿Qué consultó para confirmar este requisito?',
+                                  mensaje: (
+                                    <>
+                                      Esta verificación no tiene un documento que abrir, así que su justificación es la
+                                      evidencia. <strong>Queda en el acta de la muestra</strong>, a su nombre.
+                                    </>
+                                  ),
+                                  etiqueta: 'Qué consultó',
+                                  placeholder: 'Ej.: el RUP del integrante, donde el indicador aparece en la página 3',
+                                  largo: true,
+                                  minimo: 15,
+                                  aceptar: 'Marcar conforme',
+                                })
+                                if (escrito === null) return
+                                nota = escrito
+                              }
                               void ejecutar(`item-${item.id}`, () => revisarItemMuestra(p.evaluacionId, item.id, true, nota))
                             }}
                           >
@@ -301,7 +321,12 @@ export default function ControlHumano(p: Props) {
                 className="btn btn-primary btn-sm"
                 disabled={ocupado !== null}
                 onClick={async () => {
-                  if (!window.confirm(`¿Adopta los ${porAdoptar} puntajes de la tabla como evaluador técnico? Queda en la auditoría a su nombre.`)) return
+                  const seguro = await confirmar({
+                    titulo: `¿Adopta los ${porAdoptar} puntajes de la tabla?`,
+                    mensaje: 'Los adopta como evaluador técnico y queda en la auditoría a su nombre.',
+                    aceptar: 'Adoptar los puntajes',
+                  })
+                  if (!seguro) return
                   setOcupado('puntajes')
                   setError(null)
                   try {
