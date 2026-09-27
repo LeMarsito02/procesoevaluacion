@@ -252,16 +252,16 @@ export default function PasoNuevo(props: Props) {
           </div>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24, gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="btn btn-ghost" type="button" onClick={props.onCancelar}>
-            Cancelar
-          </button>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            {falta.length > 0 && !analizando && (
-              <span className="small muted">
-                Falta {falta.length > 1 ? `${falta.slice(0, -1).join(', ')} y ${falta[falta.length - 1]}` : falta[0]}.
-              </span>
-            )}
+        <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {falta.length > 0 && !analizando && (
+            <span className="small muted" style={{ textAlign: 'right' }}>
+              Falta {falta.length > 1 ? `${falta.slice(0, -1).join(', ')} y ${falta[falta.length - 1]}` : falta[0]}.
+            </span>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+            <button className="btn btn-ghost" type="button" onClick={props.onCancelar}>
+              Cancelar
+            </button>
             <button className="btn btn-primary btn-lg" type="submit" disabled={!listo || analizando}>
             {analizando ? (
               <>
