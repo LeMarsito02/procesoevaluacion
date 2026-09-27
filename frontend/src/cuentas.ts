@@ -19,12 +19,18 @@ export interface Usuario {
   entidad: { id: string; nombre: string } | null
   areas: Area[]
   acceso_soporte_hasta: string | null
+  /** Compromiso de uso (expediente LEG-004, 6.4): falta aceptarlo antes de decidir. */
+  compromiso_pendiente?: boolean
+  compromiso_version?: string
+  compromiso_texto?: string
+  version_sistema?: string
 }
 
 export interface Miembro extends Usuario {
   activo: boolean
   ultimo_ingreso: string | null
   debe_cambiar_clave: boolean
+  compromiso_aceptado_en?: string | null
 }
 
 /** Solo llega una vez, al crear la cuenta o al reiniciar la contraseña. */
@@ -91,6 +97,8 @@ export const solicitarRecuperacion = (email: string, recaptcha: string | null) =
   enviarJson<{ ok: boolean }>('/api/auth/recuperar', 'POST', { email, recaptcha })
 export const restablecerClave = (uid: string, token: string, password: string) =>
   enviarJson<{ ok: boolean }>('/api/auth/restablecer', 'POST', { uid, token, password })
+export const aceptarCompromiso = (version: string) =>
+  enviarJson<Usuario>('/api/auth/compromiso', 'POST', { version, acepto: true })
 export const fijarClaveInicial = (nueva: string) => conCsrf(enviarJson<LoginOut>('/api/auth/clave-inicial', 'POST', { nueva }))
 
 const q = (entidadId?: string | null) => (entidadId ? `?entidad_id=${entidadId}` : '')

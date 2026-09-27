@@ -12,8 +12,13 @@ def tiene_area(usuario: Usuario, tipo: str) -> bool:
 
 
 def puede_ver(usuario: Usuario, evaluacion: Evaluacion) -> bool:
-    # Todos los de la entidad consultan (solo lectura); el superadmin, todo.
-    return usuario.es_superadmin or evaluacion.entidad_id == usuario.entidad_id
+    # Todos los de la entidad consultan (solo lectura); el superadmin, las
+    # entidades que le dieron un permiso temporal (LEG-004, 4.5).
+    from cuentas.seguridad import ve_datos_de
+
+    if usuario.es_superadmin:
+        return ve_datos_de(usuario, evaluacion.entidad_id)
+    return evaluacion.entidad_id == usuario.entidad_id
 
 
 def puede_gestionar(usuario: Usuario, evaluacion: Evaluacion) -> bool:
@@ -44,6 +49,22 @@ def exigir_trabajo(usuario: Usuario, evaluacion: Evaluacion) -> None:
         raise HttpError(409, "La evaluación está aprobada. Pida al jefe del área que la reabra para modificarla.")
 
 
+def compromiso_pendiente(usuario: Usuario) -> bool:
+    """El compromiso de uso (LEG-004, 6.4) aplica a quien decide requisitos."""
+    from evaluaciones.cumplimiento import COMPROMISO_VERSION
+
+    if usuario.rol in (Rol.CONSULTA, Rol.SOPORTE):
+        return False
+    return usuario.compromiso_version != COMPROMISO_VERSION
+
+
+def exigir_compromiso(usuario: Usuario) -> None:
+    if compromiso_pendiente(usuario):
+        raise HttpError(
+            409, "Antes de decidir, acepte el compromiso de uso de MiEvaluador (se muestra al iniciar sesión)."
+        )
+
+
 def exigir_gestion(usuario: Usuario, evaluacion: Evaluacion) -> None:
     if not puede_gestionar(usuario, evaluacion):
         raise HttpError(403, "Solo el jefe del área o el administrador pueden hacer esto.")
@@ -55,7 +76,9 @@ def puede_eliminar_proceso(usuario: Usuario, proceso) -> bool:
     if usuario.rol == Rol.CONSULTA:
         return False
     if usuario.es_superadmin:
-        return True
+        from cuentas.seguridad import ve_datos_de
+
+        return ve_datos_de(usuario, proceso.entidad_id)
     if proceso.entidad_id != usuario.entidad_id:
         return False
     return usuario.rol == Rol.ADMIN_ENTIDAD or proceso.creado_por_id == usuario.id

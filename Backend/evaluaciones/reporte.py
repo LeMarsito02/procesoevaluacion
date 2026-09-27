@@ -1,9 +1,13 @@
 """Reporte formal de evaluación en Word.
 
-Deja constancia de quién creó, asignó, evaluó y aprobó, de cómo se verificó
-cada requisito de cada proponente y del porqué: «Aprobado automáticamente por
-MiEvaluador» (con la razón y el documento soporte) o «Validado manualmente por»
-(con la persona, la fecha y su justificación).
+Deja constancia de quién creó, asignó, evaluó y adoptó, de cómo se verificó
+cada requisito de cada proponente y del porqué: «Verificado por MiEvaluador –
+adoptado por…» (con la razón y el documento soporte) o «Validado manualmente
+por» (con la persona, la fecha y su justificación).
+
+El sistema verifica y propone; la persona adopta (expediente LEG-004 y
+Concepto C-1015 de 2026): mientras la evaluación no se apruebe, el documento
+es un pre-informe; al aprobarla, es el informe adoptado por quien la aprobó.
 """
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ import io
 from collections import defaultdict
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.utils import timezone
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -23,6 +28,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from evaluaciones import servicios
+from evaluaciones.cumplimiento import FORMA_NO_APLICA, FORMA_VERIFICADO, LEYENDA_PREINFORME, constancia, indicadores, titulo_adoptado
 from evaluaciones.models import DocumentoAportado, EstadoEvaluacion, Evaluacion, PersonaVerificada, Resultado, Revision
 from motor import criterios
 from motor.esquemas.proceso import ProcesoDocumentoBase, ResultadoRequisito
@@ -89,7 +95,7 @@ def explicar_automatico(r: ResultadoRequisito, verifica: str) -> str:
     return " ".join(partes)
 
 
-def validacion(r: ResultadoRequisito, revision: Revision | None, verifica: str) -> Validacion:
+def validacion(r: ResultadoRequisito, revision: Revision | None, verifica: str, forma_verificado: str = FORMA_VERIFICADO) -> Validacion:
     if revision is not None:
         quien = revision.usuario.nombre_completo if revision.usuario_id else "el evaluador"
         justificacion = revision.nota.strip() or "Sin justificación registrada."
@@ -103,9 +109,9 @@ def validacion(r: ResultadoRequisito, revision: Revision | None, verifica: str) 
     if r.error:
         return Validacion("Pendiente", "No se pudo evaluar automáticamente", _frase(r.error))
     if (r.motivo or "").startswith("N.A."):
-        return Validacion("No aplica", "Determinado automáticamente por MiEvaluador", _frase(r.motivo.removeprefix("N.A.").lstrip(" —-")))
+        return Validacion("No aplica", FORMA_NO_APLICA, _frase(r.motivo.removeprefix("N.A.").lstrip(" —-")))
     if r.cumple:
-        return Validacion("Cumple", "Aprobado automáticamente por MiEvaluador", explicar_automatico(r, verifica))
+        return Validacion("Cumple", forma_verificado, explicar_automatico(r, verifica))
     return Validacion("Pendiente", "Requiere revisión del evaluador", _frase(r.motivo or "El sistema no pudo confirmar el requisito"))
 
 
@@ -295,7 +301,7 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
     estilo.font.size = Pt(10.5)
 
     encabezado = seccion.header.paragraphs[0]
-    encabezado.text = f"MiEvaluador · Reporte de evaluación {tipo} · {proceso.codigo}"
+    encabezado.text = f"MiEvaluador · Reporte de evaluación {tipo} · {proceso.codigo}" + ("" if aprobada else f" · {LEYENDA_PREINFORME}")
     encabezado.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     for run in encabezado.runs:
         run.font.size = Pt(8)
@@ -310,8 +316,14 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
     # Portada
     _parrafo(doc, "MiEvaluador", negrita=True, tam=13, color=AZUL_MARCA, alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=0)
     _parrafo(doc, "by LeMarTek", tam=9, color=GRIS, alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=18)
-    titulo = f"REPORTE DE EVALUACIÓN {evaluacion.get_tipo_display().upper()}"
-    _parrafo(doc, titulo + ("" if aprobada else " — BORRADOR"), negrita=True, tam=18, color=AZUL, alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=2)
+    if aprobada:
+        _parrafo(doc, f"INFORME DE EVALUACIÓN {evaluacion.get_tipo_display().upper()}", negrita=True, tam=18, color=AZUL,
+                 alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=2)
+        _parrafo(doc, titulo_adoptado(evaluacion), tam=11, color=AZUL_MARCA, alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=4)
+    else:
+        _parrafo(doc, f"PRE-INFORME DE EVALUACIÓN {evaluacion.get_tipo_display().upper()}", negrita=True, tam=18, color=AZUL,
+                 alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=2)
+        _parrafo(doc, LEYENDA_PREINFORME, negrita=True, tam=11, color=GRIS, alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=4)
     _parrafo(doc, f"Proceso de selección No. {proceso.codigo}", negrita=True, tam=13, alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=2)
     _parrafo(doc, evaluacion.entidad.nombre, tam=12, color=GRIS, alineacion=WD_ALIGN_PARAGRAPH.LEFT, espacio=16)
 
@@ -353,8 +365,8 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
             ],
             ["Evaluador responsable", evaluacion.responsable.nombre_completo if evaluacion.responsable else "Sin asignar", "—"],
             [
-                "Aprobación de la evaluación",
-                evaluacion.aprobada_por.nombre_completo if evaluacion.aprobada_por else "Pendiente de aprobación",
+                "Adopción de la evaluación (aprobación)",
+                evaluacion.aprobada_por.nombre_completo if evaluacion.aprobada_por else "Pendiente de adopción",
                 fecha_larga(evaluacion.aprobada_en),
             ],
         ],
@@ -368,14 +380,19 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
         if evaluacion.plantilla_id
         else "la plantilla de evaluación base del sistema"
     )
+    forma_auto = f"{FORMA_VERIFICADO} – adoptado por {evaluacion.aprobada_por.nombre_completo} el {fecha_larga(evaluacion.aprobada_en)}" if (
+        aprobada and evaluacion.aprobada_por_id
+    ) else f"{FORMA_VERIFICADO} – pendiente de adopción"
     for texto in (
         f"La verificación se realizó con apoyo de MiEvaluador, aplicando {version}, que comprende {len(catalogo)} requisitos. "
         "Para cada requisito, el sistema identificó el documento correspondiente dentro de la oferta de cada proponente y "
-        "verificó las condiciones exigidas.",
-        "Los requisitos que el sistema confirmó por sí solo se identifican como «Aprobado automáticamente por MiEvaluador», "
-        "junto con la razón y el documento soporte. Los casos que el sistema no pudo confirmar con certeza fueron revisados "
-        "por el evaluador, quien registró su decisión y justificación; se identifican como «Validado manualmente por», con el "
-        "nombre de quien validó y la fecha.",
+        "contrastó su contenido con las condiciones del pliego. El sistema solo da un requisito por verificado cuando "
+        "encuentra en el documento todos los datos que la regla exige; en cualquier otro caso lo deja pendiente de revisión "
+        "humana. No emite resultados de incumplimiento: el «no cumple» lo decide siempre una persona.",
+        "Los requisitos que el sistema verificó con evidencia se identifican como «Verificado por MiEvaluador», junto con la "
+        "razón y el documento soporte, y los adopta la persona que aprueba la evaluación, previa revisión de una muestra de "
+        "control. Los casos que el sistema no pudo verificar con certeza fueron revisados por el evaluador, quien registró su "
+        "decisión y justificación; se identifican como «Validado manualmente por», con el nombre de quien validó y la fecha.",
         "Cuando el proponente no aportó un certificado de antecedentes, el evaluador lo consultó en la fuente oficial y lo "
         "incorporó al expediente, indicando la persona consultada y la fecha de expedición del certificado.",
     ):
@@ -394,7 +411,7 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
             if r is None:
                 estados.append("Pendiente")
                 continue
-            v = validacion(r, revisiones.get((p.id, n)), info[n]["verifica"])
+            v = validacion(r, revisiones.get((p.id, n)), info[n]["verifica"], forma_auto)
             estados.append(v.estado)
             if v.estado == "No cumple":
                 no_cumple.append(info[n]["corto"])
@@ -451,7 +468,7 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
             if r is None:
                 filas.append([str(n), info[n]["titulo"], "Pendiente", "No evaluado."])
                 continue
-            v = validacion(r, revisiones.get((p.id, n)), info[n]["verifica"])
+            v = validacion(r, revisiones.get((p.id, n)), info[n]["verifica"], forma_auto)
             detalle = f"{v.forma}. {v.detalle}"
             if n in por_pliego:
                 detalle += f" {por_pliego[n]}"
@@ -466,23 +483,50 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
             filas.append([str(n), info[n]["titulo"], v.estado, detalle])
         _tabla(doc, ["No.", "Requisito", "Resultado", "Forma de validación y justificación"], filas, [1.0, 4.4, 2.2, 9.0])
 
-    # 6. Constancia
-    _titulo(doc, "6. Constancia")
+    # 6. Control humano: muestra e indicadores de revisión
+    _titulo(doc, "6. Control humano de la verificación")
+    ind = indicadores(evaluacion)
+    filas_ind = [
+        ["Resultados del sistema", str(ind["resultados"])],
+        ["Verificados por el sistema y adoptados sin revisión individual", str(ind["verificados_por_el_sistema_sin_revision"])],
+        ["Revisados individualmente por una persona", str(ind["revisados_por_una_persona"])],
+        ["Verificaciones del sistema confirmadas por una persona", str(ind["verificaciones_del_sistema_confirmadas"])],
+        ["Verificaciones del sistema corregidas por una persona", str(ind["verificaciones_del_sistema_corregidas"])],
+        ["«No cumple» decididos por una persona", str(ind["no_cumple_decididos_por_una_persona"])],
+        ["Documentos soporte abiertos por los evaluadores", str(ind["documentos_soporte_abiertos"])],
+    ]
+    m = ind["muestra_de_control"]
+    if m:
+        filas_ind += [
+            ["Muestra de control: ofertas sorteadas", str(m["ofertas"])],
+            ["Muestra de control: verificaciones revisadas contra su soporte", f"{m['items']} ({m['conformes']} conformes, {m['no_conformes']} no conformes)"],
+            ["Muestra de control: requisitos ampliados a revisión total", ", ".join(str(n) for n in m["requisitos_ampliados"]) or "Ninguno"],
+            ["Muestra de control: estado", m["estado"]],
+        ]
+    else:
+        filas_ind.append(["Muestra de control", "Aún no se ha realizado"])
+    _tabla(doc, ["Indicador", "Valor"], filas_ind, [11.0, 5.6])
+
+    # 7. Constancia
+    _titulo(doc, "7. Constancia de uso de la herramienta")
+    _parrafo(doc, constancia(evaluacion))
     _parrafo(
         doc,
-        f"Reporte generado por MiEvaluador el {fecha_larga(ahora)}. "
+        f"Reporte generado por MiEvaluador (versión {evaluacion.version_sistema or settings.MIEVALUADOR_VERSION}) el "
+        f"{fecha_larga(ahora)}. "
         + (
-            f"La evaluación fue aprobada por {evaluacion.aprobada_por.nombre_completo} el {fecha_larga(evaluacion.aprobada_en)}."
+            f"La evaluación fue adoptada por {evaluacion.aprobada_por.nombre_completo} el {fecha_larga(evaluacion.aprobada_en)}."
             if aprobada and evaluacion.aprobada_por
-            else "La evaluación aún no ha sido aprobada: este documento es un borrador y no constituye el informe definitivo."
+            else "La evaluación aún no ha sido adoptada: este documento es un pre-informe."
         ),
+        tam=9.5,
     )
     doc.add_paragraph()
     firmas = doc.add_table(rows=2, cols=2)
     for i, (rol, persona) in enumerate(
         (
             ("Elaboró", evaluacion.responsable.nombre_completo if evaluacion.responsable else ""),
-            ("Aprobó", evaluacion.aprobada_por.nombre_completo if evaluacion.aprobada_por else ""),
+            ("Adoptó", evaluacion.aprobada_por.nombre_completo if evaluacion.aprobada_por else ""),
         )
     ):
         firmas.rows[0].cells[i].text = "\n\n______________________________"

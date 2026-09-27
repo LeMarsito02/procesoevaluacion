@@ -63,9 +63,9 @@ export default function DocumentosFinales({ resumen }: { resumen: EvaluacionResu
         <div style={{ flex: 1 }}>
           <strong>Reporte formal de evaluación (.docx)</strong>
           <div className="small muted">
-            Proceso, responsables, metodología y, por proponente, cada requisito: aprobado automáticamente por MiEvaluador o
-            validado manualmente, con quién, cuándo y por qué.
-            {!aprobada && ' Mientras no se apruebe, sale como borrador.'}
+            Proceso, responsables, metodología, control humano (muestra de control e indicadores) y, por proponente, cada
+            requisito: verificado por MiEvaluador y adoptado al aprobar, o validado manualmente, con quién, cuándo y por qué.
+            {!aprobada && ' Mientras no se apruebe, sale como pre-informe.'}
           </div>
         </div>
         <button

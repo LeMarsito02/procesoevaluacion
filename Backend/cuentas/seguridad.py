@@ -82,6 +82,29 @@ def requiere_rol(usuario: Usuario, roles: Iterable[str]) -> None:
     raise HttpError(403, "No tienes permiso para esta acción.")
 
 
+def entidades_con_datos(usuario: Usuario) -> set | None:
+    """Entidades cuyos procesos puede ver el usuario (None = todas).
+
+    El superadministrador de LeMarTek gestiona la plataforma, pero no ve los
+    procesos de una entidad sin un permiso temporal que otorga el
+    administrador de esa entidad, igual que el soporte (expediente LEG-004,
+    numeral 4.5). `SUPERADMIN_SIN_PERMISO=1` lo desactiva (solo desarrollo)."""
+    if not usuario.es_superadmin:
+        return {usuario.entidad_id} if usuario.entidad_id else set()
+    if settings.SUPERADMIN_SIN_PERMISO:
+        return None
+    return set(
+        AccesoSoporte.objects.filter(
+            soporte=usuario, revocado_en__isnull=True, expira_en__gt=timezone.now()
+        ).values_list("entidad_id", flat=True)
+    )
+
+
+def ve_datos_de(usuario: Usuario, entidad_id) -> bool:
+    visibles = entidades_con_datos(usuario)
+    return visibles is None or entidad_id in visibles
+
+
 def de_mi_entidad(qs: QuerySet, usuario: Usuario, campo: str = "entidad") -> QuerySet:
     """Restringe un queryset a la entidad del usuario (el superadmin ve todo)."""
     if usuario.es_superadmin:

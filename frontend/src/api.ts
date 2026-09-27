@@ -167,6 +167,8 @@ export interface ResultadoRequisito {
   personas_antecedente: PersonaAntecedente[]
   /** Evaluación técnica: contratos del lote o puntaje del factor. */
   detalle?: DetalleTecnico | null
+  /** La muestra de control encontró un error en este requisito: pasa a revisión humana. */
+  revision_forzada?: string | null
 }
 
 export interface ContratoTecnico {

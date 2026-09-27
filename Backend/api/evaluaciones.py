@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
@@ -17,14 +18,17 @@ from ninja.errors import HttpError
 
 from cuentas.correo import enviar_asignacion
 from cuentas.models import Entidad, Rol, TipoArea, Usuario
-from cuentas.seguridad import auditar, requiere_rol, sesion_activa
-from evaluaciones import expediente, servicios
+from cuentas.seguridad import auditar, entidades_con_datos, requiere_rol, sesion_activa, ve_datos_de
+from evaluaciones import cumplimiento, expediente, muestra, puntaje, servicios
 from evaluaciones import pliego as pliego_servicio
 from evaluaciones.tipos import MENSAJE_EN_PREPARACION, TIPOS
 from evaluaciones.models import (
     AnalisisPliego,
     EstadoEvaluacion,
+    ItemMuestra,
+    MuestraControl,
     EstadoTrabajo,
+    Expediente,
     PlantillaEvaluacion,
     Trabajador,
     Trabajo,
@@ -35,6 +39,7 @@ from evaluaciones.models import (
     Revision,
 )
 from evaluaciones.permisos import (
+    exigir_compromiso,
     exigir_gestion,
     exigir_trabajo,
     puede_crear_procesos,
@@ -117,8 +122,11 @@ class ProcesoResumenOut(Schema):
     proponentes: int
     evaluaciones: list[EvaluacionResumenOut]
     # Quien lo ve puede eliminarlo (administrador o quien lo creó) y no tiene
-    # evaluaciones aprobadas.
+    # evaluaciones aprobadas ni expedientes.
     puede_eliminar: bool = False
+    # Archivar: quien puede eliminarlo, aunque tenga expediente.
+    puede_archivar: bool = False
+    archivado_en: datetime | None = None
 
 
 class ProponenteIn(Schema):
@@ -260,8 +268,9 @@ def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[Evaluac
 
 def _evaluaciones_qs(usuario: Usuario):
     qs = Evaluacion.objects.select_related("proceso", "responsable", "entidad", "plantilla")
-    if not usuario.es_superadmin:
-        qs = qs.filter(entidad_id=usuario.entidad_id)
+    visibles = entidades_con_datos(usuario)
+    if visibles is not None:
+        qs = qs.filter(entidad_id__in=visibles)
     return qs
 
 
@@ -302,16 +311,19 @@ def tipos_de_evaluacion(request: HttpRequest) -> list[TipoOut]:
 
 # --- Procesos ---
 @router.get("/procesos", response=list[ProcesoResumenOut])
-def listar_procesos(request: HttpRequest) -> list[ProcesoResumenOut]:
-    """Todos los procesos de la entidad (consulta para cualquier rol)."""
+def listar_procesos(request: HttpRequest, archivados: bool = False) -> list[ProcesoResumenOut]:
+    """Todos los procesos de la entidad (consulta para cualquier rol). Los
+    archivados solo con `archivados=true`."""
     usuario: Usuario = request.auth
     procesos = Proceso.objects.select_related("creado_por").annotate(n=Count("proponentes"))
-    if not usuario.es_superadmin:
-        procesos = procesos.filter(entidad_id=usuario.entidad_id)
-    procesos = list(procesos)
+    visibles = entidades_con_datos(usuario)
+    if visibles is not None:
+        procesos = procesos.filter(entidad_id__in=visibles)
+    procesos = list(procesos.filter(archivado_en__isnull=not archivados))
     evaluaciones = list(_evaluaciones_qs(usuario).filter(proceso__in=procesos).order_by("tipo"))
     por_proceso: dict[UUID, list[EvaluacionResumenOut]] = {}
     aprobados = {e.proceso_id: True for e in evaluaciones if e.estado == EstadoEvaluacion.APROBADA}
+    con_expediente = set(Expediente.objects.filter(evaluacion__proceso__in=procesos).values_list("evaluacion__proceso_id", flat=True))
     for resumen in _resumenes(usuario, evaluaciones):
         por_proceso.setdefault(resumen.proceso_id, []).append(resumen)
     return [
@@ -324,10 +336,28 @@ def listar_procesos(request: HttpRequest) -> list[ProcesoResumenOut]:
             creado_por=_persona(p.creado_por),
             proponentes=p.n,
             evaluaciones=por_proceso.get(p.id, []),
-            puede_eliminar=puede_eliminar_proceso(usuario, p) and not aprobados.get(p.id, False),
+            puede_eliminar=puede_eliminar_proceso(usuario, p) and not aprobados.get(p.id, False) and p.id not in con_expediente,
+            puede_archivar=puede_eliminar_proceso(usuario, p),
+            archivado_en=p.archivado_en,
         )
         for p in procesos
     ]
+
+
+@router.post("/procesos/{proceso_id}/archivar", response={204: None})
+def archivar_proceso(request: HttpRequest, proceso_id: UUID, archivar: bool = True):
+    """Archiva (o desarchiva) un proceso: deja de aparecer en las listas, pero
+    se conserva con todo lo suyo. Es la salida para un proceso que ya tuvo
+    expediente y por eso no se puede eliminar."""
+    usuario: Usuario = request.auth
+    proceso = get_object_or_404(Proceso, pk=proceso_id)
+    if not puede_eliminar_proceso(usuario, proceso):
+        raise HttpError(403, "Solo el administrador de la entidad o quien creó el proceso puede archivarlo.")
+    proceso.archivado_en = timezone.now() if archivar else None
+    proceso.archivado_por = usuario if archivar else None
+    proceso.save(update_fields=["archivado_en", "archivado_por"])
+    auditar(request, "proceso.archivado" if archivar else "proceso.desarchivado", objeto=proceso, codigo=proceso.codigo)
+    return 204, None
 
 
 class EliminarProcesoIn(Schema):
@@ -365,6 +395,8 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
         if datos.entidad_id is None:
             raise HttpError(400, "Elija la entidad del proceso.")
         entidad = get_object_or_404(Entidad, pk=datos.entidad_id)
+        if not ve_datos_de(usuario, entidad.id):
+            raise HttpError(403, "Necesita un permiso temporal del administrador de esa entidad para trabajar en sus procesos.")
     else:
         if datos.entidad_id is not None and datos.entidad_id != usuario.entidad_id:
             raise HttpError(404, "No encontrado.")
@@ -997,6 +1029,14 @@ def revisar(request: HttpRequest, evaluacion_id: UUID, datos: RevisarIn):
     proponente = get_object_or_404(Proponente, pk=datos.proponente_id, proceso_id=evaluacion.proceso_id)
     if datos.cumple is not None and len(datos.nota.strip()) < 5:
         raise HttpError(400, "Escriba la justificación de su decisión: queda en el reporte formal de evaluación.")
+    if datos.cumple is not None:
+        # Decidir exige el compromiso de uso y haber visto el soporte (LEG-004, 3.1 y 6.4).
+        exigir_compromiso(usuario)
+        resultado = Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente, requisito=datos.requisito).first()
+        try:
+            muestra.exigir_soporte(usuario, evaluacion, proponente, resultado.datos if resultado else None, datos.nota)
+        except muestra.ErrorMuestra as exc:
+            raise HttpError(409, str(exc)) from exc
     with transaction.atomic():
         anterior = Revision.objects.filter(evaluacion=evaluacion, proponente=proponente, requisito=datos.requisito).first()
         if datos.cumple is None:
@@ -1040,15 +1080,149 @@ def aprobar(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
         raise HttpError(409, f"Faltan {avance.proponentes - avance.evaluados} proponentes por evaluar.")
     if avance.pendientes:
         raise HttpError(409, f"Quedan {avance.pendientes} requisitos por revisar.")
+    exigir_compromiso(usuario)
+    # Lo verificado por el sistema se adopta con la muestra de control, y el
+    # puntaje, proponente por proponente (LEG-004, 1.2, 3 y 3.1).
+    motivo = muestra.motivo_para_no_aprobar(evaluacion)
+    if motivo:
+        raise HttpError(409, motivo)
+    if puntaje.tiene_puntaje(evaluacion):
+        faltan = puntaje.sin_adoptar(evaluacion)
+        if faltan:
+            raise HttpError(409, f"Falta adoptar el puntaje de {len(faltan)} proponentes ({', '.join(faltan[:8])}{'…' if len(faltan) > 8 else ''}).")
     with transaction.atomic():
         evaluacion.estado = EstadoEvaluacion.APROBADA
         evaluacion.aprobada_por = usuario
         evaluacion.aprobada_en = timezone.now()
+        evaluacion.version_sistema = settings.MIEVALUADOR_VERSION
+        evaluacion.modelos_ia = cumplimiento.modelos_ia()
         evaluacion.save()
         # Expediente permanente (lo arma el trabajador en segundo plano).
         expediente.solicitar(evaluacion, usuario)
         auditar(request, "evaluacion.aprobada", objeto=evaluacion, proceso=evaluacion.proceso.codigo)
     return _resumenes(usuario, [evaluacion])[0]
+
+
+# --- Muestra de control (LEG-004, numerales 3 y 3.1) -------------------------------
+class ItemMuestraIn(Schema):
+    conforme: bool
+    nota: str = ""
+
+
+def _muestra_out(evaluacion: Evaluacion) -> dict:
+    return {
+        "muestra": muestra.resumen(muestra.vigente(evaluacion)),
+        "motivo_para_no_aprobar": muestra.motivo_para_no_aprobar(evaluacion),
+        "ofertas_por_muestra": settings.MUESTRA_OFERTAS,
+    }
+
+
+@router.get("/{evaluacion_id}/muestra", response=dict)
+def ver_muestra(request: HttpRequest, evaluacion_id: UUID) -> dict:
+    evaluacion = _evaluacion(request.auth, evaluacion_id)
+    return _muestra_out(evaluacion)
+
+
+@router.post("/{evaluacion_id}/muestra", response=dict)
+def crear_muestra(request: HttpRequest, evaluacion_id: UUID) -> dict:
+    """Sortea las ofertas de la muestra de control (o devuelve la que está en curso)."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    exigir_compromiso(usuario)
+    antes = muestra.vigente(evaluacion)
+    try:
+        nueva = muestra.crear(evaluacion, usuario)
+    except muestra.ErrorMuestra as exc:
+        raise HttpError(409, str(exc)) from exc
+    if antes is None or antes.id != nueva.id:
+        auditar(
+            request, "muestra.creada", objeto=evaluacion, muestra=str(nueva.id), semilla=str(nueva.semilla),
+            ofertas=nueva.ofertas_sorteadas, items=nueva.items.count(),
+        )
+    return _muestra_out(evaluacion)
+
+
+@router.put("/{evaluacion_id}/muestra/items/{item_id}", response=dict)
+def revisar_item_muestra(request: HttpRequest, evaluacion_id: UUID, item_id: int, datos: ItemMuestraIn) -> dict:
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    exigir_compromiso(usuario)
+    item = get_object_or_404(ItemMuestra.objects.select_related("muestra", "proponente"), pk=item_id, muestra__evaluacion=evaluacion)
+    try:
+        muestra.registrar(item, usuario, datos.conforme, datos.nota)
+    except muestra.ErrorMuestra as exc:
+        raise HttpError(409, str(exc)) from exc
+    auditar(
+        request, "muestra.item", objeto=evaluacion, hoja=item.proponente.hoja, requisito=item.requisito,
+        resultado=item.resultado, soporte_visto=item.soporte_visto,
+    )
+    if not datos.conforme:
+        auditar(request, "muestra.ampliada", objeto=evaluacion, requisito=item.requisito)
+    return _muestra_out(evaluacion)
+
+
+@router.post("/{evaluacion_id}/muestra/cerrar", response=dict)
+def cerrar_muestra(request: HttpRequest, evaluacion_id: UUID) -> dict:
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    exigir_compromiso(usuario)
+    actual = muestra.vigente(evaluacion)
+    if actual is None:
+        raise HttpError(409, "No hay una muestra de control en curso.")
+    try:
+        muestra.cerrar(actual, usuario)
+    except muestra.ErrorMuestra as exc:
+        raise HttpError(409, str(exc)) from exc
+    auditar(request, "muestra.cerrada", objeto=evaluacion, muestra=str(actual.id), ampliados=actual.requisitos_ampliados)
+    return _muestra_out(evaluacion)
+
+
+@router.get("/{evaluacion_id}/muestra/acta")
+def acta_muestra(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
+    evaluacion = _evaluacion(request.auth, evaluacion_id)
+    actual = muestra.vigente(evaluacion)
+    if actual is None:
+        raise HttpError(404, "Esta evaluación no tiene muestra de control.")
+    contenido, nombre = muestra.generar_acta(actual)
+    auditar(request, "muestra.acta_descargada", objeto=evaluacion)
+    respuesta = HttpResponse(
+        contenido, content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+    return respuesta
+
+
+# --- Puntaje técnico: adopción proponente por proponente -------------------------
+class AdoptarPuntajeIn(Schema):
+    nota: str = ""
+
+
+@router.get("/{evaluacion_id}/puntajes", response=list[dict])
+def ver_puntajes(request: HttpRequest, evaluacion_id: UUID) -> list[dict]:
+    evaluacion = _evaluacion(request.auth, evaluacion_id)
+    if not puntaje.tiene_puntaje(evaluacion):
+        return []
+    return puntaje.estado_puntajes(evaluacion)
+
+
+@router.post("/{evaluacion_id}/puntajes/{proponente_id}/adoptar", response=list[dict])
+def adoptar_puntaje(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, datos: AdoptarPuntajeIn) -> list[dict]:
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    exigir_compromiso(usuario)
+    if not puntaje.tiene_puntaje(evaluacion):
+        raise HttpError(409, "Esta evaluación no asigna puntaje.")
+    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    try:
+        adopcion = puntaje.adoptar(evaluacion, proponente, usuario, datos.nota)
+    except ValueError as exc:
+        raise HttpError(409, str(exc)) from exc
+    auditar(request, "puntaje.adoptado", objeto=evaluacion, hoja=proponente.hoja, puntaje=adopcion.puntaje, detalle=adopcion.detalle)
+    return puntaje.estado_puntajes(evaluacion)
 
 
 @router.post("/{evaluacion_id}/reabrir", response=EvaluacionResumenOut)
@@ -1061,6 +1235,8 @@ def reabrir(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
     evaluacion.estado = EstadoEvaluacion.EN_REVISION
     evaluacion.aprobada_por = None
     evaluacion.aprobada_en = None
+    evaluacion.version_sistema = ""
+    evaluacion.modelos_ia = None
     evaluacion.save()
     servicios.actualizar_estado(evaluacion)
     auditar(request, "evaluacion.reabierta", objeto=evaluacion, proceso=evaluacion.proceso.codigo)

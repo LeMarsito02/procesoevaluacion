@@ -37,16 +37,25 @@ class Cliente:
             self.csrf = r.json().get("csrf", self.csrf)
         return r
 
+    def put(self, url, datos):
+        return self.http.put(url, datos, content_type="application/json", headers=self._h())
+
     def patch(self, url, datos):
         return self.http.patch(url, datos, content_type="application/json", headers=self._h())
 
     def delete(self, url):
         return self.http.delete(url, headers=self._h())
 
-    def entrar(self, email, clave=CLAVE):
+    def entrar(self, email, clave=CLAVE, aceptar_compromiso=True):
         r = self.post("/api/auth/login", {"email": email, "password": clave})
         assert r.status_code == 200, r.content
-        return r.json()
+        datos = r.json()
+        # Como la interfaz: al entrar, la persona lee y acepta el compromiso de uso.
+        usuario = datos.get("usuario") or {}
+        if aceptar_compromiso and usuario.get("compromiso_pendiente"):
+            a = self.post("/api/auth/compromiso", {"version": usuario["compromiso_version"], "acepto": True})
+            assert a.status_code == 200, a.content
+        return datos
 
 
 class BaseCuentas(TestCase):

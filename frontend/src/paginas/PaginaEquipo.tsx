@@ -280,6 +280,13 @@ export default function PaginaEquipo() {
                         <span className="pill" data-estado={!u.activo ? 'no_aplica' : u.debe_cambiar_clave ? 'revisar' : 'cumple'}>
                           <span className="dot" /> {!u.activo ? 'Inactivo' : u.debe_cambiar_clave ? 'Sin estrenar' : 'Activo'}
                         </span>
+                        {u.rol !== 'consulta' && (
+                          <div className="small muted" title="Compromiso de uso de MiEvaluador (expediente LEG-004, 6.4)">
+                            {u.compromiso_aceptado_en
+                              ? `Compromiso aceptado el ${new Date(u.compromiso_aceptado_en).toLocaleDateString('es-CO')}`
+                              : 'Compromiso de uso sin aceptar'}
+                          </div>
+                        )}
                         {editable && (
                           <>
                             <button type="button" className="btn btn-ghost btn-sm" disabled={guardandoId === u.id} onClick={() => reiniciar(u)}>

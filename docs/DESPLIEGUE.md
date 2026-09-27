@@ -31,6 +31,7 @@ Requerimientos completos del servidor (hardware, paquetes, puertos, variables): 
 1. `manage.py migrate`
 2. `manage.py depurar_requisitos` — si las reglas del pliego dejaron de exigir algo (un formato de puntaje, un duplicado de lo que el motor ya verifica), quita esos resultados de las evaluaciones en curso para que no sigan contando como pendientes. Las evaluaciones aprobadas no se tocan.
 3. Reiniciar `api` **y** `trabajador` (el trabajador mantiene el código en memoria).
+4. Si la versión cambia el modelo de IA o la forma de aplicar las reglas, es una **modificación sustancial** (expediente LEG-004, numeral 9.3): subir `Backend/VERSION`, anotarla en `CHANGELOG.md`, repetir `medir_rendimiento` y avisar a las entidades.
 
 ## Lista de verificación antes de abrir a una entidad
 
@@ -43,6 +44,10 @@ Requerimientos completos del servidor (hardware, paquetes, puertos, variables): 
 - [ ] `aplicar_retencion --simulacro` corre sin errores.
 - [ ] Trabajador activo visible en la página **Fila**.
 - [ ] Carpeta de Drive de prueba compartida con la cuenta de servicio.
+- [ ] `SUPERADMIN_SIN_PERMISO` sin definir o en `0`: el superadministrador solo ve los procesos de una entidad con permiso temporal de su administrador (LEG-004, 4.5).
+- [ ] `manage.py verificar_auditoria` dice «Auditoría íntegra» (la cadena de huellas de la auditoría no está rota).
+- [ ] `MUESTRA_OFERTAS` en 10 o más (ofertas por muestra de control; la entidad puede exigir más).
+- [ ] `manage.py paquete_escrow --salida …` genera el paquete para el depósito del código (si el contrato lo prevé).
 - [ ] Firewall: solo el puerto del proxy abierto; PostgreSQL y Ollama sin exposición pública.
 
 ## Capacidad

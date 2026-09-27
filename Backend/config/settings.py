@@ -186,6 +186,22 @@ LIMITES_API = {
     "pesado": "100000/h" if _EN_PRUEBAS else os.environ.get("LIMITE_PESADO", "60/h"),
 }
 
+# Versión del producto (semántica). Se registra en cada evaluación aprobada,
+# en el reporte, en el expediente y en la ficha de transparencia. Un cambio
+# de modelo de IA o de la forma de aplicar las reglas es una "modificación
+# sustancial" (expediente LEG-004, numeral 9.3): sube la versión y se anota
+# en CHANGELOG.md.
+MIEVALUADOR_VERSION = os.environ.get("MIEVALUADOR_VERSION") or (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip()
+
+# Muestra de control (expediente LEG-004, numeral 3.1): ofertas que se sortean
+# por evaluación para revisar, contra su soporte, lo que el sistema verificó.
+MUESTRA_OFERTAS = max(10, int(os.environ.get("MUESTRA_OFERTAS", "10")))
+
+# El superadministrador de LeMarTek solo ve los procesos de una entidad con un
+# permiso temporal que otorga el administrador de esa entidad, igual que el
+# soporte (expediente LEG-004, numeral 4.5). "1" lo desactiva (solo desarrollo).
+SUPERADMIN_SIN_PERMISO = os.environ.get("SUPERADMIN_SIN_PERMISO", "0") == "1"
+
 # Días que se conservan los documentos de los proponentes tras aprobar el proceso.
 RETENCION_DIAS = int(os.environ.get("RETENCION_DIAS", "30"))
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024

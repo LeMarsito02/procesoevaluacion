@@ -17,6 +17,7 @@ import tempfile
 import zipfile
 from collections import defaultdict
 
+from django.conf import settings
 from django.core.files import File
 from django.db import transaction
 from django.db.models import Max
@@ -32,6 +33,11 @@ from evaluaciones.models import (
     Resultado,
     Revision,
 )
+from evaluaciones.cumplimiento import constancia, forma_verificado, indicadores
+from evaluaciones.muestra import generar_acta
+from evaluaciones.muestra import resumen as resumen_muestra
+from evaluaciones.muestra import vigente as muestra_vigente
+from evaluaciones.puntaje import estado_puntajes, tiene_puntaje
 from evaluaciones.reporte import generar_reporte, validacion
 from motor.esquemas.proceso import ResultadoRequisito
 from motor.integrations.drive import download_file_bytes
@@ -68,6 +74,41 @@ def reclamar_pendiente() -> Expediente | None:
         return exp
 
 
+def bitacora_csv(evaluacion: Evaluacion) -> bytes:
+    """Todos los eventos de auditoría del proceso (LEG-004, numerales 2 y 4.1):
+    quién vio qué documento, qué decidió, la muestra, la aprobación, las
+    reaperturas y los accesos de soporte a la entidad mientras duró."""
+    import csv
+
+    from django.db.models import Q
+
+    from cuentas.models import EventoAuditoria
+
+    proceso = evaluacion.proceso
+    ids_evaluaciones = [str(i) for i in proceso.evaluaciones.values_list("id", flat=True)]
+    eventos = EventoAuditoria.objects.filter(
+        Q(objeto_tipo="Evaluacion", objeto_id__in=ids_evaluaciones)
+        | Q(objeto_tipo="Proceso", objeto_id=str(proceso.pk))
+        | Q(entidad_id=evaluacion.entidad_id, detalles__proceso=proceso.codigo)
+        | Q(entidad_id=evaluacion.entidad_id, accion__startswith="soporte.", fecha__gte=proceso.creado_en)
+    ).select_related("usuario").order_by("id")
+    salida = io.StringIO()
+    escritor = csv.writer(salida)
+    escritor.writerow(["id", "fecha", "usuario", "accion", "objeto", "detalles", "ip", "huella_encadenada"])
+    for e in eventos:
+        escritor.writerow([
+            e.pk,
+            timezone.localtime(e.fecha).isoformat(),
+            e.usuario.email if e.usuario_id else "",
+            e.accion,
+            f"{e.objeto_tipo} {e.objeto_id}".strip(),
+            json.dumps(e.detalles, ensure_ascii=False, sort_keys=True),
+            e.ip or "",
+            e.huella,
+        ])
+    return salida.getvalue().encode("utf-8-sig")
+
+
 def construir(expediente: Expediente) -> None:
     """Arma el .zip (en disco temporal para no cargarlo en memoria) y lo guarda."""
     evaluacion = Evaluacion.objects.select_related("proceso", "entidad", "responsable", "aprobada_por", "plantilla").get(
@@ -99,8 +140,10 @@ def construir(expediente: Expediente) -> None:
                     avisos.append(f"No se pudo incluir el pliego ({exc}).")
 
             resultados = defaultdict(dict)
+            trazas = {}
             for r in Resultado.objects.filter(evaluacion=evaluacion):
                 resultados[r.proponente_id][r.requisito] = ResultadoRequisito.model_validate(r.datos)
+                trazas[(r.proponente_id, r.requisito)] = r.trazabilidad
             revisiones = {(r.proponente_id, r.requisito): r for r in Revision.objects.filter(evaluacion=evaluacion).select_related("usuario")}
             aportados = defaultdict(list)
             for d in DocumentoAportado.objects.filter(evaluacion=evaluacion).select_related("persona", "subido_por"):
@@ -139,15 +182,21 @@ def construir(expediente: Expediente) -> None:
                 for numero, info in catalogo.items():
                     r = resultados[p.id].get(numero)
                     rev = revisiones.get((p.id, numero))
-                    v = validacion(r, rev, info["verifica"]) if r else None
+                    v = validacion(r, rev, info["verifica"], forma_verificado(evaluacion)) if r else None
+                    traza = trazas.get((p.id, numero)) or {}
                     requisitos.append(
                         {
                             "numero": numero,
                             "requisito": info["titulo"],
+                            # Explicación del resultado (Directiva Conjunta 007 de 2025):
+                            # la regla que se aplicó, el dato encontrado y dónde.
+                            "regla_aplicada": info["verifica"],
                             "resultado": v.estado if v else "No evaluado",
                             "forma_de_validacion": v.forma if v else None,
                             "justificacion": v.detalle if v else None,
                             "documento_soporte": r.archivo_evaluado if r else None,
+                            "uso_ia": bool(r and "IA local" in (r.motivo or "")),
+                            "trazabilidad": traza,
                             "validado_por": rev.usuario.email if rev and rev.usuario_id else None,
                             "validado_en": rev.fecha.isoformat() if rev else None,
                             "resultado_del_sistema": r.model_dump(mode="json", exclude={"archivos_disponibles"}) if r else None,
@@ -199,7 +248,14 @@ def construir(expediente: Expediente) -> None:
                     "plantilla": (
                         {"nombre": evaluacion.plantilla.nombre, "version": evaluacion.plantilla.version} if evaluacion.plantilla_id else "base del sistema"
                     ),
+                    "version_sistema": evaluacion.version_sistema or settings.MIEVALUADOR_VERSION,
+                    "modelos_ia": evaluacion.modelos_ia,
                 },
+                # Control humano: muestra e indicadores (LEG-004, numerales 3, 8 y 9.2).
+                "indicadores_de_revision": indicadores(evaluacion),
+                "muestra_de_control": resumen_muestra(muestra_vigente(evaluacion)),
+                "puntajes_adoptados": estado_puntajes(evaluacion) if tiene_puntaje(evaluacion) else None,
+                "constancia": constancia(evaluacion),
                 "pliego": (
                     {
                         "archivo": analisis.nombre_archivo,
@@ -215,6 +271,12 @@ def construir(expediente: Expediente) -> None:
                 "proponentes": registro_proponentes,
             }
             agregar("registro.json", json.dumps(registro, ensure_ascii=False, indent=2).encode("utf-8"))
+            # Acta de la muestra de control y bitácora completa del proceso.
+            actual = muestra_vigente(evaluacion)
+            if actual is not None:
+                acta, nombre_acta = generar_acta(actual)
+                agregar(f"control humano/{nombre_acta}", acta)
+            agregar("control humano/bitacora.csv", bitacora_csv(evaluacion))
             manifiesto = io.StringIO()
             manifiesto.write(f"Expediente {proceso.codigo} · evaluación {evaluacion.get_tipo_display().lower()} · versión {expediente.version}\n")
             manifiesto.write("SHA-256  tamaño  archivo\n")

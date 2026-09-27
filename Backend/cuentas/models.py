@@ -7,10 +7,12 @@ Row-Level Security) se aplica sobre las tablas de datos de cada entidad
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.db import models
+from django.db import connection, models, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -97,6 +99,10 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     # La cuenta se creó (o se reinició) con una contraseña temporal: la persona
     # debe elegir una propia antes de poder usar el sistema.
     debe_cambiar_clave = models.BooleanField("debe cambiar la contraseña", default=False)
+    # Compromiso de uso del evaluador (expediente LEG-004, numeral 6.4): qué
+    # versión del texto aceptó y cuándo. Sin aceptarlo no decide requisitos.
+    compromiso_version = models.CharField(max_length=20, blank=True)
+    compromiso_aceptado_en = models.DateTimeField(null=True, blank=True)
 
     objects = UsuarioManager()
 
@@ -149,6 +155,10 @@ class IntentoInicioSesion(models.Model):
         ordering = ["-fecha"]
 
 
+# Identificador del candado de PostgreSQL que serializa la escritura de la auditoría.
+CANDADO_AUDITORIA = 7_301_406
+
+
 class EventoAuditoria(models.Model):
     """Registro inmutable de acciones relevantes (quién, qué, cuándo, desde dónde)."""
 
@@ -161,16 +171,48 @@ class EventoAuditoria(models.Model):
     objeto_id = models.CharField(max_length=64, blank=True)
     detalles = models.JSONField(default=dict, blank=True)
     ip = models.GenericIPAddressField(null=True, blank=True)
+    # Huella encadenada: SHA-256 del evento anterior más el contenido de este.
+    # Si alguien modifica o borra un evento directamente en la base de datos,
+    # `manage.py verificar_auditoria` encuentra dónde se rompe la cadena.
+    huella = models.CharField(max_length=64, blank=True)
 
     class Meta:
         verbose_name = "evento de auditoría"
         verbose_name_plural = "auditoría"
         ordering = ["-fecha"]
 
+    def contenido_para_huella(self) -> str:
+        return json.dumps(
+            [
+                self.fecha.isoformat(),
+                str(self.entidad_id or ""),
+                str(self.usuario_id or ""),
+                self.accion,
+                self.objeto_tipo,
+                self.objeto_id,
+                self.detalles,
+                self.ip or "",
+            ],
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+
+    @staticmethod
+    def calcular_huella(anterior: str, contenido: str) -> str:
+        return hashlib.sha256(f"{anterior}|{contenido}".encode()).hexdigest()
+
     def save(self, *args, **kwargs):
         if self._state.adding is False:
             raise ValueError("Los eventos de auditoría no se pueden modificar.")
-        super().save(*args, **kwargs)
+        # Un evento a la vez en toda la base (candado de transacción), para
+        # que la cadena de huellas no se bifurque con escrituras simultáneas.
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [CANDADO_AUDITORIA])
+            anterior = EventoAuditoria.objects.order_by("-id").values_list("huella", flat=True).first() or ""
+            self.huella = self.calcular_huella(anterior, self.contenido_para_huella())
+            super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
         raise ValueError("Los eventos de auditoría no se pueden eliminar.")

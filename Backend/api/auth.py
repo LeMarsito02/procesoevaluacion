@@ -25,6 +25,8 @@ from cuentas import recaptcha
 from cuentas.correo import enviar_recuperacion
 from cuentas.models import AccesoSoporte, Usuario
 from cuentas.seguridad import auditar, inicio_bloqueado, ip_de, registrar_intento, sesion_activa
+from evaluaciones.cumplimiento import COMPROMISO_TEXTO, COMPROMISO_VERSION
+from evaluaciones.permisos import compromiso_pendiente
 
 router = Router(tags=["autenticación"])
 
@@ -55,6 +57,13 @@ class UsuarioOut(Schema):
     areas: list[AreaOut]
     # Soporte de LeMarTek: hasta cuándo puede ver la entidad elegida (solo lectura).
     acceso_soporte_hasta: datetime | None = None
+    # Compromiso de uso (expediente LEG-004, 6.4): si falta aceptarlo, la
+    # interfaz lo muestra antes de dejar decidir requisitos.
+    compromiso_pendiente: bool = False
+    compromiso_version: str = ""
+    compromiso_texto: str = ""
+    # Versión de MiEvaluador (pie de la interfaz y ficha de transparencia).
+    version_sistema: str = ""
 
 
 class CsrfOut(Schema):
@@ -116,6 +125,10 @@ def usuario_out(usuario: Usuario) -> UsuarioOut:
         entidad=EntidadResumen(id=usuario.entidad.id, nombre=usuario.entidad.nombre) if usuario.entidad else None,
         areas=[AreaOut(id=a.id, tipo=a.tipo, nombre=a.get_tipo_display()) for a in usuario.areas.all()],
         acceso_soporte_hasta=getattr(getattr(usuario, "acceso_soporte", None), "expira_en", None),
+        compromiso_pendiente=compromiso_pendiente(usuario),
+        compromiso_version=COMPROMISO_VERSION,
+        compromiso_texto=COMPROMISO_TEXTO,
+        version_sistema=settings.MIEVALUADOR_VERSION,
     )
 
 
@@ -317,6 +330,26 @@ def fijar_clave_inicial(request: HttpRequest, datos: ClaveInicialIn) -> LoginOut
     auditar(request, "usuario.clave_inicial", usuario=usuario, objeto=usuario)
     # Sigue el camino normal: si su rol exige segundo factor, aún falta ese paso.
     return _siguiente_paso(request, usuario)
+
+
+# --- Compromiso de uso del evaluador (LEG-004, numeral 6.4) ---
+class CompromisoIn(Schema):
+    version: str
+    acepto: bool
+
+
+@router.post("/compromiso", auth=sesion_activa, response=UsuarioOut)
+def aceptar_compromiso(request: HttpRequest, datos: CompromisoIn) -> UsuarioOut:
+    usuario: Usuario = request.auth
+    if not datos.acepto:
+        raise HttpError(400, "Para decidir requisitos en MiEvaluador debe aceptar el compromiso de uso.")
+    if datos.version != COMPROMISO_VERSION:
+        raise HttpError(409, "El texto del compromiso cambió: recargue la página y léalo de nuevo.")
+    usuario.compromiso_version = COMPROMISO_VERSION
+    usuario.compromiso_aceptado_en = timezone.now()
+    usuario.save(update_fields=["compromiso_version", "compromiso_aceptado_en"])
+    auditar(request, "compromiso.aceptado", usuario=usuario, version=COMPROMISO_VERSION, texto=COMPROMISO_TEXTO)
+    return usuario_out(usuario)
 
 
 # --- Soporte de LeMarTek ---
