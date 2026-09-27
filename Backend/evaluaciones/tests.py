@@ -2298,6 +2298,62 @@ class OfertasSubidasAManoTests(SimpleTestCase):
         self.assertIn("Vuelve a subirla", str(caso.exception))
 
 
+class TablaDePuntajesDelPliegoTests(SimpleTestCase):
+    """El capítulo IV abre con la tabla que dice cuánto vale cada criterio. Sin
+    ella, en los concursos de méritos el puntaje del equipo de trabajo y el de
+    discapacidad no se leían de ninguna parte y el factor se iba a revisión en
+    todas las ofertas, con el documento completo y verificado."""
+
+    TABLA = (
+        "CAPITULO IV. CRITERIOS DE EVALUACION, ASIGNACION DE PUNTAJE PUNTAJE CONCEPTO MAXIMO "
+        "EXPERIENCIA DEL PROPONENTE 67,50 EQUIPO DE TRABAJO (PERSONAL CLAVE EVALUABLE) 10 "
+        "FACTOR DE SOSTENIBILIDAD 1 APOYO A LA INDUSTRIA NACIONAL 20 "
+        "VINCULACION DE PERSONAS CON DISCAPACIDAD 1 EMPRENDIMIENTOS Y EMPRESAS DE MUJERES 0,25 "
+        "MIPYME 0,25 TOTAL 100 LAS ENTIDADES DEBEN CONSULTAR"
+    )
+
+    def test_se_lee_cuanto_vale_cada_criterio(self):
+        from motor.tecnica.parametros import _tabla_de_criterios
+
+        tabla = _tabla_de_criterios(self.TABLA)
+        self.assertEqual(tabla["personal_clave_adicional"], 10)
+        self.assertEqual(tabla["discapacidad"], 1)
+        self.assertEqual(tabla["industria_nacional"], 20)
+        self.assertEqual(tabla["mujeres"], 0.25)
+        self.assertEqual(tabla["mipyme"], 0.25)
+
+    def test_una_tabla_que_no_cuadra_con_su_total_no_se_usa(self):
+        """Leerla a medias sería peor que no leerla: los conceptos tienen que
+        sumar el total que la propia tabla declara."""
+        from motor.tecnica.parametros import _tabla_de_criterios
+
+        self.assertEqual(_tabla_de_criterios(self.TABLA.replace("APOYO A LA INDUSTRIA NACIONAL 20 ", "")), {})
+
+    def test_sin_tabla_no_pasa_nada(self):
+        from motor.tecnica.parametros import _tabla_de_criterios
+
+        self.assertEqual(_tabla_de_criterios("CAPITULO IV. CRITERIOS DE EVALUACION"), {})
+
+    def test_si_el_numeral_y_la_tabla_no_coinciden_el_factor_va_a_revision(self):
+        """Dos números distintos para el mismo factor significan que uno se leyó
+        mal; poner cualquiera de los dos sería asignar un puntaje inventado."""
+        from motor.tecnica.parametros import _puntajes
+
+        texto = self.TABLA + (
+            "\n4.4 VINCULACION DE PERSONAS CON DISCAPACIDAD LA ENTIDAD ASIGNARA UN PUNTAJE DE (5) PUNTOS AL PROPONENTE"
+        )
+        puntajes, _ = _puntajes(texto)
+        self.assertNotIn("discapacidad", puntajes)
+
+    def test_el_factor_que_solo_esta_en_la_tabla_tambien_cuenta(self):
+        """El equipo de trabajo de los concursos de méritos no tiene un numeral
+        que diga sus puntos: solo está en la tabla."""
+        from motor.tecnica.parametros import _puntajes
+
+        puntajes, _ = _puntajes(self.TABLA)
+        self.assertEqual(puntajes["personal_clave_adicional"], 10)
+
+
 class NombreDelProponenteTests(SimpleTestCase):
     """Las ofertas que se bajan del SECOP no dicen de quién son: el portal las
     nombra «p100 Download.zip» o «CO1.RPL.5801690_20260923122433.zip». El nombre

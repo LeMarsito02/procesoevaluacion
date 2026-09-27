@@ -355,6 +355,60 @@ _TITULOS_PUNTAJE: dict[str, str] = {
     "mujeres": r"EMPRENDIMIENTOS\s+Y\s+EMPRESAS\s+DE\s+MUJERES",
     "mipyme": r"MIPYME\s+DOMICILIADA\s+EN\s+COLOMBIA",
 }
+# El capítulo IV abre con la tabla que resume cuánto vale cada criterio:
+#
+#     PUNTAJE CONCEPTO MAXIMO
+#     EXPERIENCIA DEL PROPONENTE 67,50
+#     EQUIPO DE TRABAJO (PERSONAL CLAVE EVALUABLE) 10
+#     APOYO A LA INDUSTRIA NACIONAL 20
+#     VINCULACION DE PERSONAS CON DISCAPACIDAD 1
+#     TOTAL 100
+#
+# Es la fuente más fiable: la frase "se asignará un puntaje de (10) puntos" no
+# siempre está en el cuerpo del numeral —sobre todo en los concursos de
+# méritos—, y sin el número el factor se iba a revisión en todas las ofertas
+# aunque el documento estuviera completo y verificado.
+#
+# Una tabla leída a medias sería peor que no leerla, así que solo se usa si los
+# conceptos suman el total que la propia tabla declara.
+_CABECERA_TABLA_RE = re.compile(r"PUNTAJE\s+CONCEPTO\s+MAXIMO|CONCEPTO\s+PUNTAJE\s+MAXIMO")
+_FILA_TABLA_RE = re.compile(r"([A-ZÑ][A-ZÑ()\s.,-]{5,70}?)\s+(\d{1,3}(?:[.,]\d{1,2})?)(?=\s|$)")
+_CONCEPTOS_DE_LA_TABLA: dict[str, str] = {
+    "personal_clave_adicional": r"EQUIPO\s+DE\s+TRABAJO|PERSONAL\s+CLAVE\s+EVALUABLE",
+    "industria_nacional": r"APOYO\s+A\s+LA\s+INDUSTRIA\s+NACIONAL|SERVICIOS\s+NACIONALES",
+    "discapacidad": r"VINCULACION\s+DE\s+PERSONAS\s+CON\s+DISCAPACIDAD",
+    "mujeres": r"EMPRENDIMIENTOS?\s+Y\s+EMPRESAS\s+DE\s+MUJERES",
+    "mipyme": r"\bMIPYME\b",
+    "criterios_ambientales": r"FACTOR\s+DE\s+SOSTENIBILIDAD|CRITERIOS\s+AMBIENTALES",
+    "gerencia_proyectos": r"PROGRAMA\s+DE\s+GERENCIA",
+    "plan_calidad": r"PLAN\s+DE\s+CALIDAD",
+    "maquinaria": r"CONDICIONES\s+FUNCIONALES\s+DE\s+LA\s+MAQUINARIA",
+}
+
+
+def _tabla_de_criterios(texto_norm: str) -> dict[str, float]:
+    """Cuánto vale cada factor según la tabla del capítulo IV, o nada."""
+    cabecera = _CABECERA_TABLA_RE.search(texto_norm)
+    if cabecera is None:
+        return {}
+    cuerpo = " ".join(texto_norm[cabecera.end(): cabecera.end() + 900].split())
+    fin = re.search(r"\bTOTAL\s+(\d{1,3}(?:[.,]\d{1,2})?)", cuerpo)
+    if fin is None:
+        return {}
+    total = float(fin.group(1).replace(",", "."))
+    filas = [(c.strip(" .,-"), float(v.replace(",", "."))) for c, v in _FILA_TABLA_RE.findall(cuerpo[: fin.start()])]
+    if not filas or abs(sum(v for _, v in filas) - total) > 0.01:
+        # La tabla no se leyó entera (o el texto trae algo más): no se usa.
+        return {}
+    leidos: dict[str, float] = {}
+    for concepto, valor in filas:
+        for clave, patron in _CONCEPTOS_DE_LA_TABLA.items():
+            if clave not in leidos and re.search(patron, concepto):
+                leidos[clave] = valor
+                break
+    return leidos
+
+
 _PUNTOS_RE = re.compile(
     r"(?:ASIGNAR|OTORGAR)[A-Z]*\s+(?:HASTA\s+)?(?:UN\s+PUNTAJE\s+DE\s+)?[A-Z ]{0,60}?\(\s*(\d+(?:[.,]\d+)?)\s*\)\s*PUNTOS?"
 )
@@ -367,14 +421,22 @@ def _puntajes(texto_norm: str) -> tuple[dict[str, float | None], set[str]]:
     con "N/A." debajo del título, o sencillamente no lo nombra."""
     puntajes: dict[str, float | None] = {}
     nombrados: set[str] = set()
+    tabla = _tabla_de_criterios(texto_norm)
+    # Factores cuyo numeral y tabla se contradicen: se quedan sin número.
+    en_disputa: set[str] = set()
     for clave, titulo in _TITULOS_PUNTAJE.items():
         apariciones = [
             m for m in re.finditer(titulo, texto_norm)
             if "...." not in texto_norm[texto_norm.rfind("\n", 0, m.start()) + 1: texto_norm.find("\n", m.end())]
         ]
         if not apariciones:
-            # El pliego no nombra el factor: no se evalúa en este proceso.
-            puntajes[clave] = None
+            # El pliego no nombra el factor por su título; si la tabla del
+            # capítulo IV le da puntos, sí hace parte del proceso.
+            if clave in tabla:
+                puntajes[clave] = tabla[clave]
+                nombrados.add(clave)
+            else:
+                puntajes[clave] = None
             continue
         nombrados.add(clave)
         # El encabezado de la sección ("4.2.3. PRESENTACIÓN DE UN PLAN…") vale
@@ -392,7 +454,20 @@ def _puntajes(texto_norm: str) -> tuple[dict[str, float | None], set[str]]:
         if re.match(r"[^.]{0,60}?(?:NO\s+APLICA|N\s*/\s*A)\b", cuerpo):
             puntajes[clave] = None
         elif p := _PUNTOS_RE.search(cuerpo):
-            puntajes[clave] = float(p.group(1).replace(",", "."))
+            valor = float(p.group(1).replace(",", "."))
+            # Si el numeral y la tabla no dicen lo mismo, algo se leyó mal:
+            # el factor se queda sin número y lo mira una persona.
+            if clave not in tabla or abs(tabla[clave] - valor) <= 0.01:
+                puntajes[clave] = valor
+            else:
+                en_disputa.add(clave)
+        elif clave in tabla:
+            puntajes[clave] = tabla[clave]
+    # Factores que solo aparecen en la tabla (el equipo de trabajo de los
+    # concursos de méritos no tiene un numeral con su puntaje).
+    for clave, valor in tabla.items():
+        if clave not in en_disputa:
+            puntajes.setdefault(clave, valor)
     return puntajes, nombrados
 
 
