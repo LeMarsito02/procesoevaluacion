@@ -1082,7 +1082,7 @@ def aprobar(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
         raise HttpError(409, f"Quedan {avance.pendientes} requisitos por revisar.")
     exigir_compromiso(usuario)
     # Lo verificado por el sistema se adopta con la muestra de control, y el
-    # puntaje, proponente por proponente (LEG-004, 1.2, 3 y 3.1).
+    # puntaje, por una persona (LEG-004, 1.2, 3 y 3.1).
     motivo = muestra.motivo_para_no_aprobar(evaluacion)
     if motivo:
         raise HttpError(409, motivo)
@@ -1113,7 +1113,7 @@ def _muestra_out(evaluacion: Evaluacion) -> dict:
     return {
         "muestra": muestra.resumen(muestra.vigente(evaluacion)),
         "motivo_para_no_aprobar": muestra.motivo_para_no_aprobar(evaluacion),
-        "ofertas_por_muestra": settings.MUESTRA_OFERTAS,
+        "verificaciones_por_muestra": settings.MUESTRA_VERIFICACIONES,
     }
 
 
@@ -1195,7 +1195,7 @@ def acta_muestra(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
     return respuesta
 
 
-# --- Puntaje técnico: adopción proponente por proponente -------------------------
+# --- Puntaje técnico: adopción por una persona ------------------------------------
 class AdoptarPuntajeIn(Schema):
     nota: str = ""
 
@@ -1205,6 +1205,26 @@ def ver_puntajes(request: HttpRequest, evaluacion_id: UUID) -> list[dict]:
     evaluacion = _evaluacion(request.auth, evaluacion_id)
     if not puntaje.tiene_puntaje(evaluacion):
         return []
+    return puntaje.estado_puntajes(evaluacion)
+
+
+@router.post("/{evaluacion_id}/puntajes/adoptar", response=list[dict])
+def adoptar_puntajes(request: HttpRequest, evaluacion_id: UUID, datos: AdoptarPuntajeIn) -> list[dict]:
+    """Adopta de una vez todos los puntajes resueltos, después de ver la tabla."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    exigir_compromiso(usuario)
+    if not puntaje.tiene_puntaje(evaluacion):
+        raise HttpError(409, "Esta evaluación no asigna puntaje.")
+    try:
+        adopciones = puntaje.adoptar_todos(evaluacion, usuario, datos.nota)
+    except ValueError as exc:
+        raise HttpError(409, str(exc)) from exc
+    auditar(
+        request, "puntaje.adoptado", objeto=evaluacion,
+        puntajes={a.proponente.hoja: a.puntaje for a in adopciones}, detalle={a.proponente.hoja: a.detalle for a in adopciones},
+    )
     return puntaje.estado_puntajes(evaluacion)
 
 

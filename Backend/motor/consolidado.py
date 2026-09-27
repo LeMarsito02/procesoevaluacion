@@ -74,7 +74,7 @@ def generar_informe(
 
     El puntaje y el orden de elegibilidad son preliminares: el puntaje es
     evaluación en sentido estricto y lo adopta el evaluador técnico
-    proponente por proponente. Con `puntajes_adoptados` (hojas cuyo puntaje ya
+    después de revisar la tabla. Con `puntajes_adoptados` (hojas cuyo puntaje ya
     adoptó una persona), solo esos proponentes entran al orden."""
     libro = Workbook()
     hoja_resumen = libro.active

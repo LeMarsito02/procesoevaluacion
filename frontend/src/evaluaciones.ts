@@ -211,7 +211,7 @@ export interface Muestra {
   estado: 'en_curso' | 'con_hallazgos' | 'cerrada' | 'anulada'
   estado_nombre: string
   semilla: string
-  parametros: { ofertas?: number; universo_ofertas?: number; universo_verificaciones?: number }
+  parametros: { verificaciones?: number; universo_ofertas?: number; universo_verificaciones?: number }
   ofertas_sorteadas: string[]
   requisitos_ampliados: number[]
   creada_por: string
@@ -224,7 +224,7 @@ export interface Muestra {
 export interface EstadoMuestra {
   muestra: Muestra | null
   motivo_para_no_aprobar: string | null
-  ofertas_por_muestra: number
+  verificaciones_por_muestra: number
 }
 
 export const verMuestra = (id: string) => pedirJson<EstadoMuestra>(`/api/evaluaciones/${id}/muestra`)
@@ -234,7 +234,7 @@ export const revisarItemMuestra = (id: string, itemId: number, conforme: boolean
 export const cerrarMuestra = (id: string) => enviarJson<EstadoMuestra>(`/api/evaluaciones/${id}/muestra/cerrar`, 'POST')
 export const descargarActaMuestra = (id: string) => descargarBlob(`/api/evaluaciones/${id}/muestra/acta`)
 
-// --- Puntaje técnico: adopción proponente por proponente ---
+// --- Puntaje técnico: lo adopta una persona, en un solo acto ---
 export interface PuntajeProponente {
   proponente_id: string
   hoja: string
@@ -249,8 +249,8 @@ export interface PuntajeProponente {
 }
 
 export const verPuntajes = (id: string) => pedirJson<PuntajeProponente[]>(`/api/evaluaciones/${id}/puntajes`)
-export const adoptarPuntaje = (id: string, proponenteId: string, nota = '') =>
-  enviarJson<PuntajeProponente[]>(`/api/evaluaciones/${id}/puntajes/${proponenteId}/adoptar`, 'POST', { nota })
+export const adoptarPuntajes = (id: string, nota = '') =>
+  enviarJson<PuntajeProponente[]>(`/api/evaluaciones/${id}/puntajes/adoptar`, 'POST', { nota })
 
 // --- Ficha de transparencia algorítmica (Directiva Conjunta 007 de 2025) ---
 export interface FichaTransparencia {

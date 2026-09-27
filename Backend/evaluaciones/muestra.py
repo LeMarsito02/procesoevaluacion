@@ -3,15 +3,14 @@
 Expediente LEG-004, numerales 3 y 3.1, y Concepto C-1015 de 2026: el control
 humano debe ser sustantivo, "capaz de validar, corregir o descartar el
 resultado". Los requisitos que MiEvaluador verificó con evidencia no se
-revisan uno por uno; se adoptan después de revisar, contra su soporte, todo
-lo que el sistema verificó en un grupo de ofertas sorteadas:
+revisan uno por uno; se adoptan en bloque después de revisar, contra su
+soporte, una muestra de esas verificaciones:
 
-1. Se sortean `settings.MUESTRA_OFERTAS` ofertas (10 por defecto), o todas si
-   hay menos, entre las que tienen algo verificado por el sistema. La semilla
-   queda guardada: cualquiera puede repetir el sorteo y obtener las mismas.
-2. Entran a la muestra todas las verificaciones del sistema de esas ofertas
-   que ninguna persona ha revisado. El puntaje técnico no entra: se adopta
-   proponente por proponente (evaluaciones.puntaje).
+1. Se sortean `settings.MUESTRA_VERIFICACIONES` verificaciones (10 por
+   defecto) entre las que el sistema dio por cumplidas y nadie revisó,
+   repartidas primero entre ofertas y requisitos distintos. La semilla queda
+   guardada: cualquiera puede repetir el sorteo y obtener las mismas.
+2. El puntaje técnico no entra: se adopta aparte (evaluaciones.puntaje).
 3. Cada ítem se marca conforme o no conforme después de abrir su soporte.
 4. Un ítem no conforme amplía la revisión: todas las verificaciones del
    sistema de ese requisito en el proceso pasan a revisión humana.
@@ -100,12 +99,29 @@ def universo(evaluacion: Evaluacion) -> dict:
     return salida
 
 
-def sortear(proponentes: list[Proponente], semilla: int, cantidad: int) -> list[Proponente]:
-    """Sorteo reproducible: misma semilla y mismos proponentes, misma muestra."""
-    ordenados = sorted(proponentes, key=lambda p: p.numero_orden)
-    if len(ordenados) <= cantidad:
-        return ordenados
-    return random.Random(semilla).sample(ordenados, cantidad)
+def sortear(candidatos: list[tuple], semilla: int, cantidad: int) -> list[tuple]:
+    """Sorteo reproducible de verificaciones (numero_orden, hoja, requisito, …):
+    misma semilla y mismo universo, misma muestra. Primero cubre ofertas y
+    requisitos distintos; después completa con el resto."""
+    orden = sorted(candidatos)
+    random.Random(semilla).shuffle(orden)
+    elegidas: list[tuple] = []
+    ofertas: set = set()
+    requisitos: set = set()
+    for c in orden:  # 1) oferta y requisito nuevos
+        if len(elegidas) < cantidad and c[1] not in ofertas and c[2] not in requisitos:
+            elegidas.append(c)
+            ofertas.add(c[1])
+            requisitos.add(c[2])
+    for c in orden:  # 2) al menos oferta o requisito nuevo
+        if len(elegidas) < cantidad and c not in elegidas and (c[1] not in ofertas or c[2] not in requisitos):
+            elegidas.append(c)
+            ofertas.add(c[1])
+            requisitos.add(c[2])
+    for c in orden:  # 3) lo que falte
+        if len(elegidas) < cantidad and c not in elegidas:
+            elegidas.append(c)
+    return elegidas
 
 
 def ultimo_cambio(evaluacion: Evaluacion):
@@ -136,8 +152,13 @@ def crear(evaluacion: Evaluacion, usuario) -> MuestraControl:
         return actual
     semilla = secrets.randbits(62)
     items_por_proponente = universo(evaluacion)
-    candidatos = list(Proponente.objects.filter(id__in=items_por_proponente.keys()))
-    elegidos = sortear(candidatos, semilla, settings.MUESTRA_OFERTAS)
+    proponentes = {p.id: p for p in Proponente.objects.filter(id__in=items_por_proponente.keys())}
+    candidatos = [
+        (proponentes[pid].numero_orden, proponentes[pid].hoja, req, ia, str(pid))
+        for pid, lista in items_por_proponente.items()
+        for req, ia in lista
+    ]
+    elegidos = sortear(candidatos, semilla, settings.MUESTRA_VERIFICACIONES)
     with transaction.atomic():
         MuestraControl.objects.filter(evaluacion=evaluacion).exclude(estado=EstadoMuestra.ANULADA).update(
             estado=EstadoMuestra.ANULADA
@@ -147,19 +168,18 @@ def crear(evaluacion: Evaluacion, usuario) -> MuestraControl:
             evaluacion=evaluacion,
             semilla=semilla,
             parametros={
-                "ofertas": settings.MUESTRA_OFERTAS,
-                "universo_ofertas": len(candidatos),
-                "universo_verificaciones": sum(len(v) for v in items_por_proponente.values()),
+                "verificaciones": settings.MUESTRA_VERIFICACIONES,
+                "universo_ofertas": len(proponentes),
+                "universo_verificaciones": len(candidatos),
                 "version_sistema": settings.MIEVALUADOR_VERSION,
             },
-            ofertas_sorteadas=[p.hoja for p in elegidos],
+            ofertas_sorteadas=[hoja for _, hoja in sorted({(c[0], c[1]) for c in elegidos})],
             creada_por=usuario,
         )
         ItemMuestra.objects.bulk_create(
             [
-                ItemMuestra(entidad_id=evaluacion.entidad_id, muestra=muestra, proponente=p, requisito=req, usa_ia=ia)
-                for p in elegidos
-                for req, ia in items_por_proponente[p.id]
+                ItemMuestra(entidad_id=evaluacion.entidad_id, muestra=muestra, proponente_id=pid, requisito=req, usa_ia=ia)
+                for _, _, req, ia, pid in elegidos
             ]
         )
         if not elegidos:
@@ -305,16 +325,15 @@ def generar_acta(muestra: MuestraControl) -> tuple[bytes, str]:
     _parrafo(
         doc,
         "Objeto: dejar constancia de la revisión humana, contra su documento soporte, de las verificaciones realizadas "
-        "por MiEvaluador en las ofertas sorteadas, como condición para adoptar los resultados verificados por la "
+        "por MiEvaluador que se sortearon, como condición para adoptar los resultados verificados por la "
         "herramienta (expediente LEG-004, numerales 3 y 3.1; Concepto C-1015 de 2026 de la ANCP-CCE).",
     )
     _tabla(
         doc,
         ["Dato", "Valor"],
         [
-            ["Ofertas sorteadas", f"{len(muestra.ofertas_sorteadas)} de {p.get('universo_ofertas', '—')} con verificaciones del sistema"],
-            ["Hojas sorteadas", ", ".join(muestra.ofertas_sorteadas) or "Ninguna (todo fue revisado individualmente)"],
-            ["Verificaciones revisadas", str(muestra.items.count())],
+            ["Verificaciones sorteadas", f"{muestra.items.count()} de {p.get('universo_verificaciones', '—')} verificadas por el sistema"],
+            ["Ofertas que tocó la muestra", ", ".join(muestra.ofertas_sorteadas) or "Ninguna (todo fue revisado individualmente)"],
             ["Semilla del sorteo (permite reproducirlo)", str(muestra.semilla)],
             ["Versión de MiEvaluador", p.get("version_sistema", settings.MIEVALUADOR_VERSION)],
             ["Requisitos ampliados a revisión total", ", ".join(str(n) for n in muestra.requisitos_ampliados) or "Ninguno"],

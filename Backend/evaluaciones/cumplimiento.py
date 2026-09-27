@@ -129,6 +129,7 @@ def indicadores(evaluacion) -> dict:
         items = list(muestra.items.all())
         datos_muestra = {
             "ofertas": len(muestra.ofertas_sorteadas),
+            "verificaciones": muestra.items.count(),
             "items": len(items),
             "conformes": sum(1 for i in items if i.resultado == "conforme"),
             "no_conformes": sum(1 for i in items if i.resultado == "no_conforme"),
@@ -159,8 +160,8 @@ def constancia(evaluacion) -> str:
     muestra = MuestraControl.objects.filter(evaluacion=evaluacion, estado="cerrada").first()
     if muestra is not None:
         texto_muestra = (
-            f"previa revisión de una muestra de control de {len(muestra.ofertas_sorteadas)} ofertas sorteadas "
-            f"({muestra.items.count()} verificaciones revisadas contra su soporte), cuyo resultado consta en el acta anexa"
+            f"previa revisión de una muestra de control de {muestra.items.count()} verificaciones sorteadas "
+            f"en {len(muestra.ofertas_sorteadas)} ofertas, revisadas contra su soporte, cuyo resultado consta en el acta anexa"
         )
     else:
         texto_muestra = "previa revisión de la muestra de control prevista en el procedimiento"

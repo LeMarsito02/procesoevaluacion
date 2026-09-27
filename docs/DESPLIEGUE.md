@@ -46,7 +46,7 @@ Requerimientos completos del servidor (hardware, paquetes, puertos, variables): 
 - [ ] Carpeta de Drive de prueba compartida con la cuenta de servicio.
 - [ ] `SUPERADMIN_SIN_PERMISO` sin definir o en `0`: el superadministrador solo ve los procesos de una entidad con permiso temporal de su administrador (LEG-004, 4.5).
 - [ ] `manage.py verificar_auditoria` dice «Auditoría íntegra» (la cadena de huellas de la auditoría no está rota).
-- [ ] `MUESTRA_OFERTAS` en 10 o más (ofertas por muestra de control; la entidad puede exigir más).
+- [ ] `MUESTRA_VERIFICACIONES` en 10 o más (verificaciones por muestra de control y por área; la entidad puede exigir más).
 - [ ] `manage.py paquete_escrow --salida …` genera el paquete para el depósito del código (si el contrato lo prevé).
 - [ ] Firewall: solo el puerto del proxy abierto; PostgreSQL y Ollama sin exposición pública.
 

@@ -498,7 +498,7 @@ def generar_reporte(evaluacion: Evaluacion) -> tuple[bytes, str]:
     m = ind["muestra_de_control"]
     if m:
         filas_ind += [
-            ["Muestra de control: ofertas sorteadas", str(m["ofertas"])],
+            ["Muestra de control: ofertas que tocó el sorteo", str(m["ofertas"])],
             ["Muestra de control: verificaciones revisadas contra su soporte", f"{m['items']} ({m['conformes']} conformes, {m['no_conformes']} no conformes)"],
             ["Muestra de control: requisitos ampliados a revisión total", ", ".join(str(n) for n in m["requisitos_ampliados"]) or "Ninguno"],
             ["Muestra de control: estado", m["estado"]],

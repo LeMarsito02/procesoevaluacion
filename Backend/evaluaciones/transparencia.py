@@ -67,7 +67,7 @@ def ficha() -> dict:
             "Identifica cada documento de la oferta por su contenido y lo contrasta con la regla del pliego que la entidad confirmó.",
             "Da un requisito por verificado solo si encuentra en el documento todos los datos que la regla exige; si no, lo deja pendiente de revisión humana.",
             "Muestra, para cada resultado, la regla aplicada, el dato encontrado y el documento soporte.",
-            "Propone un puntaje y un orden de elegibilidad preliminares, que el evaluador adopta proponente por proponente.",
+            "Propone un puntaje y un orden de elegibilidad preliminares, que el evaluador revisa y adopta.",
             "Registra en una bitácora inmutable quién vio, decidió, adoptó y aprobó cada cosa.",
         ],
         "que_no_hace": [
@@ -84,8 +84,8 @@ def ficha() -> dict:
         ),
         "control_humano": [
             "Todo requisito pendiente, incumplimiento, observación y subsanación lo revisa una persona, uno por uno, con justificación escrita y viendo el soporte.",
-            f"Lo verificado por el sistema se adopta después de revisar, contra su soporte, una muestra de control de {settings.MUESTRA_OFERTAS} ofertas sorteadas por área (o todas si hay menos). Un error en la muestra envía todo ese requisito a revisión humana.",
-            "El puntaje lo adopta el evaluador técnico proponente por proponente.",
+            f"Lo verificado por el sistema se adopta después de revisar, contra su soporte, una muestra de control de {settings.MUESTRA_VERIFICACIONES} verificaciones sorteadas por área, repartidas entre ofertas y requisitos distintos. Un error en la muestra envía todo ese requisito a revisión humana.",
+            "El puntaje lo adopta el evaluador técnico después de revisar la tabla de puntajes preliminares.",
             "La evaluación la aprueba el jefe del área; el informe lo suscribe el comité evaluador.",
             "Quien decide acepta un compromiso de uso: la herramienta no traslada, atenúa ni distribuye su responsabilidad.",
         ],

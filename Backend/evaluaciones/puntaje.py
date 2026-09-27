@@ -1,10 +1,11 @@
-"""Adopción del puntaje técnico, proponente por proponente.
+"""Adopción del puntaje técnico.
 
 El puntaje es evaluación en sentido estricto (art. 5, num. 2, Ley 1150 de 2007):
-no se adopta por muestra. El sistema calcula un puntaje preliminar con los
-factores del pliego; el evaluador técnico lo adopta para cada proponente (o
-lo ajusta revisando el factor que corresponda). Una adopción deja de valer si
-después cambia cualquier factor del puntaje de ese proponente.
+no se adopta por muestra, lo adopta una persona. El sistema calcula un puntaje
+preliminar con los factores del pliego y lo muestra en una tabla; el evaluador
+técnico la revisa y adopta los puntajes con un solo acto (o ajusta antes el
+factor que corresponda). Una adopción deja de valer si después cambia
+cualquier factor del puntaje de ese proponente.
 """
 from __future__ import annotations
 
@@ -105,6 +106,15 @@ def adoptar(evaluacion: Evaluacion, proponente: Proponente, usuario, nota: str =
         },
     )
     return adopcion
+
+
+def adoptar_todos(evaluacion: Evaluacion, usuario, nota: str = "") -> list[AdopcionPuntaje]:
+    """Adopta en un solo acto los puntajes resueltos que aún no están adoptados."""
+    por_adoptar = {e["proponente_id"] for e in estado_puntajes(evaluacion) if e["resuelto"] and not e["adoptado"]}
+    if not por_adoptar:
+        raise ValueError("No hay puntajes por adoptar: o ya están adoptados o tienen factores pendientes.")
+    proponentes = evaluacion.proceso.proponentes.filter(id__in=por_adoptar).order_by("numero_orden")
+    return [adoptar(evaluacion, p, usuario, nota) for p in proponentes]
 
 
 def adopciones_vigentes(evaluacion: Evaluacion) -> list[Proponente]:

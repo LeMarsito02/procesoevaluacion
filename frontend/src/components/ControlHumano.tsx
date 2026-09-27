@@ -1,17 +1,18 @@
 /**
  * Control humano de la verificación (expediente LEG-004, numerales 1.2, 3 y 3.1).
  *
- * - Muestra de control: lo que MiEvaluador verificó se adopta después de revisar,
- *   contra su soporte, todo lo verificado en las ofertas sorteadas. Un error envía
- *   todo ese requisito a revisión humana en el proceso.
- * - Puntaje técnico: el evaluador lo adopta proponente por proponente.
+ * - Muestra de control: lo que MiEvaluador verificó se adopta en bloque después de
+ *   revisar, contra su soporte, 10 verificaciones sorteadas (repartidas entre
+ *   ofertas y requisitos distintos). Un error envía todo ese requisito a revisión
+ *   humana en el proceso.
+ * - Puntaje técnico: el evaluador revisa la tabla y adopta los puntajes con un clic.
  *
  * Solo con la muestra cerrada (y el puntaje adoptado, en técnica) se puede aprobar.
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { ResultadoRequisito } from '../api'
 import {
-  adoptarPuntaje,
+  adoptarPuntajes,
   cerrarMuestra,
   crearMuestra,
   descargarActaMuestra,
@@ -87,6 +88,7 @@ export default function ControlHumano(p: Props) {
   const enCurso = muestra && (muestra.estado === 'en_curso' || muestra.estado === 'con_hallazgos')
   const revisados = muestra?.items.filter((i) => i.resultado).length ?? 0
   const puedeActuar = p.puedeTrabajar && !p.aprobada
+  const porAdoptar = puntajes?.filter((x) => x.resuelto && !x.adoptado).length ?? 0
 
   return (
     <section className="card" style={{ marginTop: 16 }}>
@@ -94,9 +96,9 @@ export default function ControlHumano(p: Props) {
         <div>
           <h2>Control humano de la verificación</h2>
           <p>
-            Lo que MiEvaluador verificó se adopta después de revisar, contra su soporte, todo lo verificado en{' '}
-            {estado?.ofertas_por_muestra ?? 10} ofertas sorteadas (o en todas, si hay menos). Si encuentra un error, ese
-            requisito vuelve a revisión humana en todas las ofertas.
+            Lo que MiEvaluador verificó se adopta en bloque después de revisar, contra su soporte,{' '}
+            {estado?.verificaciones_por_muestra ?? 10} verificaciones sorteadas entre ofertas y requisitos distintos. Si
+            encuentra un error, ese requisito vuelve a revisión humana en todas las ofertas.
           </p>
         </div>
       </div>
@@ -135,8 +137,9 @@ export default function ControlHumano(p: Props) {
               <span className="pill" data-estado={muestra.estado === 'cerrada' ? 'cumple' : muestra.estado === 'con_hallazgos' ? 'error' : 'revisar'}>
                 <span className="dot" /> {muestra.estado_nombre}
               </span>{' '}
-              Ofertas sorteadas: <strong>{muestra.ofertas_sorteadas.join(', ') || 'ninguna (todo se revisó individualmente)'}</strong> ·{' '}
-              {revisados}/{muestra.items.length} verificaciones revisadas
+              {muestra.items.length === 0
+                ? 'Nada que revisar: todo se revisó individualmente'
+                : `${revisados}/${muestra.items.length} verificaciones revisadas`}
               {muestra.requisitos_ampliados.length > 0 && (
                 <> · requisitos ampliados a revisión total: {muestra.requisitos_ampliados.join(', ')}</>
               )}
@@ -182,76 +185,64 @@ export default function ControlHumano(p: Props) {
           )}
 
           {muestra.items.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              {muestra.ofertas_sorteadas.map((hoja, indice) => {
-                const items = muestra.items.filter((i) => i.hoja === hoja)
-                if (!items.length) return null
-                const hechos = items.filter((i) => i.resultado).length
+            <div className="muestra-lista">
+              {muestra.items.map((item) => {
+                const r = resultadoDe(item)
+                const archivo = r?.archivo_evaluado ?? null
                 return (
-                  <details key={hoja} className="muestra-oferta" open={indice === 0 || (hechos > 0 && hechos < items.length)}>
-                    <summary>
-                      <strong>{hoja}</strong> · {items[0].proponente}
-                      <span className="small muted">
-                        {' '}
-                        · {hechos}/{items.length} revisadas
+                  <div key={item.id} className="muestra-fila">
+                    <span className="muestra-req">
+                      <strong>{item.hoja}</strong> · {item.proponente}
+                      <br />
+                      <span className="small">
+                        {item.requisito}. {tituloRequisito(item.requisito)}
                       </span>
-                    </summary>
-                    {items.map((item) => {
-                      const r = resultadoDe(item)
-                      const archivo = r?.archivo_evaluado ?? null
-                      return (
-                        <div key={item.id} className="muestra-fila">
-                          <span className="muestra-req">
-                            {item.requisito}. {tituloRequisito(item.requisito)}
-                            {item.usa_ia && (
-                              <span className="pill pill-ai" style={{ marginLeft: 6 }}>
-                                IA
-                              </span>
-                            )}
-                          </span>
-                          <span>
-                            {r && archivo ? (
-                              <button type="button" className="btn btn-ghost btn-sm" onClick={() => p.onVerDocumento(r, archivo)}>
-                                <Icono nombre="ojo" tam={15} /> Ver soporte
-                              </button>
-                            ) : (
-                              <span className="small muted">Sin documento</span>
-                            )}
-                          </span>
-                          <span className="muestra-accion">
-                            {item.resultado ? (
-                              <span className="small">
-                                <strong>{item.resultado === 'conforme' ? 'Conforme' : 'No conforme'}</strong>
-                                {item.usuario && ` · ${item.usuario}`}
-                                {item.nota && ` · ${item.nota}`}
-                              </span>
-                            ) : puedeActuar && enCurso ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className="btn btn-ok btn-sm"
-                                  disabled={ocupado !== null}
-                                  title="Revisé el soporte y la verificación del sistema es correcta"
-                                  onClick={() => {
-                                    const nota = archivo ? '' : window.prompt('¿Qué consultó para confirmar este requisito? (queda en el acta)') ?? ''
-                                    if (!archivo && nota.trim().length < 15) return
-                                    void ejecutar(`item-${item.id}`, () => revisarItemMuestra(p.evaluacionId, item.id, true, nota))
-                                  }}
-                                >
-                                  Conforme
-                                </button>
-                                <button type="button" className="btn btn-bad btn-sm" disabled={ocupado !== null} onClick={() => setHallazgo(item)}>
-                                  No conforme
-                                </button>
-                              </>
-                            ) : (
-                              <span className="small muted">Sin revisar</span>
-                            )}
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </details>
+                      {item.usa_ia && (
+                        <span className="pill pill-ai" style={{ marginLeft: 6 }}>
+                          IA
+                        </span>
+                      )}
+                    </span>
+                    <span>
+                      {r && archivo ? (
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => p.onVerDocumento(r, archivo)}>
+                          <Icono nombre="ojo" tam={15} /> Ver soporte
+                        </button>
+                      ) : (
+                        <span className="small muted">Sin documento</span>
+                      )}
+                    </span>
+                    <span className="muestra-accion">
+                      {item.resultado ? (
+                        <span className="small">
+                          <strong>{item.resultado === 'conforme' ? 'Conforme' : 'No conforme'}</strong>
+                          {item.usuario && ` · ${item.usuario}`}
+                          {item.nota && ` · ${item.nota}`}
+                        </span>
+                      ) : puedeActuar && enCurso ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-ok btn-sm"
+                            disabled={ocupado !== null}
+                            title="Revisé el soporte y la verificación del sistema es correcta"
+                            onClick={() => {
+                              const nota = archivo ? '' : window.prompt('¿Qué consultó para confirmar este requisito? (queda en el acta)') ?? ''
+                              if (!archivo && nota.trim().length < 15) return
+                              void ejecutar(`item-${item.id}`, () => revisarItemMuestra(p.evaluacionId, item.id, true, nota))
+                            }}
+                          >
+                            Conforme
+                          </button>
+                          <button type="button" className="btn btn-bad btn-sm" disabled={ocupado !== null} onClick={() => setHallazgo(item)}>
+                            No conforme
+                          </button>
+                        </>
+                      ) : (
+                        <span className="small muted">Sin revisar</span>
+                      )}
+                    </span>
+                  </div>
                 )
               })}
             </div>
@@ -263,8 +254,8 @@ export default function ControlHumano(p: Props) {
         <div style={{ marginTop: 20 }}>
           <h3>Puntaje técnico preliminar</h3>
           <p className="small muted">
-            El puntaje es evaluación en sentido estricto: no se adopta por muestra. Revíselo y adóptelo para cada proponente.
-            Si cambia un factor, la adopción se pierde y hay que volver a adoptarlo.
+            El puntaje es evaluación en sentido estricto: no se adopta por muestra. Revise la tabla y adopte los puntajes con
+            un clic. Si después cambia un factor, ese puntaje vuelve a quedar sin adoptar.
           </p>
           <div className="tabla-wrap">
             <table className="tabla">
@@ -288,26 +279,6 @@ export default function ControlHumano(p: Props) {
                           Adoptado por {x.adoptado_por}
                           {x.adoptado_en && ` el ${new Date(x.adoptado_en).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`}
                         </span>
-                      ) : puedeActuar && x.resuelto ? (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          disabled={ocupado !== null}
-                          onClick={async () => {
-                            setOcupado(`puntaje-${x.proponente_id}`)
-                            setError(null)
-                            try {
-                              setPuntajes(await adoptarPuntaje(p.evaluacionId, x.proponente_id))
-                              p.onAviso(`Puntaje de ${x.hoja} adoptado`)
-                            } catch (e) {
-                              setError(mensajeDe(e))
-                            } finally {
-                              setOcupado(null)
-                            }
-                          }}
-                        >
-                          {x.adopcion_desactualizada ? 'Volver a adoptar' : 'Adoptar puntaje'}
-                        </button>
                       ) : (
                         <span className="small muted">{x.adopcion_desactualizada ? 'Adopción desactualizada' : 'Sin adoptar'}</span>
                       )}
@@ -317,6 +288,31 @@ export default function ControlHumano(p: Props) {
               </tbody>
             </table>
           </div>
+          {puedeActuar && porAdoptar > 0 && (
+            <div className="acciones" style={{ justifyContent: 'flex-end', marginTop: 10 }}>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={ocupado !== null}
+                onClick={async () => {
+                  if (!window.confirm(`¿Adopta los ${porAdoptar} puntajes de la tabla como evaluador técnico? Queda en la auditoría a su nombre.`)) return
+                  setOcupado('puntajes')
+                  setError(null)
+                  try {
+                    setPuntajes(await adoptarPuntajes(p.evaluacionId))
+                    p.onAviso('Puntajes adoptados')
+                    p.onCambio()
+                  } catch (e) {
+                    setError(mensajeDe(e))
+                  } finally {
+                    setOcupado(null)
+                  }
+                }}
+              >
+                {ocupado === 'puntajes' ? <span className="spinner" /> : <Icono nombre="check" tam={15} />} Adoptar los {porAdoptar} puntajes
+              </button>
+            </div>
+          )}
         </div>
       )}
 

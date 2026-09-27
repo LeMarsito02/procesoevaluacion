@@ -13,12 +13,14 @@ avisar a las entidades.
 Cumplimiento del expediente LEG-004 v1.2 y del Concepto C-1015 de 2026 de la
 ANCP-CCE: el sistema verifica y propone; la persona adopta.
 
-- **Muestra de control** antes de aprobar: 10 ofertas sorteadas por área (o
-  todas si hay menos), con semilla reproducible, revisión contra el soporte y
-  ampliación a revisión humana de todo el requisito en que aparezca un error.
-  Acta en Word dentro del expediente.
-- **Adopción del puntaje técnico** proponente por proponente; el orden de
-  elegibilidad solo incluye puntajes adoptados.
+- **Muestra de control** antes de aprobar: 10 verificaciones del sistema
+  sorteadas por área, repartidas entre ofertas y requisitos distintos (no se
+  revisan ofertas completas), con semilla reproducible, revisión contra el
+  soporte y ampliación a revisión humana de todo el requisito en que aparezca
+  un error. Lo demás se adopta en bloque. Acta en Word dentro del expediente.
+- **Adopción del puntaje técnico** con un clic, después de ver la tabla de
+  puntajes preliminares; el orden de elegibilidad solo incluye puntajes
+  adoptados.
 - **Soporte visto antes de decidir** un requisito con documento; sin documento,
   justificación de lo consultado.
 - **Compromiso de uso** del evaluador (numeral 6.4), aceptado y auditado.

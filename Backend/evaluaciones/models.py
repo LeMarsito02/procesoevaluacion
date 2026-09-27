@@ -551,8 +551,8 @@ class EstadoMuestra(models.TextChoices):
 class MuestraControl(models.Model):
     """Muestra de control de una evaluación (expediente LEG-004, numeral 3.1).
 
-    Antes de aprobar, una persona revisa contra su soporte todo lo que el
-    sistema dio por verificado en un grupo de ofertas sorteadas. Si encuentra
+    Antes de aprobar, una persona revisa contra su soporte un grupo sorteado
+    de verificaciones que el sistema dio por cumplidas. Si encuentra
     un error, todo ese requisito vuelve a revisión humana en el proceso. La
     semilla se guarda para que cualquiera pueda reproducir el sorteo."""
 
@@ -560,9 +560,9 @@ class MuestraControl(models.Model):
     entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
     evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="muestras")
     semilla = models.BigIntegerField()
-    # Parámetros con que se sorteó: {"ofertas": 10, "universo_ofertas": 81, ...}.
+    # Parámetros con que se sorteó: {"verificaciones": 10, "universo_verificaciones": 162, ...}.
     parametros = models.JSONField(default=dict)
-    ofertas_sorteadas = models.JSONField(default=list)  # hojas, en orden de sorteo
+    ofertas_sorteadas = models.JSONField(default=list)  # hojas que tocó el sorteo
     estado = models.CharField(max_length=20, choices=EstadoMuestra.choices, default=EstadoMuestra.EN_CURSO)
     # Requisitos en los que la muestra encontró un error: todos sus resultados
     # automáticos del proceso pasaron a revisión humana.

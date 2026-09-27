@@ -13,18 +13,18 @@ artificial el juicio o la competencia») y dónde está cada control en el códi
 | Contrasta cada documento con la regla del pliego que la entidad confirmó | Confirma las reglas leídas del pliego, una por una |
 | Da un requisito por **verificado** solo si encuentra todos los datos que la regla exige | Revisa **uno por uno** lo pendiente, los incumplimientos y las subsanaciones |
 | **Nunca** emite «no cumple»: lo que no puede verificar queda pendiente | Decide el «no cumple», siempre con justificación y viendo el soporte |
-| Propone un puntaje y un orden de elegibilidad **preliminares** | Adopta el puntaje proponente por proponente |
-| — | Adopta lo verificado por el sistema después de la **muestra de control** |
+| Propone un puntaje y un orden de elegibilidad **preliminares** | Revisa la tabla y adopta los puntajes (un solo acto, a su nombre) |
+| — | Adopta **en bloque** lo verificado por el sistema después de la **muestra de control** (10 verificaciones, no ofertas completas) |
 | — | Aprueba la evaluación (jefe del área) y suscribe el informe (comité) |
 
 ## 2. Controles y dónde están
 
 | Control | Qué hace | Código |
 |---|---|---|
-| Muestra de control | Sortea 10 ofertas por área (`MUESTRA_OFERTAS`) con semilla guardada; se revisa todo lo que el sistema verificó en ellas contra su soporte; un error envía todo ese requisito a revisión humana; sin muestra cerrada y posterior al último cambio no se aprueba | `Backend/evaluaciones/muestra.py`; API `/api/evaluaciones/{id}/muestra` |
-| Acta de la muestra | Word con semilla, ofertas, ítems, resultados, quién y cuándo | `muestra.generar_acta`; va al expediente |
+| Muestra de control | Sortea 10 verificaciones por área (`MUESTRA_VERIFICACIONES`) entre lo que el sistema dio por cumplido, repartidas primero entre ofertas y requisitos distintos, con semilla guardada; cada una se revisa contra su soporte; un error envía todo ese requisito a revisión humana; sin muestra cerrada y posterior al último cambio no se aprueba | `Backend/evaluaciones/muestra.py`; API `/api/evaluaciones/{id}/muestra` |
+| Acta de la muestra | Word con semilla, verificaciones sorteadas, resultados, quién y cuándo | `muestra.generar_acta`; va al expediente |
 | Soporte visto antes de decidir | Decidir un requisito con documento exige haberlo abierto (evento `documento.visto` de las últimas 12 horas); sin documento, justificación de lo consultado | `muestra.exigir_soporte`; endpoint `revisiones` |
-| Adopción del puntaje | El puntaje técnico se adopta proponente por proponente; la adopción caduca si cambia un factor; el orden de elegibilidad solo incluye puntajes adoptados | `Backend/evaluaciones/puntaje.py`; `motor/consolidado.py` |
+| Adopción del puntaje | El evaluador técnico revisa la tabla de puntajes preliminares y los adopta con un clic; la adopción de un proponente caduca si cambia uno de sus factores; el orden de elegibilidad solo incluye puntajes adoptados | `Backend/evaluaciones/puntaje.py`; `motor/consolidado.py` |
 | Compromiso de uso | Texto del numeral 6.4; sin aceptarlo no se decide nada; queda en la auditoría con versión e IP | `evaluaciones/cumplimiento.py` (`COMPROMISO_*`); `/api/auth/compromiso` |
 | Lenguaje y rótulos | «Verificado por MiEvaluador – adoptado por…»; pre-informe hasta la adopción; puntaje y orden «preliminares»; constancia del numeral 6.2 en Word y Excel | `cumplimiento.py`, `reporte.py`, `servicios.py` |
 | Auditoría inmutable | La aplicación no modifica ni borra eventos; un trigger de PostgreSQL rechaza `UPDATE` y `DELETE`; cada evento guarda una huella encadenada con el anterior | `cuentas/models.py` (`EventoAuditoria`), migración `cuentas/0007_auditoria_inmutable` |
@@ -39,8 +39,8 @@ artificial el juicio o la competencia») y dónde está cada control en el códi
 
 1. **La auditoría no fue alterada:** `python manage.py verificar_auditoria`.
 2. **Una muestra se puede reproducir:** con la semilla del acta y la lista de
-   ofertas con verificaciones del sistema, `evaluaciones.muestra.sortear`
-   devuelve las mismas ofertas.
+   verificaciones del sistema (oferta y requisito), `evaluaciones.muestra.sortear`
+   devuelve las mismas verificaciones.
 3. **Las mediciones se pueden repetir:** `python manage.py medir_rendimiento`
    (ver `estadisticas/`).
 4. **El código:** `python manage.py paquete_escrow --salida paquete.zip` genera
@@ -56,7 +56,7 @@ artificial el juicio o la competencia») y dónde está cada control en el códi
 | Variable | Valor por defecto | Para qué |
 |---|---|---|
 | `MIEVALUADOR_VERSION` | contenido de `Backend/VERSION` | Versión registrada en evaluaciones, reportes y ficha |
-| `MUESTRA_OFERTAS` | `10` (mínimo 10) | Ofertas por muestra de control |
+| `MUESTRA_VERIFICACIONES` | `10` (mínimo 10) | Verificaciones por muestra de control y por área |
 | `SUPERADMIN_SIN_PERMISO` | `0` | `1` solo en desarrollo: el superadministrador ve todo sin permiso |
 
 ## 5. Modificaciones sustanciales

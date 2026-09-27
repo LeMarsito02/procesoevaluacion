@@ -37,18 +37,17 @@ MUCHOS = [
 
 class SorteoTests(TestCase):
     def test_misma_semilla_misma_muestra(self):
-        class P:
-            def __init__(self, n):
-                self.numero_orden = n
-
-        proponentes = [P(n) for n in range(1, 31)]
-        a = [p.numero_orden for p in sortear(proponentes, 12345, 10)]
-        b = [p.numero_orden for p in sortear(list(reversed(proponentes)), 12345, 10)]
-        self.assertEqual(a, b)
-        self.assertEqual(len(set(a)), 10)
-        self.assertNotEqual(a, [p.numero_orden for p in sortear(proponentes, 999, 10)])
-        # Con 10 o menos, entran todos.
-        self.assertEqual(len(sortear(proponentes[:7], 1, 10)), 7)
+        # 30 ofertas × 5 requisitos verificados por el sistema.
+        universo = [(n, f"P-{n:02d}", req, False, str(n)) for n in range(1, 31) for req in (1, 2, 3, 4, 5)]
+        a = sortear(universo, 12345, 10)
+        self.assertEqual(a, sortear(list(reversed(universo)), 12345, 10))
+        self.assertEqual(len(a), 10)
+        self.assertNotEqual(a, sortear(universo, 999, 10))
+        # Repartidas: 10 ofertas distintas y los 5 requisitos cubiertos.
+        self.assertEqual(len({c[1] for c in a}), 10)
+        self.assertEqual({c[2] for c in a}, {1, 2, 3, 4, 5})
+        # Con 10 o menos, entran todas.
+        self.assertEqual(len(sortear(universo[:7], 1, 10)), 7)
 
 
 class BaseFlujo(BaseEvaluaciones):
@@ -71,15 +70,17 @@ class BaseFlujo(BaseEvaluaciones):
 
 
 class MuestraTests(BaseFlujo):
-    def test_sortea_diez_ofertas_y_solo_lo_verificado_por_el_sistema(self):
+    def test_sortea_diez_verificaciones_repartidas_y_solo_lo_del_sistema(self):
         self.preparar()
         r = self.abogado.post(f"/api/evaluaciones/{self.eid}/muestra")
         self.assertEqual(r.status_code, 200, r.content)
         m = r.json()["muestra"]
+        # 12 ofertas × requisitos 1 y 13 verificados por el sistema (el 2 lo decidió una persona).
+        self.assertEqual(m["parametros"]["universo_verificaciones"], 24)
+        # Se revisan 10 verificaciones, no ofertas completas: una por oferta, de ambos requisitos.
+        self.assertEqual(len(m["items"]), 10)
+        self.assertEqual(len({i["hoja"] for i in m["items"]}), 10)
         self.assertEqual(len(m["ofertas_sorteadas"]), 10)
-        self.assertEqual(m["parametros"]["universo_ofertas"], 12)
-        # Por oferta: los requisitos 1 y 13 los verificó el sistema; el 2 lo decidió una persona.
-        self.assertEqual(len(m["items"]), 20)
         self.assertEqual({i["requisito"] for i in m["items"]}, {1, 13})
         # Volver a pedirla devuelve la misma (no se re-sortea hasta cerrarla).
         self.assertEqual(self.abogado.post(f"/api/evaluaciones/{self.eid}/muestra").json()["muestra"]["id"], m["id"])
@@ -146,9 +147,9 @@ class MuestraTests(BaseFlujo):
     def test_un_cambio_despues_de_la_muestra_exige_otra(self):
         self.preparar(MUCHOS[:3])
         self.hacer_muestra(self.abogado, self.evaluador, self.eid)
-        # Todo el universo entra cuando hay 10 ofertas o menos.
+        # Todo el universo entra cuando hay 10 verificaciones o menos.
         muestra = MuestraControl.objects.get(evaluacion_id=self.eid, estado="cerrada")
-        self.assertEqual(len(muestra.ofertas_sorteadas), 3)
+        self.assertEqual(muestra.items.count(), 6)
         p = self.props["P-01"]
         self.ver_soporte(self.evaluador, self.eid, "P-01")
         self.abogado.put(f"/api/evaluaciones/{self.eid}/revisiones", {"proponente_id": str(p.id), "requisito": 2, "cumple": False, "nota": "Se revisó de nuevo el COPNIA"})
@@ -214,7 +215,7 @@ class SoporteYCompromisoTests(BaseFlujo):
 
 
 class PuntajeTests(BaseEvaluaciones):
-    """El puntaje técnico se adopta proponente por proponente, no por muestra."""
+    """El puntaje técnico lo adopta una persona (no por muestra), en un solo acto."""
 
     def preparar(self):
         self.jefe = Cliente()
@@ -268,9 +269,10 @@ class PuntajeTests(BaseEvaluaciones):
         r = self.jefe.post(f"/api/evaluaciones/{self.eid}/aprobar")
         self.assertEqual(r.status_code, 409)
         self.assertIn("adoptar el puntaje de 2", r.json()["detail"])
-        estado = self.jefe.post(f"{url}/{self.props[0].id}/adoptar", {"nota": "Conforme con el pliego"}).json()
-        self.assertEqual([e["adoptado"] for e in estado], [True, False])
-        self.jefe.post(f"{url}/{self.props[1].id}/adoptar", {})
+        # Un solo acto adopta todos los puntajes de la tabla.
+        estado = self.jefe.post(f"{url}/adoptar", {"nota": "Conforme con el pliego"}).json()
+        self.assertEqual([e["adoptado"] for e in estado], [True, True])
+        self.assertEqual(self.jefe.post(f"{url}/adoptar", {}).status_code, 409)  # ya no queda nada por adoptar
         # Hojas adoptadas: entran al orden de elegibilidad del consolidado.
         from evaluaciones.servicios import hojas_con_puntaje_adoptado
 

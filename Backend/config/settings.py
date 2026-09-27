@@ -193,9 +193,10 @@ LIMITES_API = {
 # en CHANGELOG.md.
 MIEVALUADOR_VERSION = os.environ.get("MIEVALUADOR_VERSION") or (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip()
 
-# Muestra de control (expediente LEG-004, numeral 3.1): ofertas que se sortean
-# por evaluación para revisar, contra su soporte, lo que el sistema verificó.
-MUESTRA_OFERTAS = max(10, int(os.environ.get("MUESTRA_OFERTAS", "10")))
+# Muestra de control (expediente LEG-004, numeral 3.1): verificaciones del
+# sistema que se sortean por evaluación (área) para revisar contra su soporte,
+# repartidas entre ofertas y requisitos distintos. La entidad puede pedir más.
+MUESTRA_VERIFICACIONES = max(10, int(os.environ.get("MUESTRA_VERIFICACIONES", "10")))
 
 # El superadministrador de LeMarTek solo ve los procesos de una entidad con un
 # permiso temporal que otorga el administrador de esa entidad, igual que el
