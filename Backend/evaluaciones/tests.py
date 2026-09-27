@@ -1,7 +1,9 @@
 """Pruebas de procesos, asignaciones, revisiones y aislamiento (app y RLS)."""
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
+from pathlib import Path
 from unittest import mock
 from urllib.parse import quote
 
@@ -2296,6 +2298,67 @@ class OfertasSubidasAManoTests(SimpleTestCase):
         with self.assertRaises(FileNotFoundError) as caso:
             ofertas_locales.leer("local:" + "0" * 32)
         self.assertIn("Vuelve a subirla", str(caso.exception))
+
+
+class NingunDocumentoSeBuscaPorSuNumeroTests(SimpleTestCase):
+    """Guardia contra el error que dejó tres factores a revisión en todas las
+    ofertas de ICCU-CM-043-2026: los patrones exigían «FORMATO 12» y en ese
+    pliego el documento era el 13. El número que un pliego le pone a un formato
+    no identifica nada —cambia entre obra e interventoría, y de proceso a
+    proceso—, así que los títulos se arman con motor/procesamiento/formatos.py,
+    donde el tema es obligatorio y el número es el que sea.
+
+    Si esta prueba falla, no hay que cambiarla: hay que usar
+    `titulo_de_formato(tema)` en el patrón nuevo."""
+
+    # Dónde el número sí distingue una cosa de otra, con el porqué:
+    PERMITIDOS = {
+        # La capacidad residual usa el 5.1 al 5.4 para separar las secciones
+        # de un documento que ya se identificó como suyo.
+        "motor/financiera/residual.py",
+        # Clasifican el texto del pliego (no buscan documentos de la oferta):
+        # ahí "Formato 3" es una pista entre varias, junto al tema.
+        "motor/pliego/catalogo.py",
+        "motor/pliego/catalogo_tecnico.py",
+    }
+    # "FORMATO\s*3", "FORMATO\s*(?:NO\.?\s*)?12": un número escrito a mano.
+    NUMERO_A_MANO = re.compile(r"FORMATO\\s\*(?:\(\?:[^)]*\)\?)?\\?s?\*?[0-9]")
+
+    def test_ningun_patron_del_motor_exige_un_numero_de_formato(self):
+        import motor
+
+        raiz = Path(motor.__file__).resolve().parent
+        culpables = []
+        for archivo in sorted(raiz.rglob("*.py")):
+            relativo = f"motor/{archivo.relative_to(raiz)}"
+            if relativo in self.PERMITIDOS:
+                continue
+            for numero, linea in enumerate(archivo.read_text().splitlines(), 1):
+                codigo = linea.split("#")[0]
+                if self.NUMERO_A_MANO.search(codigo):
+                    culpables.append(f"{relativo}:{numero}: {linea.strip()[:90]}")
+        self.assertEqual(culpables, [], "Use titulo_de_formato(tema) en vez del número:\n" + "\n".join(culpables))
+
+    def test_el_titulo_se_encuentra_con_cualquier_numero(self):
+        from motor.procesamiento.formatos import titulo_de_formato
+
+        mujeres = titulo_de_formato(r"EMPRENDIMIENTO|MUJER", separacion=60)
+        for titulo in ["FORMATO 12 - ACREDITACION DE EMPRENDIMIENTO Y EMPRESAS DE MUJERES",
+                       "FORMATO 13 - ACREDITACION DE EMPRENDIMIENTO Y EMPRESAS DE MUJERES",
+                       "FORMATO NO. 13A ACREDITACION DE EMPRENDIMIENTO",
+                       "FORMATO N° 13 EMPRESAS DE MUJERES"]:
+            self.assertTrue(mujeres.search(titulo), titulo)
+
+    def test_el_tema_sigue_mandando(self):
+        """Aflojar el número no puede volver el título un comodín: otro formato
+        del mismo pliego no es este."""
+        from motor.procesamiento.formatos import titulo_de_formato
+
+        mujeres = titulo_de_formato(r"EMPRENDIMIENTO|MUJER", separacion=60)
+        for otro in ["FORMATO 12 - FACTOR DE SOSTENIBILIDAD",
+                     "FORMATO 14 - ACREDITACION DE MIPYME",
+                     "FORMATO 3 - ACREDITACION DE EXPERIENCIA"]:
+            self.assertIsNone(mujeres.search(otro), otro)
 
 
 class TablaDePuntajesDelPliegoTests(SimpleTestCase):

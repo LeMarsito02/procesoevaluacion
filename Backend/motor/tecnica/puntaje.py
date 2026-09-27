@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from motor.evaluacion.camara_comercio import PISTAS_EXISTENCIA, TITULO_EXISTENCIA_RE, encontrar_documentos
 from motor.evaluacion.personalizado import esta_firmado
+from motor.procesamiento.formatos import NUMERO, titulo_de_formato
 from motor.procesamiento.pdf_utils import buscar_pagina
 from motor.tecnica.experiencia import IntegranteTecnico
 from motor.tecnica.rup import normalizar
@@ -98,14 +99,10 @@ class Factor:
     no_aplica: bool = False
 
 
-# El número con que un pliego llama a sus formatos no identifica nada: el
-# emprendimiento de mujeres es el Formato 12 en un proceso de obra y el 13 en
-# uno de interventoría, donde el 12 es el factor de sostenibilidad; el de
-# discapacidad es el 8 en obra y el 6 en interventoría. Lo que no cambia es el
-# tema, así que el título se busca con el número que sea: exigir uno fijo dejaba
-# el documento en la oferta sin encontrar y el factor entero a revisión en todas
-# las ofertas del proceso.
-NUMERO = r"\d{1,2}"
+def _o(titulo: re.Pattern[str], *alternativas: str) -> re.Pattern[str]:
+    """El título del formato o, sin él, la frase con que algunos pliegos lo
+    encabezan ("PROGRAMA DE GERENCIA DE PROYECTOS" a secas)."""
+    return re.compile("|".join([titulo.pattern, *alternativas]), re.S)
 
 
 def _buscar_formato(pdfs: dict[str, bytes], titulo: re.Pattern, pista: re.Pattern | None = None):
@@ -155,18 +152,19 @@ _JURAMENTO = re.compile(r"GRAVEDAD\s+DE(?:L)?\s+JURAMENTO|BAJO\s+JURAMENTO")
 def factor_calidad(pdfs: dict[str, bytes], codigo_proceso: str | None) -> list[Factor]:
     gerencia = _compromiso_firmado(
         pdfs, Factor("gerencia_proyectos", "4.2.1 Programa de gerencia de proyectos (Formato 7A)", 5),
-        re.compile(rf"FORMATO\s*{NUMERO}\s*A\b.{{0,20}}PROGRAMA\s+DE\s+GERENCIA|PROGRAMA\s+DE\s+GERENCIA\s+DE\s+PROYECTOS", re.S),
+        _o(titulo_de_formato(r"PROGRAMA\s+DE\s+GERENCIA", letra="A", separacion=20),
+           r"PROGRAMA\s+DE\s+GERENCIA\s+DE\s+PROYECTOS"),
         _FORMATO7_PISTA, _JURAMENTO, codigo_proceso,
     )
     plan = _compromiso_firmado(
         pdfs, Factor("plan_calidad", "4.2.3 Plan de calidad (Formato 7C)", 5),
-        re.compile(rf"FORMATO\s*{NUMERO}\s*C\b.{{0,20}}PLAN\s+DE\s+CALIDAD", re.S),
+        titulo_de_formato(r"PLAN\s+DE\s+CALIDAD", letra="C", separacion=20),
         _FORMATO7_PISTA, re.compile(r"ISO|PLAN\s+DE\s+CALIDAD|COMPROM"), codigo_proceso,
     )
     # En interventoría el mismo factor se llama "factor de sostenibilidad".
     ambiental = _compromiso_firmado(
         pdfs, Factor("criterios_ambientales", "4.2.4 Criterios ambientales y sociales (Formato 14)", 20),
-        re.compile(rf"FORMATO\s*{NUMERO}\b.{{0,60}}(?:AMBIENTAL|SOSTENIBILIDAD)", re.S),
+        titulo_de_formato(r"AMBIENTAL|SOSTENIBILIDAD", separacion=60),
         re.compile(r"FORMA\w*\s*1[24]|AMBIENTAL|SOSTENIBILIDAD|PONDERABLE|PUNTAJE"), _JURAMENTO, codigo_proceso,
     )
     return [gerencia, plan, ambiental]
@@ -276,8 +274,9 @@ def mipyme(integrantes: list[IntegranteTecnico], plural: bool, minimo_participac
     return factor
 
 
-_FORMATO9A = re.compile(rf"FORMATO\s*{NUMERO}\s*A\b.{{0,30}}SERVICIOS\s+NACIONALES|PROMOCION\s+DE\s+SERVICIOS\s+NACIONALES", re.S)
-_FORMATO9B = re.compile(rf"FORMATO\s*{NUMERO}\s*B\b.{{0,40}}COMPONENTE\s+NACIONAL", re.S)
+_FORMATO9A = _o(titulo_de_formato(r"SERVICIOS\s+NACIONALES", letra="A", separacion=30),
+                r"PROMOCION\s+DE\s+SERVICIOS\s+NACIONALES")
+_FORMATO9B = titulo_de_formato(r"COMPONENTE\s+NACIONAL", letra="B", separacion=40)
 
 
 _AL_MENOS_RE = re.compile(r"AL\s+MENOS\s+(?:EL\s+)?[^%\d\n]{0,40}?(\d{2,3}(?:[.,]\d+)?)\s*%")
@@ -349,7 +348,7 @@ def industria_nacional(
     return factor
 
 
-_FORMATO_DISCAPACIDAD = re.compile(rf"FORMATO\s*{NUMERO}\b.{{0,80}}DISCAPACIDAD", re.S)
+_FORMATO_DISCAPACIDAD = titulo_de_formato(r"DISCAPACIDAD", separacion=80)
 _PLANTA_RE = re.compile(r"PLANTA\s+DE\s+PERSONAL\s+(\d{1,5})\s+(\d{1,4})\b")
 _MINTRABAJO_RE = re.compile(r"CONSTATACION\s+DE\s+VINCULACION|MINISTERIO\s+DE(?:L)?\s+TRABAJO.{0,600}DISCAPACIDAD", re.S)
 _TOTAL_RE = re.compile(r"NUMERO\s+TOTAL\s+DE\s+TRABAJADORES\s*:?\s*(\d{1,5})\b")
@@ -499,7 +498,7 @@ def discapacidad(
     return factor
 
 
-_FORMATO_MUJERES = re.compile(rf"FORMATO\s*{NUMERO}\s*[AB]?\b.{{0,60}}(?:EMPRENDIMIENTO|MUJER)", re.S)
+_FORMATO_MUJERES = titulo_de_formato(r"EMPRENDIMIENTO|MUJER", separacion=60)
 _DECLARACION_ACCIONES_RE = re.compile(r"MAS\s+DEL\s+CINCUENTA\s+POR\s+CIENTO\s*\(?\s*50\s*%?\s*\)?\s*DE\s+LAS\s+ACCIONES")
 _CUADRO_RE = re.compile(
     r"SIGUIENTE\s+CUADRO(.{0,2500}?)(?:DE\s+IGUAL\s+(?:MANERA|FORMA)|MANIFESTAMOS|EN\s+CONSTANCIA|ATENTAMENTE|CODIGO\s+CCE|FIRMA)", re.S

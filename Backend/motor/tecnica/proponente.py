@@ -9,6 +9,7 @@ from datetime import date
 from motor.evaluacion.camara_comercio import PISTAS_RUP, TITULO_RUP_RE, encontrar_documentos
 from motor.evaluacion.personalizado import esta_firmado
 from motor.evaluacion.proponente_plural import datos_formato2, integrantes_formato2
+from motor.procesamiento.formatos import titulo_de_formato
 from motor.procesamiento.pdf_utils import buscar_pagina, enderezar_pdf
 from motor.tecnica.experiencia import IntegranteTecnico, ResultadoLote, evaluar_experiencia
 from motor.tecnica.formato3 import Formato3, leer_excel, leer_pdf
@@ -20,7 +21,7 @@ from motor.tecnica.puntaje import (
 from motor.tecnica.parametros import ParametrosTecnicos
 from motor.tecnica.rup import Rup, leer_rups as leer_rups_del_texto, normalizar, texto_del_pdf
 
-_TITULO_FORMATO3_RE = re.compile(r"FORMATO\s*3\b.{0,40}EXPERIENCIA", re.S)
+_TITULO_FORMATO3_RE = titulo_de_formato(r"EXPERIENCIA")
 _PLURAL_RE = re.compile(r"^\s*(?:CONSORCIO|CONSROCIO|COSORCIO|CONSORCIP|UNION TEMPORAL|U\.?\s?T\.?\b)")
 _PISTA_FORMATO3_RE = re.compile(r"FORMAT\w*\s*(?:NO\.?\s*)?3\b|EXPERIENCIA")
 

@@ -22,13 +22,14 @@ from motor.integrations.drive import download_file_bytes, get_file_metadata
 from motor.llm.cliente import aparece_en_texto, consultar_json
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
 from motor.procesamiento.pdf_utils import extraer_texto
+from motor.procesamiento.formatos import titulo_de_formato
 from motor.procesamiento.zip_utils import extraer_pdfs
 
 # El título interno es siempre este, sin importar el nombre del archivo
 # ("Formato 2 - Conformación...", "Acuerdo Consorcial...", "4. Conformación
 # Consorcio...", etc. son solo nombres de archivo distintos para el mismo
 # documento).
-TITULO_FORMATO2_RE = re.compile(r"FORMATO\s*(?:NO\.?\s*)?2\b.{0,15}CONFORMACION DE PROPONENTE PLURAL")
+TITULO_FORMATO2_RE = titulo_de_formato(r"CONFORMACION DE PROPONENTE PLURAL", separacion=15)
 
 # Muchos proponentes copian solo el subtítulo de la variante que usan
 # ("FORMATO 2A — DOCUMENTO DE CONFORMACION DE CONSORCIO", "FORMATO NO. 2B –

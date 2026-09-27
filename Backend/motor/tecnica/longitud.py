@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 
 from motor.llm.cliente import cita_literal, consultar_json
+from motor.procesamiento.formatos import titulo_de_formato
 from motor.procesamiento.pdf_utils import extraer_texto, paginas_de_texto, texto_completo
 from motor.tecnica.rup import normalizar, numero
 
@@ -297,7 +298,9 @@ def _nombre_parecido(palabras: set[str], texto: str) -> bool:
 # El documento tiene que ser uno de los del pliego 3.5.6 (acta o
 # certificación), no el propio Formato 3 ni el RUP.
 _ES_ACTA_RE = re.compile(r"\bACTA\b|CERTIFIC|LIQUIDACION|RECIBO\s+(?:FINAL|DEFINITIVO)|TERMINACION|CONSTANCIA")
-_ES_FORMATO3_RE = re.compile(r"FORMATO\s*(?:N[O°º]\.?\s*)?3\b|CCE-EICP-FM-04|EXPERIENCIA\s*[-–]\s*DOCUMENTO\s+TIPO")
+_ES_FORMATO3_RE = re.compile(
+    "|".join([titulo_de_formato(r"EXPERIENCIA").pattern,
+              r"CCE-EICP-FM-04", r"EXPERIENCIA\s*[-–]\s*DOCUMENTO\s+TIPO"]), re.S)
 
 
 # En un PDF que junta varios documentos, el acta puede empezar en la mitad.

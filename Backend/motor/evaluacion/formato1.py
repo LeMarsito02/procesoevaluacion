@@ -23,12 +23,13 @@ from motor.evaluacion.formato1_contenido import (
     representante_de_la_carta,
 )
 from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente, ResultadoRequisito
+from motor.procesamiento.formatos import titulo_de_formato
 from motor.procesamiento.pdf_utils import abrir_pdf, extraer_texto, texto_pagina
 from motor.procesamiento.zip_utils import extraer_pdfs
 
 # El título interno del documento es siempre el mismo, sin importar cómo se
 # llame el archivo dentro del zip del proponente.
-TITULO_RE = re.compile(r"FORMATO\s*(?:NO\.?\s*)?1\b.{0,15}CARTA\s+DE\s+PRESENTAC")
+TITULO_RE = titulo_de_formato(r"CARTA\s+DE\s+PRESENTAC", separacion=15)
 
 # Hay proponentes que no copian el "FORMATO 1" y titulan el documento solo
 # "CARTA DE PRESENTACION DE LA OFERTA". Esa frase también aparece citada en
