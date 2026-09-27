@@ -163,10 +163,11 @@ def factor_calidad(pdfs: dict[str, bytes], codigo_proceso: str | None) -> list[F
         re.compile(rf"FORMATO\s*{NUMERO}\s*C\b.{{0,20}}PLAN\s+DE\s+CALIDAD", re.S),
         _FORMATO7_PISTA, re.compile(r"ISO|PLAN\s+DE\s+CALIDAD|COMPROM"), codigo_proceso,
     )
+    # En interventoría el mismo factor se llama "factor de sostenibilidad".
     ambiental = _compromiso_firmado(
         pdfs, Factor("criterios_ambientales", "4.2.4 Criterios ambientales y sociales (Formato 14)", 20),
-        re.compile(rf"FORMATO\s*{NUMERO}\b.{{0,60}}AMBIENTAL", re.S),
-        re.compile(r"FORMA\w*\s*14|AMBIENTAL|PONDERABLE|PUNTAJE"), _JURAMENTO, codigo_proceso,
+        re.compile(rf"FORMATO\s*{NUMERO}\b.{{0,60}}(?:AMBIENTAL|SOSTENIBILIDAD)", re.S),
+        re.compile(r"FORMA\w*\s*1[24]|AMBIENTAL|SOSTENIBILIDAD|PONDERABLE|PUNTAJE"), _JURAMENTO, codigo_proceso,
     )
     return [gerencia, plan, ambiental]
 
