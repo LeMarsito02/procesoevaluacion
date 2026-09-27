@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Proponente, ResultadoRequisito } from '../api'
+import { useDialogo } from '../dialogo'
 import { claveRevision, ETIQUETA_ESTADO, esPendiente, estadoDe, resumenProponente, usaIA, type Estado, type Revisiones } from '../estado'
 import { GRUPOS, ORDEN_GRUPOS, ordenarArchivosPorRequisito, REQUISITOS } from '../requisitos'
 import { fuenteDe } from '../historico'
@@ -56,6 +57,8 @@ function Pill({ estado }: { estado: Estado }) {
 }
 
 export default function PanelProponente(p: Props) {
+  const panel = useRef<HTMLElement>(null)
+  useDialogo(panel)
   const porReq = new Map(p.resultados.map((r) => [r.requisito, r]))
   const resumen = resumenProponente(p.resultados, p.revisiones)
   const tipo = p.resultados.find((r) => r.tipo_proponente)?.tipo_proponente
@@ -125,7 +128,14 @@ export default function PanelProponente(p: Props) {
   return (
     <>
       <div className="overlay" onClick={p.onCerrar} />
-      <aside className="drawer" role="dialog" aria-label={`Detalle de ${p.proponente.nombre_proponente}`}>
+      <aside
+        ref={panel}
+        className="drawer"
+        role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
+        aria-label={`Detalle de ${p.proponente.nombre_proponente}`}
+      >
         <div className="drawer-head">
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>

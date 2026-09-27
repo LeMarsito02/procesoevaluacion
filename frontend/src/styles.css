@@ -747,3 +747,9 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
 /* El estado del proponente, dentro de la columna que queda fija: cabe en la
    línea de debajo del nombre sin robarle sitio a la matriz. */
 .pill-xs { padding: 1px 7px; font-size: 11px; }
+
+/* Quien pide menos movimiento en su sistema no tiene por qué ver el pulso del
+   indicador ni las transiciones. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

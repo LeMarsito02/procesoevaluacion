@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Lote, Proponente } from '../api'
 import { formatFechaCorta, formatPesos } from '../format'
+import { conGlosario } from '../glosario'
 import Icono from './Icono'
 import VisorPliego from './VisorPliego'
 
@@ -98,7 +99,7 @@ export default function PasoDatos(p: Props) {
             <strong>Revise estos puntos del Documento Base:</strong>
             <ul>
               {p.advertencias.map((a, i) => (
-                <li key={i}>{a}</li>
+                <li key={i}>{conGlosario(a)}</li>
               ))}
             </ul>
             {p.pliego && (

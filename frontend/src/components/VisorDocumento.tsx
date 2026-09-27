@@ -1,19 +1,28 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { ResultadoRequisito } from '../api'
+import { useDialogo } from '../dialogo'
 import { claveRevision, ETIQUETA_ESTADO, esPendiente, estadoDe, type Revisiones } from '../estado'
 import { REQUISITO_POR_NUMERO } from '../requisitos'
+import { conGlosario } from '../glosario'
 import Icono from './Icono'
+import ExplicacionIA from './ExplicacionIA'
+import Motivos from './Motivos'
 
 interface Props {
   url: string
   archivo: string
+  /** Para pedir la explicación en palabras del resultado que se está mirando. */
+  evaluacionId?: string
+  proponenteId?: string
   resultado: ResultadoRequisito
   revisiones: Revisiones
   onRevisar: ((hoja: string, requisito: number, cumple: boolean | undefined) => void) | null
   onCerrar: () => void
 }
 
-export default function VisorDocumento({ url, archivo, resultado, revisiones, onRevisar, onCerrar }: Props) {
+export default function VisorDocumento({ url, archivo, evaluacionId, proponenteId, resultado, revisiones, onRevisar, onCerrar }: Props) {
+  const caja = useRef<HTMLDivElement>(null)
+  useDialogo(caja)
   const info = REQUISITO_POR_NUMERO[resultado.requisito]
   const estado = estadoDe(resultado, revisiones)
   const decision = revisiones[claveRevision(resultado.hoja, resultado.requisito)]
@@ -29,7 +38,7 @@ export default function VisorDocumento({ url, archivo, resultado, revisiones, on
   return (
     <>
       <div className="overlay" style={{ zIndex: 49 }} onClick={onCerrar} />
-      <div className="visor" role="dialog" aria-label={`Documento ${archivo}`}>
+      <div ref={caja} className="visor" role="dialog" aria-modal="true" tabIndex={-1} aria-label={`Documento ${archivo}`}>
         <div className="visor-doc">
           <div className="visor-doc-head">
             <Icono nombre="documento" />
@@ -57,15 +66,17 @@ export default function VisorDocumento({ url, archivo, resultado, revisiones, on
           </span>
           {info && (
             <p className="small" style={{ color: 'var(--ink-2)' }}>
-              <strong>Qué se verifica:</strong> {info.verifica}
+              <strong>Qué se verifica:</strong> {conGlosario(info.verifica)}
             </p>
           )}
-          {(resultado.error ?? resultado.motivo) && (
-            <div className="motivo" data-tono={estado === 'revisar' ? 'warn' : estado === 'error' ? 'bad' : undefined}>
-              {resultado.error ?? resultado.motivo}
-            </div>
+          <Motivos
+            motivo={resultado.error ?? resultado.motivo}
+            tono={estado === 'revisar' ? 'warn' : estado === 'error' ? 'bad' : undefined}
+          />
+          {evaluacionId && proponenteId && (
+            <ExplicacionIA evaluacionId={evaluacionId} proponenteId={proponenteId} requisito={resultado.requisito} />
           )}
-          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="decision" style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {!onRevisar ? (
               <span className="small muted">
                 {decision === undefined ? 'Solo lectura' : <>Decisión registrada: <strong>{decision ? 'Cumple' : 'No cumple'}</strong></>}

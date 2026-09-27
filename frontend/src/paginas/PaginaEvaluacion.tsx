@@ -537,6 +537,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
         <VisorDocumento
           url={visor.url}
           archivo={visor.archivo}
+          evaluacionId={id}
+          proponenteId={proponentes.find((pr) => pr.hoja === visor.resultado.hoja)?.id}
           resultado={visor.resultado}
           revisiones={revisiones}
           onRevisar={onRevisar}

@@ -9,6 +9,7 @@ import DetalleFinanciero from '../components/DetalleFinanciero'
 import PanelProponente from '../components/PanelProponente'
 import PasoEvaluacion from '../components/PasoEvaluacion'
 import PasoNuevo from '../components/PasoNuevo'
+import VisorDocumento from '../components/VisorDocumento'
 import Motivos from '../components/Motivos'
 import DetalleTecnico from '../components/DetalleTecnico'
 import QueFaltaRevisar from '../components/QueFaltaRevisar'
@@ -183,6 +184,7 @@ export default function Previsualizacion() {
   const [ancho, setAncho] = useState(760)
   // El panel lateral tapa el resto: se abre solo si se pide.
   const [verPanel, setVerPanel] = useState(window.location.hash.includes('panel'))
+  const [verVisor, setVerVisor] = useState(window.location.hash.includes('visor'))
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', padding: 28, display: 'flex', flexDirection: 'column', gap: 24 }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -217,6 +219,23 @@ export default function Previsualizacion() {
             acreditada={false}
           />
         </div>
+      </section>
+
+      <section style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
+        <h2 style={{ fontSize: 18 }}>Ver un documento y decidir</h2>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setVerVisor((v) => !v)}>
+          {verVisor ? 'Cerrar el visor' : 'Abrir el visor de documentos'}
+        </button>
+        {verVisor && (
+          <VisorDocumento
+            url="about:blank"
+            archivo="oferta/13. Formato 3 - Experiencia.pdf"
+            resultado={TECNICO}
+            revisiones={{}}
+            onRevisar={() => {}}
+            onCerrar={() => setVerVisor(false)}
+          />
+        )}
       </section>
 
       <section>
