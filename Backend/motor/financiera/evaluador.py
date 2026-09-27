@@ -176,6 +176,16 @@ def evaluar(proponente: Proponente, proceso: ProcesoDocumentoBase, clave: str, n
     if clave == "capital_trabajo":
         return _resultado(proponente, numero, resultado.capital_por_lote.get(nombre), resultado, {"lote": nombre})
     if clave == "residual":
+        if parametros_de_dict(proceso.parametros_financieros).residual_aplica is False:
+            # La capacidad residual es de la obra pública: el pliego de una
+            # interventoría no la nombra, y exigirla dejaba a todos los
+            # proponentes del proceso a revisión por un documento que nadie
+            # tenía que aportar.
+            return ResultadoRequisito(
+                **_base(proponente, numero), cumple=True,
+                motivo="N.A. — el pliego no exige capacidad residual",
+                detalle={"financiera": {"no_aplica": True}, "lote": nombre},
+            )
         residual = resultado.residual
         if residual is not None and not residual.cumple and nombre in (residual.detalle or {}).get("lotes_cubiertos", []):
             # No alcanza para todos los lotes pero sí para este (el de mayor

@@ -2300,6 +2300,33 @@ class OfertasSubidasAManoTests(SimpleTestCase):
         self.assertIn("Vuelve a subirla", str(caso.exception))
 
 
+class CapacidadResidualSoloDondeElPliegoLaExigeTests(SimpleTestCase):
+    """La capacidad residual es de la obra pública. El pliego de una
+    interventoría no la nombra ni una vez y el de una obra la repite decenas de
+    veces, pero se exigía siempre: en ICCU-CM-043-2026 los dos requisitos del
+    K residual mandaban a revisión a los ocho proponentes por un documento que
+    nadie tenía que aportar."""
+
+    def test_el_pliego_que_no_la_nombra_no_la_exige(self):
+        from motor.financiera.parametros import _CAPACIDAD_RESIDUAL_RE
+
+        self.assertIsNone(_CAPACIDAD_RESIDUAL_RE.search(
+            "CAPITULO III. REQUISITOS HABILITANTES 3.8 CAPACIDAD FINANCIERA Y ORGANIZACIONAL"))
+
+    def test_el_pliego_de_obra_si_la_exige(self):
+        from motor.financiera.parametros import _CAPACIDAD_RESIDUAL_RE
+
+        self.assertIsNotNone(_CAPACIDAD_RESIDUAL_RE.search(
+            "3.11 CAPACIDAD RESIDUAL 3.11.1 CALCULO DE LA CAPACIDAD RESIDUAL DEL PROCESO"))
+
+    def test_sin_pliego_legible_no_se_da_por_no_exigida(self):
+        """None, no False: dar por no exigible lo que no se pudo leer sería
+        aprobar de más."""
+        from motor.financiera.parametros import ParametrosFinancieros
+
+        self.assertIsNone(ParametrosFinancieros(smmlv=1).residual_aplica)
+
+
 class NingunDocumentoSeBuscaPorSuNumeroTests(SimpleTestCase):
     """Guardia contra el error que dejó tres factores a revisión en todas las
     ofertas de ICCU-CM-043-2026: los patrones exigían «FORMATO 12» y en ese

@@ -93,6 +93,10 @@ class ParametrosFinancieros:
     # True aplica, False no aplica, None no se pudo saber (falta el plazo o el
     # presupuesto): entonces el requisito va a revisión, no a "no aplica".
     patrimonio_aplica: bool | None = False
+    # Igual con la capacidad residual, que es de la obra pública: el pliego de
+    # una interventoría no la nombra ni una vez (el de una obra, decenas). None
+    # cuando el pliego no se pudo leer.
+    residual_aplica: bool | None = None
     avisos: list[str] = field(default_factory=list)
     # Parámetros que solo leyó la IA del pliego, o en los que la IA y las
     # reglas no coinciden. Entran en `avisos` (y por tanto ningún lote se
@@ -111,6 +115,9 @@ class ParametrosFinancieros:
     # no aprueba a nadie de más—, pero sí puede hacer que se rechace a quien
     # cumplía: por eso se dice cuando el resultado no es un cumple.
     permisos_del_pliego: list[str] = field(default_factory=list)
+
+
+_CAPACIDAD_RESIDUAL_RE = re.compile(r"CAPACIDAD\s+RESIDUAL")
 
 
 # El título de la sección cambia entre documentos tipo: "ANTICIPO Y/O PAGO
@@ -296,6 +303,9 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
         parametros.patrimonio_aplica = None
     else:
         parametros.patrimonio_aplica = total / smmlv >= 40_000 and plazo_max >= 24
+    # Lo exige el pliego que la nombra. Un proceso que la exige la repite en su
+    # capítulo 3.11 y en las fórmulas; ninguna mención es ninguna exigencia.
+    parametros.residual_aplica = bool(_CAPACIDAD_RESIDUAL_RE.search(texto_norm))
     parametros.umbrales = umbrales_del_texto(texto_norm, "pliego")
     if matriz2 is not None and not parametros.umbrales.completos:
         from motor.procesamiento.documentos import texto_de_documento
