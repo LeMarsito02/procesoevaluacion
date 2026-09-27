@@ -356,6 +356,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const disponibles = new Set<Paso>(['datos'])
   if (evaluadosEnOrden.length || enFila) {
     disponibles.add('evaluacion')
+    disponibles.add('control')
     disponibles.add('informe')
   }
   const panelProponente = panel ? proponentes.find((pr) => pr.hoja === panel.hoja) : null
@@ -463,8 +464,43 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           onContinuar={evaluarPendientes}
           onAbrir={(hoja, requisito, persona) => resultados[hoja] && setPanel({ hoja, requisito: requisito ?? null, persona })}
           onSiguientePendiente={() => irSiguientePendiente(null)}
-          onIrInforme={() => setPaso('informe')}
+          onIrInforme={() => setPaso('control')}
         />
+      )}
+
+      {paso === 'control' && (
+        <main className="page page-narrow">
+          <div className="page-head">
+            <div>
+              <div className="eyebrow">Antes del informe</div>
+              <h1>Control humano de la verificación</h1>
+              <p>
+                Una persona revisa, contra su soporte, una muestra sorteada de lo que el sistema dio por cumplido. Es lo
+                que permite adoptar el resto en bloque y aprobar la evaluación.
+              </p>
+            </div>
+          </div>
+          <ControlHumano
+            evaluacionId={id}
+            tipo={resumen.tipo}
+            puedeTrabajar={resumen.puede_trabajar}
+            aprobada={resumen.estado === 'aprobada'}
+            pendientes={resumen.avance.pendientes}
+            resultados={resultados}
+            onVerDocumento={abrirDocumento}
+            onAviso={setAviso}
+            onCambio={recargarTodo}
+            onDescargar={descargar}
+          />
+          <div className="acciones-pie">
+            <button className="btn btn-ghost" type="button" onClick={() => setPaso('evaluacion')}>
+              <Icono nombre="atras" /> Volver a la revisión
+            </button>
+            <button className="btn btn-primary" type="button" onClick={() => setPaso('informe')}>
+              Ir al informe <Icono nombre="flecha" />
+            </button>
+          </div>
+        </main>
       )}
 
       {paso === 'informe' && (
@@ -479,26 +515,10 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           onGenerar={generarInforme}
           onGenerarConsolidado={generarConsolidado}
           generandoConsolidado={generandoConsolidado}
-          onVolver={() => setPaso('evaluacion')}
+          onVolver={() => setPaso('control')}
           onRevisarPendientes={() => irSiguientePendiente(null)}
           onNuevaEvaluacion={() => navegar('/procesos/nuevo')}
-          extra={
-            <>
-              <ControlHumano
-                evaluacionId={id}
-                tipo={resumen.tipo}
-                puedeTrabajar={resumen.puede_trabajar}
-                aprobada={resumen.estado === 'aprobada'}
-                pendientes={resumen.avance.pendientes}
-                resultados={resultados}
-                onVerDocumento={abrirDocumento}
-                onAviso={setAviso}
-                onCambio={recargarTodo}
-                onDescargar={descargar}
-              />
-              <DocumentosFinales resumen={resumen} />
-            </>
-          }
+          extra={<DocumentosFinales resumen={resumen} />}
         />
       )}
 

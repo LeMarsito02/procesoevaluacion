@@ -43,6 +43,11 @@ class ResultadoFinanciero:
     # se resuelve una vez para todos los proponentes y lo de la oferta hay que
     # mirarlo en esta. Ninguno de los dos aprueba solo.
     revisiones: list[PuntoDeRevision] = field(default_factory=list)
+    # Los documentos de donde salieron las cifras: los RUP de cada integrante y
+    # los estados financieros. Quien revisa tiene que poder abrirlos —la muestra
+    # de control exige decidir viendo la evidencia—, y antes el resultado
+    # financiero no decía de qué documento venía nada.
+    documentos: list[str] = field(default_factory=list)
 
     @property
     def revisiones_del_proceso(self) -> list[PuntoDeRevision]:
@@ -107,6 +112,14 @@ def evaluar_proponente_financiero(
     resultado.organizacional = capacidad_organizacional(ind, umbrales, faltas)
     docs = documentos_financieros(pdfs)
     resultado.validez = validez_capacidad_organizacional(integrantes, docs, fecha_cierre)
+    # El RUP primero: es de donde salen los indicadores. Los estados financieros
+    # después, sin la página entre paréntesis con que se indexan por dentro.
+    vistos: dict[str, None] = {}
+    for archivo, _ in rups:
+        vistos.setdefault(archivo, None)
+    for archivo in docs.estados:
+        vistos.setdefault(archivo.split(" (pág.")[0], None)
+    resultado.documentos = list(vistos)
     # Cada cosa que falta de la validez es su propio punto de revisión, con su
     # evidencia: así quien revisa mira ese certificado y no la oferta entera.
     if not resultado.validez.cumple:

@@ -32,6 +32,7 @@ interface Props {
   /** `persona` = documento o nombre de la persona cuya casilla se tocó (antecedentes). */
   onAbrir: (hoja: string, requisito?: number, persona?: string) => void
   onSiguientePendiente: () => void
+  /** Sigue al control humano de la verificación, que va antes del informe. */
   onIrInforme: () => void
 }
 
@@ -204,7 +205,7 @@ export default function PasoEvaluacion(p: Props) {
             </button>
           )}
           <button className="btn btn-primary" type="button" onClick={p.onIrInforme} disabled={evaluados === 0}>
-            <Icono nombre="descargar" tam={16} /> Generar informe
+            <Icono nombre="escudo" tam={16} /> Control y informe
           </button>
         </div>
       </div>

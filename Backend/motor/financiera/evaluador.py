@@ -131,6 +131,11 @@ def _resultado(proponente: Proponente, numero: int, revision: Revision | None, r
         cumple=cumple,
         # Las explicaciones van al final: cuentan cómo se evaluó, no qué falta.
         motivo="; ".join(avisos + motivos + resultado.explicaciones) or None,
+        # De qué documento salieron las cifras. Sin esto, quien revisa —y la
+        # muestra de control, que exige decidir viendo la evidencia— se
+        # encontraba un "sin documento" en cada verificación financiera.
+        archivo_evaluado=resultado.documentos[0] if resultado.documentos else None,
+        archivos_disponibles=list(resultado.documentos),
         detalle={
             "financiera": {**(revision.detalle or {}), **(extra or {})},
             "integrantes_financieros": _integrantes(resultado),
@@ -204,5 +209,7 @@ def _patrimonio(proponente: Proponente, proceso: ProcesoDocumentoBase, numero: i
         **_base(proponente, numero), cumple=False,
         motivo=(f"Patrimonio del proponente (RUP) ${patrimonio:,.0f}: compáralo con el exigido en el pliego (3.8)."
                 if patrimonio is not None else "No se leyó el patrimonio del RUP de todos los integrantes."),
+        archivo_evaluado=resultado.documentos[0] if resultado.documentos else None,
+        archivos_disponibles=list(resultado.documentos),
         detalle={"financiera": {"patrimonio": patrimonio}, "integrantes_financieros": _integrantes(resultado)},
     )
