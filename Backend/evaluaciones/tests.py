@@ -2335,6 +2335,65 @@ class UnZipConTodasLasOfertasTests(SimpleTestCase):
         self.assertEqual([(p.hoja, p.nombre_proponente) for p in r.proponentes],
                          [("P-01", "ALFA S.A.S"), ("P-02", "CONSORCIO BETA")])
 
+    def test_una_oferta_repartida_en_secciones_no_son_varios_proponentes(self):
+        """Las ofertas que se bajan del SECOP llegan con un nombre que no dice
+        de quién son ("CO1.RPL.5801690_20260923.zip") y por dentro traen la
+        oferta repartida: "1. JURIDICO.rar", "2. FINANCIERO.rar". Tomar cada
+        parte por un proponente convertía una oferta en cinco, y el proceso
+        entero en setenta."""
+        from motor.integrations import ofertas_locales
+
+        oferta = self._contenedor({
+            "1. JURIDICO.rar": self._oferta("juridico"),
+            "2. FINANCIERO.rar": self._oferta("financiero"),
+            "3. TECNICO.rar": self._oferta("tecnico"),
+            "4. PONDERABLES.rar": self._oferta("ponderables"),
+            "PROPUESTA ECONOMICA.xlsx": b"x",
+        })
+        r = ofertas_locales.desde_archivos([("CO1.RPL.5801690_20260923122433.zip", oferta)])
+        self.assertEqual(len(r.proponentes), 1)
+
+        # Lo mismo cuando las secciones vienen en zip y con otros nombres.
+        otra = self._contenedor({
+            "1. CARTA DE PRESENTACION.zip": self._oferta("carta"),
+            "3. CONSORCIAL.zip": self._oferta("consorcial"),
+            "4. PARAFISCALES.zip": self._oferta("parafiscales"),
+            "15. REDAM.zip": self._oferta("redam"),
+        })
+        self.assertEqual(len(ofertas_locales.desde_archivos([("CO1.RPL.5802892.zip", otra)]).proponentes), 1)
+
+    def test_una_oferta_numerada_con_un_par_de_puntos_comprimidos_es_una(self):
+        """El caso real que se colaba: el proponente numera su oferta de 1 a 28
+        y comprime un par de puntos ("21. CAPACIDAD FINANCIERA.zip", "24. …").
+        Al lado están los otros veintiséis documentos sueltos, y eso es lo que
+        delata que el zip es una oferta: un contenedor trae las ofertas y nada
+        más."""
+        from motor.integrations import ofertas_locales
+
+        oferta = self._contenedor({
+            "1. CARTA PRESENTACION.pdf": b"carta",
+            "2. CERT EXISTENCIA.pdf": b"camara",
+            "13. EXPERIENCIA.pdf": b"experiencia",
+            "19. RUT.pdf": b"rut",
+            "21. CAPACIDAD FINANCIERA ORGANIZACIONAL.zip": self._oferta("financiera"),
+            "24. CAPACIDAD FINANCIERA ORGANIZACIONAL.zip": self._oferta("financiera 2"),
+        })
+        self.assertEqual(len(ofertas_locales.desde_archivos([("CO1.RPL.5804554.zip", oferta)]).proponentes), 1)
+
+    def test_un_contenedor_de_verdad_se_sigue_repartiendo(self):
+        """El arreglo anterior no puede llevarse por delante el caso para el
+        que existe el reparto: nombres de empresa que empiezan como una sección
+        ("CARTAGENA" no es "CARTA")."""
+        from motor.integrations import ofertas_locales
+
+        contenedor = self._contenedor({
+            "p1 CONSTRUCTORA CARTAGENA.zip": self._oferta("cartagena"),
+            "p2 INDUSTRIAS DEL NORTE S.A.S.zip": self._oferta("norte"),
+        })
+        r = ofertas_locales.desde_archivos([("ofertas.zip", contenedor)])
+        self.assertEqual([p.nombre_proponente for p in r.proponentes],
+                         ["CONSTRUCTORA CARTAGENA", "INDUSTRIAS DEL NORTE S.A.S"])
+
     def test_un_zip_con_una_carpeta_por_proponente(self):
         """Cada carpeta se vuelve el zip de su proponente, con sus documentos."""
         import io

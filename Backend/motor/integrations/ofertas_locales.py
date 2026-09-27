@@ -77,10 +77,11 @@ def _archivo(file_id: str) -> str:
     return file_id.replace(":", "_")
 
 
-def _entradas_de_primer_nivel(contenido: bytes) -> tuple[list[str], list[str]]:
-    """(archivos comprimidos, carpetas) que hay en el primer nivel de un zip."""
+def _entradas_de_primer_nivel(contenido: bytes) -> tuple[list[str], list[str], list[str]]:
+    """(archivos comprimidos, carpetas, documentos sueltos) del primer nivel de un zip."""
     comprimidos: list[str] = []
     carpetas: list[str] = []
+    sueltos: list[str] = []
     try:
         with zipfile.ZipFile(io.BytesIO(contenido)) as z:
             for nombre in z.namelist():
@@ -88,22 +89,42 @@ def _entradas_de_primer_nivel(contenido: bytes) -> tuple[list[str], list[str]]:
                 if not limpio or limpio.startswith("__MACOSX"):
                     continue
                 partes = limpio.split("/")
-                if len(partes) == 1 and limpio.lower().endswith(EXTENSIONES_OFERTA):
+                if len(partes) > 1:
+                    if partes[0] not in carpetas:
+                        carpetas.append(partes[0])
+                elif limpio.lower().endswith(EXTENSIONES_OFERTA):
                     comprimidos.append(limpio)
-                elif len(partes) > 1 and partes[0] not in carpetas:
-                    carpetas.append(partes[0])
+                else:
+                    sueltos.append(limpio)
     except zipfile.BadZipFile:
-        return [], []
-    return comprimidos, carpetas
+        return [], [], []
+    return comprimidos, carpetas, sueltos
 
 
-# Cómo se llaman las carpetas en que un proponente reparte SU propia oferta. Es
-# la confusión que hay que evitar: "1. JURIDICA, 2. TECNICA, 3. FINANCIERA" calza
-# la forma "número. nombre" igual que un proponente, y tomarlas por proponentes
-# convertiría una oferta en tres.
+# Cómo se llaman las partes en que un proponente reparte SU propia oferta. Es la
+# confusión que hay que evitar: las ofertas que se bajan del SECOP llegan con un
+# nombre que no dice de quién son ("CO1.RPL.5801690_20260923.zip") y por dentro
+# traen "1. JURIDICO.rar", "2. FINANCIERO.rar", "3. TECNICO.rar"; tomar cada una
+# por un proponente convierte una oferta en cinco.
+#
+# Los términos llevan límite de palabra donde podrían confundirse con el nombre
+# de una empresa ("CARTA" no debe calzar "CARTAGENA").
 _SECCIONES_DE_UNA_OFERTA = re.compile(
-    r"^(?:\d{1,2}\s*[.)\-–]?\s*)?(JURIDIC|TECNIC|FINANCIER|ECONOMIC|SOBRE|ANEXO|FORMATO|SUBSANAC|DOCUMENTO"
-    r"|CARPETA|HABILITANTE|EXPERIENCIA|GARANTIA|RUP|CAMARA|ANTECEDENTE|PROPUESTA)", re.IGNORECASE)
+    r"^(?:\d{1,2}\s*[.)\-–]?\s*)?"
+    r"(JURIDIC|TECNIC|FINANCIER|ECONOMIC|SOBRE\b|ANEXO|FORMATO|SUBSANAC|DOCUMENTO"
+    r"|CARPETA|HABILITANTE|EXPERIENCIA|GARANTIA|RUP\b|CAMARA|ANTECEDENTE|PROPUESTA"
+    r"|CARTA\b|PONDERABLE|POLIZA|PARAFISCAL|CONSORCIAL|INDUSTRIA|DISCAPACIDAD"
+    r"|MUJER|MIPYME\b|REDAM\b|RNMC\b|COPNIA|PROCURADUR|CONTRALOR|POLICIA"
+    r"|SEGURIDAD|PAGOS\b|CALIDAD|SOSTENIBILIDAD|PERSONAL|ESTADOS|BALANCE|CEDULA"
+    r"|REGISTRO|CERTIFICAD|MATRICULA|APOYO|EMPRENDIMIENTO)",
+    re.IGNORECASE,
+)
+
+
+def _son_partes_de_una_oferta(entradas: list[str]) -> bool:
+    """Las entradas de este zip son las secciones de una sola oferta."""
+    sin_extension = [re.sub(r"\.(zip|rar|7z)$", "", e.strip(), flags=re.IGNORECASE) for e in entradas]
+    return any(_SECCIONES_DE_UNA_OFERTA.match(e) for e in sin_extension)
 
 
 def _repartir_contenedor(nombre: str, contenido: bytes) -> list[tuple[str, bytes]] | None:
@@ -117,13 +138,22 @@ def _repartir_contenedor(nombre: str, contenido: bytes) -> list[tuple[str, bytes
     # organizó sus documentos.
     if _parse_nombre(nombre) is not None:
         return None
-    comprimidos, carpetas = _entradas_de_primer_nivel(contenido)
+    comprimidos, carpetas, sueltos = _entradas_de_primer_nivel(contenido)
+    # Si lo de dentro son las secciones de una oferta —vengan en carpetas o
+    # comprimidas—, este zip es la oferta de un proponente.
+    if _son_partes_de_una_oferta(comprimidos + carpetas):
+        return None
+    # Un contenedor trae las ofertas y nada más. Si al lado de los comprimidos
+    # hay documentos sueltos, son los papeles de un solo proponente que numeró
+    # su oferta de 1 a 28 y comprimió un par de puntos ("21. CAPACIDAD
+    # FINANCIERA.zip"): repartirlo convertiría una oferta en dos o tres.
+    if len(sueltos) >= 3:
+        return None
     if len(comprimidos) >= 2:
         with zipfile.ZipFile(io.BytesIO(contenido)) as z:
             return [(interno, z.read(interno)) for interno in comprimidos]
     # Carpetas cuyo nombre dice de quién es la oferta: cada una se vuelve un zip.
-    # Las que se llaman como una sección de la oferta no cuentan.
-    utiles = [c for c in carpetas if not _SECCIONES_DE_UNA_OFERTA.match(c.strip())]
+    utiles = list(carpetas)
     con_nombre = [c for c in utiles if _parse_nombre(c) is not None]
     candidatas = con_nombre if len(con_nombre) >= 2 else (utiles if len(utiles) >= 2 else [])
     if not candidatas:
