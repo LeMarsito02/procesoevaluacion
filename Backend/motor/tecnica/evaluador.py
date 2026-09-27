@@ -59,6 +59,8 @@ def parametros_a_dict(parametros: ParametrosTecnicos) -> dict:
 
 def parametros_de_dict(datos: dict) -> ParametrosTecnicos:
     datos = dict(datos)
+    # Con qué lectura del pliego se calcularon (evaluaciones/servicios.py).
+    datos.pop("ia", None)
     lotes = [LoteTecnico(**l) for l in datos.pop("lotes", [])]
     clases = set(datos.pop("clases_unspsc", []))
     nombrados = set(datos.pop("factores_nombrados", []))

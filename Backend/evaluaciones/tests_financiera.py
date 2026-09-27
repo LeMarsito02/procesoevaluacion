@@ -313,13 +313,47 @@ class HolguraTests(SimpleTestCase):
         self.assertEqual(nada.detalle["lotes_cubiertos"], [])
 
 
+class RelecturaDelPliegoTests(SimpleTestCase):
+    """Los parámetros del pliego se calculan una vez y quedan guardados. La IA
+    tarda en leer el pliego entero y puede terminar después, así que un proceso
+    evaluado temprano se quedaba con lo que se sabía antes: los requisitos que
+    la IA encontró después no entraban en la evaluación."""
+
+    def test_la_marca_cambia_cuando_la_ia_termina(self):
+        from evaluaciones.servicios import _marca_ia
+
+        pendiente = mock.Mock(estado_ia="pendiente", version_ia=3)
+        listo = mock.Mock(estado_ia="listo", version_ia=3)
+        self.assertNotEqual(_marca_ia(pendiente), _marca_ia(listo))
+
+    def test_un_proceso_sin_pliego_tiene_su_propia_marca(self):
+        from evaluaciones.servicios import _marca_ia
+
+        self.assertEqual(_marca_ia(None), "sin-pliego")
+
+    def test_la_marca_no_llega_a_los_parametros_del_motor(self):
+        """El motor reconstruye sus parámetros desde el diccionario guardado:
+        una clave de más lo rompería."""
+        from motor.financiera.evaluador import parametros_de_dict as financieros
+        from motor.tecnica.evaluador import parametros_de_dict as tecnicos
+
+        self.assertEqual(financieros({"smmlv": 1_000_000, "lotes": [], "ia": "listo:3"}).smmlv, 1_000_000)
+        self.assertEqual(tecnicos({"smmlv": 1_000_000, "lotes": [], "ia": "listo:3"}).smmlv, 1_000_000)
+
+
 class UmbralesPlataformaTests(TestCase):
     def test_registrar_umbrales_de_la_matriz(self):
         from cuentas.models import Usuario
         from evaluaciones import servicios
 
         usuario = Usuario(email="financiero@ficticia.gov.co", nombre_completo="Ana Ficticia")
-        proceso = mock.Mock(pk=1, parametros_financieros={"smmlv": 1_000_000, "lotes": [], "umbrales": {}})
+        # Parámetros ya calculados con la lectura del pliego que está vigente
+        # ("ia"): si no coincidiera, se volverían a leer del pliego.
+        analisis = mock.Mock(estado_ia="listo", version_ia=3)
+        proceso = mock.Mock(
+            pk=1, analisis_pliego=analisis,
+            parametros_financieros={"smmlv": 1_000_000, "lotes": [], "umbrales": {}, "ia": "listo:3"},
+        )
         with mock.patch.object(type(proceso), "objects", create=True):
             datos = servicios.registrar_umbrales_financieros(
                 proceso, {"liquidez_min": 1.2, "endeudamiento_max": 0.7, "cobertura_min": 1, "roa_min": 0.01, "roe_min": 0.02},

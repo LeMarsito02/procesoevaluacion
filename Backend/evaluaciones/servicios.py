@@ -658,6 +658,19 @@ def anotar_lo_que_no_automatizamos(proceso, area: str) -> int:
     return anotados
 
 
+def _marca_ia(analisis) -> str:
+    """Con qué lectura del pliego se calcularon unos parámetros.
+
+    La IA tarda en leer el pliego entero y puede terminar después de que el
+    proceso se evaluó por primera vez. Los parámetros se guardan una sola vez,
+    así que sin esta marca el proceso se quedaba con lo que se sabía antes:
+    los requisitos que la IA encontró después no entraban, y al volver a
+    leerlos —meses más tarde— la evaluación cambiaba sola."""
+    if analisis is None:
+        return "sin-pliego"
+    return f"{analisis.estado_ia}:{analisis.version_ia}"
+
+
 def parametros_tecnicos_de(proceso) -> dict | None:
     """Parámetros de la evaluación técnica leídos del pliego del proceso. Se
     calculan una vez y quedan guardados; None si el proceso no tiene el
@@ -669,9 +682,10 @@ def parametros_tecnicos_de(proceso) -> dict | None:
     campos = {f.name for f in dataclasses.fields(ParametrosTecnicos)}
     # Guardados con una versión anterior del motor (p. ej. sin los puntos
     # que da el pliego a cada factor): se vuelven a leer del pliego.
-    if proceso.parametros_tecnicos and campos <= set(proceso.parametros_tecnicos):
-        return proceso.parametros_tecnicos
     analisis = proceso.analisis_pliego
+    if (proceso.parametros_tecnicos and campos <= set(proceso.parametros_tecnicos)
+            and proceso.parametros_tecnicos.get("ia") == _marca_ia(analisis)):
+        return proceso.parametros_tecnicos
     salario = salario_minimo(proceso.fecha_cierre.year)
     if analisis is None or not analisis.archivo or not salario:
         return None
@@ -693,7 +707,7 @@ def parametros_tecnicos_de(proceso) -> dict | None:
         anotar_lo_que_no_automatizamos(proceso, "tecnica")
     except Exception:  # noqa: BLE001
         log.exception("no se pudo anotar lo que no automatizamos")
-    parametros = parametros_a_dict(leidos)
+    parametros = {**parametros_a_dict(leidos), "ia": _marca_ia(analisis)}
     type(proceso).objects.filter(pk=proceso.pk).update(parametros_tecnicos=parametros)
     proceso.parametros_tecnicos = parametros
     return parametros
@@ -704,10 +718,11 @@ def parametros_financieros_de(proceso) -> dict | None:
     mismo que lee la técnica), plazo y anticipo del pliego y los umbrales de
     la Matriz 2 si el pliego los trae. Se calculan una vez y quedan
     guardados (los umbrales que registre una persona no se pisan)."""
-    if proceso.parametros_financieros:
-        return proceso.parametros_financieros
-    tecnicos = parametros_tecnicos_de(proceso)
+    guardados = proceso.parametros_financieros or {}
     analisis = proceso.analisis_pliego
+    if guardados and guardados.get("ia") == _marca_ia(analisis):
+        return guardados
+    tecnicos = parametros_tecnicos_de(proceso)
     salario = salario_minimo(proceso.fecha_cierre.year)
     if tecnicos is None or analisis is None or not analisis.archivo or not salario:
         return None
@@ -731,7 +746,12 @@ def parametros_financieros_de(proceso) -> dict | None:
             matriz2 = None
     leidos = leer_parametros(contenido, lotes, salario, matriz2)
     _fundir_con_la_ia(leidos, analisis, tecnicos=False)
-    parametros = parametros_a_dict(leidos)
+    parametros = {**parametros_a_dict(leidos), "ia": _marca_ia(analisis)}
+    # Releer el pliego no puede borrar lo que escribió una persona: los
+    # umbrales de la Matriz 2 se registran a mano porque la matriz es un anexo
+    # aparte, y volver a pedirlos sería hacerle el trabajo dos veces.
+    if str((guardados.get("umbrales") or {}).get("fuente", "")).startswith(UMBRALES_REGISTRADOS):
+        parametros["umbrales"] = guardados["umbrales"]
     type(proceso).objects.filter(pk=proceso.pk).update(parametros_financieros=parametros)
     proceso.parametros_financieros = parametros
     return parametros
@@ -858,6 +878,10 @@ def confirmar_parametros_del_pliego(proceso, valores: dict, usuario) -> dict:
 UMBRALES_FINANCIEROS = ("liquidez_min", "endeudamiento_max", "cobertura_min", "roa_min", "roe_min")
 
 
+# Cómo se reconoce un umbral que escribió una persona (no el pliego).
+UMBRALES_REGISTRADOS = "Matriz 2, registrada por"
+
+
 def registrar_umbrales_financieros(proceso, valores: dict, usuario) -> dict:
     """Umbrales de la Matriz 2 que registra una persona (la matriz es un
     anexo aparte del pliego). Quedan con quién y cuándo los registró; para
@@ -872,7 +896,7 @@ def registrar_umbrales_financieros(proceso, valores: dict, usuario) -> dict:
             raise ValueError(f"Falta o no es válido el umbral «{clave}».")
         umbrales[clave] = float(v)
     nombre = usuario.nombre_completo or usuario.email
-    umbrales["fuente"] = f"Matriz 2, registrada por {nombre} el {timezone.localdate():%d/%m/%Y}"
+    umbrales["fuente"] = f"{UMBRALES_REGISTRADOS} {nombre} el {timezone.localdate():%d/%m/%Y}"
     parametros = {**parametros, "umbrales": umbrales}
     type(proceso).objects.filter(pk=proceso.pk).update(parametros_financieros=parametros)
     proceso.parametros_financieros = parametros

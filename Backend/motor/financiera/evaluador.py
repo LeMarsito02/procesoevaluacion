@@ -47,6 +47,8 @@ def parametros_a_dict(parametros: ParametrosFinancieros) -> dict:
 
 def parametros_de_dict(datos: dict) -> ParametrosFinancieros:
     datos = dict(datos)
+    # Con qué lectura del pliego se calcularon (evaluaciones/servicios.py).
+    datos.pop("ia", None)
     lotes = [LoteFinanciero(**l) for l in datos.pop("lotes", [])]
     umbrales = Umbrales(**datos.pop("umbrales", {}))
     # Los de Mipyme se guardan aparte y hay que reconstruirlos igual: si se
