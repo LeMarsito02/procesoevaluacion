@@ -114,14 +114,14 @@ export default function ControlHumano(p: Props) {
         <div className="acciones" style={{ justifyContent: 'space-between' }}>
           <span className="small muted">
             {p.pendientes > 0
-              ? `Primero resuelva los ${p.pendientes} requisitos por revisar.`
+              ? 'Puede sortearla ya: si sale un error, ese requisito vuelve a revisión y lo resuelve junto con lo demás.'
               : 'Aún no se ha hecho la muestra de control de esta evaluación.'}
           </span>
           {puedeActuar && (
             <button
               type="button"
               className="btn btn-primary btn-sm"
-              disabled={p.pendientes > 0 || ocupado !== null}
+              disabled={ocupado !== null}
               onClick={() => ejecutar('crear', () => crearMuestra(p.evaluacionId), 'Muestra sorteada')}
             >
               {ocupado === 'crear' ? <span className="spinner" /> : <Icono nombre="check" tam={15} />} Sortear la muestra de control
@@ -161,8 +161,14 @@ export default function ControlHumano(p: Props) {
                 <button
                   type="button"
                   className="btn btn-ok btn-sm"
-                  disabled={ocupado !== null || revisados < muestra.items.length}
-                  title={revisados < muestra.items.length ? 'Faltan verificaciones de la muestra por revisar' : undefined}
+                  disabled={ocupado !== null || revisados < muestra.items.length || p.pendientes > 0}
+                  title={
+                    revisados < muestra.items.length
+                      ? 'Faltan verificaciones de la muestra por revisar'
+                      : p.pendientes > 0
+                        ? `Quedan ${p.pendientes} requisitos por revisar: la muestra se cierra cuando no queda nada pendiente`
+                        : undefined
+                  }
                   onClick={() => ejecutar('cerrar', () => cerrarMuestra(p.evaluacionId), 'Muestra de control cerrada')}
                 >
                   {ocupado === 'cerrar' ? <span className="spinner" /> : <Icono nombre="check" tam={15} />} Cerrar la muestra
@@ -172,7 +178,7 @@ export default function ControlHumano(p: Props) {
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
-                  disabled={ocupado !== null || p.pendientes > 0}
+                  disabled={ocupado !== null}
                   onClick={() => ejecutar('crear', () => crearMuestra(p.evaluacionId), 'Nueva muestra sorteada')}
                 >
                   Sortear una nueva muestra

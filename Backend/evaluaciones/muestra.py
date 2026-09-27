@@ -10,6 +10,12 @@ soporte, una muestra de esas verificaciones:
    defecto) entre las que el sistema dio por cumplidas y nadie revisó,
    repartidas primero entre ofertas y requisitos distintos. La semilla queda
    guardada: cualquiera puede repetir el sorteo y obtener las mismas.
+
+   Se puede sortear apenas el sistema termina de evaluar, sin haber resuelto
+   todavía lo que quedó por revisar. Es a propósito: un ítem no conforme manda
+   a revisión humana ese requisito en todas las ofertas, y encontrarlo al
+   principio permite revisar eso junto con el resto en una sola pasada, en vez
+   de revisar trescientos requisitos y que aparezcan cuarenta más después.
 2. El puntaje técnico no entra: se adopta aparte (evaluaciones.puntaje).
 3. Cada ítem se marca conforme o no conforme después de abrir su soporte.
 4. Un ítem no conforme amplía la revisión: todas las verificaciones del
@@ -145,8 +151,6 @@ def crear(evaluacion: Evaluacion, usuario) -> MuestraControl:
     avance = avances([evaluacion.id])[evaluacion.id]
     if avance.evaluados < avance.proponentes or avance.en_fila or avance.procesando:
         raise ErrorMuestra("Todavía hay proponentes sin evaluar: la muestra se hace cuando el sistema termina.")
-    if avance.pendientes:
-        raise ErrorMuestra(f"Quedan {avance.pendientes} requisitos por revisar: resuélvalos antes de la muestra de control.")
     actual = vigente(evaluacion)
     if actual is not None and actual.estado in (EstadoMuestra.EN_CURSO, EstadoMuestra.CON_HALLAZGOS):
         return actual
@@ -242,11 +246,11 @@ def cerrar(muestra: MuestraControl, usuario) -> MuestraControl:
     faltan = muestra.items.filter(resultado="").count()
     if faltan:
         raise ErrorMuestra(f"Faltan {faltan} verificaciones de la muestra por revisar.")
+    # La garantía está aquí, no en el sorteo: la muestra solo se cierra cuando no
+    # queda nada por revisar en la evaluación, y sin muestra cerrada no se aprueba.
     pendientes = avances([muestra.evaluacion_id])[muestra.evaluacion_id].pendientes
     if pendientes:
-        raise ErrorMuestra(
-            f"La muestra amplió la revisión: quedan {pendientes} requisitos por revisar antes de cerrarla."
-        )
+        raise ErrorMuestra(f"Quedan {pendientes} requisitos por revisar: resuélvalos antes de cerrar la muestra.")
     muestra.estado = EstadoMuestra.CERRADA
     muestra.cerrada_por = usuario
     muestra.cerrada_en = timezone.now()

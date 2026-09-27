@@ -128,7 +128,7 @@ class MuestraTests(BaseFlujo):
                 self.abogado.put(f"/api/evaluaciones/{self.eid}/muestra/items/{i['id']}", {"conforme": True})
         r = self.abogado.post(f"/api/evaluaciones/{self.eid}/muestra/cerrar")
         self.assertEqual(r.status_code, 409)
-        self.assertIn("quedan 12", r.json()["detail"])
+        self.assertIn("Quedan 12 requisitos por revisar", r.json()["detail"])
         for hoja, p in self.props.items():
             self.ver_soporte(self.evaluador, self.eid, hoja)
             self.abogado.put(
@@ -160,15 +160,31 @@ class MuestraTests(BaseFlujo):
         self.assertEqual(self.jefe.post(f"/api/evaluaciones/{self.eid}/aprobar").json()["estado"], EstadoEvaluacion.APROBADA)
         self.assertEqual(MuestraControl.objects.filter(evaluacion_id=self.eid, estado="anulada").count(), 1)
 
-    def test_con_pendientes_no_hay_muestra(self):
+    def test_la_muestra_se_sortea_aunque_queden_pendientes_pero_no_se_cierra(self):
+        """El sorteo va primero y el cierre al final.
+
+        Un ítem no conforme manda a revisión ese requisito en todas las
+        ofertas: encontrarlo antes de revisar lo pendiente permite hacerlo
+        todo en una pasada. La garantía está en el cierre, que no admite
+        nada por revisar, y sin muestra cerrada no se aprueba."""
         jefe, ev = self.crear()
         abogado = Cliente()
         jefe.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)})
         abogado.entrar("abogado@entidad.gov.co")
         self.evaluar_todo(abogado, ev["id"])
+        # Con requisitos por revisar, la muestra se sortea igual.
         r = abogado.post(f"/api/evaluaciones/{ev['id']}/muestra")
-        self.assertEqual(r.status_code, 409)
-        self.assertIn("por revisar", r.json()["detail"])
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertTrue(r.json()["muestra"]["items"])
+        # Pero no se cierra: primero hay que resolver lo pendiente.
+        for i in r.json()["muestra"]["items"]:
+            self.ver_soporte(self.evaluador, ev["id"], i["hoja"])
+            abogado.put(f"/api/evaluaciones/{ev['id']}/muestra/items/{i['id']}", {"conforme": True})
+        cierre = abogado.post(f"/api/evaluaciones/{ev['id']}/muestra/cerrar")
+        self.assertEqual(cierre.status_code, 409)
+        self.assertIn("por revisar", cierre.json()["detail"])
+        # Y sin muestra cerrada tampoco se aprueba.
+        self.assertEqual(jefe.post(f"/api/evaluaciones/{ev['id']}/aprobar").status_code, 409)
 
 
 class SoporteYCompromisoTests(BaseFlujo):
