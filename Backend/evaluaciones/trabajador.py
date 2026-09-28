@@ -15,6 +15,7 @@ from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
 from api.ejecucion import evaluar_todos_en_proceso
+from evaluaciones import precarga
 from cuentas.correo import enviar_evaluacion_terminada
 from evaluaciones.expediente import atender_pendientes
 from evaluaciones.pliego import atender_lecturas_pendientes
@@ -98,7 +99,16 @@ async def _atender(trabajo: Trabajo) -> None:
     inicio = timezone.now()
     try:
         proponente = await sync_to_async(proponente_motor)(trabajo.proponente, trabajo.evaluacion)
-        resultados = await evaluar_todos_en_proceso(proponente, documento)
+        resultados = None
+        if precarga.es_demo(documento.codigo_proceso):
+            # Demostración: si hay resultados precargados para esta oferta, se
+            # restauran en vez de correr el motor (segundos en vez de hora y
+            # media). Para procesos de verdad esto nunca entra.
+            resultados = await sync_to_async(precarga.cargar)(proponente, trabajo.evaluacion.tipo)
+            if resultados is not None:
+                log.info("precarga demo %s %s (%d resultados)", documento.codigo_proceso, trabajo.proponente.hoja, len(resultados))
+        if resultados is None:
+            resultados = await evaluar_todos_en_proceso(proponente, documento)
         await sync_to_async(_cerrar)(trabajo, resultados, None)
         log.info("%s %s en %.0fs", trabajo.evaluacion.proceso.codigo, trabajo.proponente.hoja, (timezone.now() - inicio).total_seconds())
     except Exception as exc:  # noqa: BLE001
