@@ -261,3 +261,8 @@ LOGGING = {
         "cuentas.recaptcha": {"handlers": ["consola"], "level": "INFO", "propagate": False},
     },
 }
+
+# Máximo de proponentes que una entidad puede tener evaluándose a la vez en la
+# fila compartida (reparto justo entre entidades). Vacío = sin tope.
+_tope_entidad = os.environ.get("TOPE_PROPONENTES_POR_ENTIDAD")
+TOPE_PROPONENTES_POR_ENTIDAD = int(_tope_entidad) if _tope_entidad else None

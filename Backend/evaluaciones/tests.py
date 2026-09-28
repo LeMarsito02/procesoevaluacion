@@ -439,6 +439,56 @@ class EntidadNueva(BaseEvaluaciones):
         self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
 
 
+class FilaJustaPorEntidadTests(BaseEvaluaciones):
+    """La fila reparte justo entre entidades: una con muchos proponentes
+    encolados no bloquea a otra con pocos. reclamar() toma de la entidad con
+    menos proponentes en curso, no del más viejo de toda la fila."""
+
+    def setUp(self):
+        from cuentas.models import Rol, Usuario
+
+        jefe_otra = Usuario.objects.create_user(
+            "jefe@otraentidad.gov.co", CLAVE, nombre_completo="Jefe Otra", entidad=self.otra, rol=Rol.JEFE_AREA
+        )
+        jefe_otra.areas.set(self.otra.areas.all())
+        self.j1, self.e1 = self.crear(codigo="E1-CM-001")
+        self.j2, self.e2 = self.crear(email="jefe@otraentidad.gov.co", codigo="OTRA-CM-001")
+        self.j1.post(f"/api/evaluaciones/{self.e1['id']}/evaluar", {})
+        self.j2.post(f"/api/evaluaciones/{self.e2['id']}/evaluar", {})
+
+    def test_una_entidad_ocupada_cede_el_turno_a_otra(self):
+        # entidad1 ya tiene un proponente en curso; la otra, ninguno.
+        uno = Trabajo.objects.filter(evaluacion_id=self.e1["id"], estado=EstadoTrabajo.EN_FILA).first()
+        Trabajo.objects.filter(pk=uno.pk).update(estado=EstadoTrabajo.PROCESANDO)
+        # El siguiente trabajo debe ser de la OTRA entidad (0 en curso), no el
+        # segundo de entidad1, aunque su turno sea igual o más viejo.
+        t = servicios.reclamar("w")
+        self.assertEqual(str(t.entidad_id), str(self.otra.id))
+
+    def test_con_tope_por_entidad_una_no_acapara(self):
+        with override_settings(TOPE_PROPONENTES_POR_ENTIDAD=1):
+            # entidad1 llega a su tope (1 en curso): se salta hasta que baje.
+            uno = Trabajo.objects.filter(evaluacion_id=self.e1["id"], estado=EstadoTrabajo.EN_FILA).first()
+            Trabajo.objects.filter(pk=uno.pk).update(estado=EstadoTrabajo.PROCESANDO)
+            # Se salta entidad1 (en su tope) y toma de la otra.
+            t = servicios.reclamar("w")
+            self.assertEqual(str(t.entidad_id), str(self.otra.id))
+            # Ese trabajo queda en curso, así que la otra también llega al tope.
+            # Ahora las dos están al tope: aunque queden en fila, no se toma nada.
+            self.assertIsNone(servicios.reclamar("w2"))
+
+    def test_dentro_de_una_entidad_sigue_el_orden_de_turno(self):
+        # Sin nadie en curso y con las dos entidades a cero, se atienden ambas;
+        # el orden interno de cada entidad sigue siendo por turno (no se rompe).
+        vistos = []
+        while (t := servicios.reclamar("w")) is not None:
+            vistos.append(str(t.entidad_id))
+            Trabajo.objects.filter(pk=t.pk).update(estado=EstadoTrabajo.TERMINADO)
+        # Se atendieron los 4 (2 por entidad), y ninguna entidad quedó sin atender.
+        self.assertEqual(len(vistos), 4)
+        self.assertEqual(set(vistos), {str(self.entidad1.id), str(self.otra.id)})
+
+
 class FilaTests(BaseEvaluaciones):
     def setUp(self):
         self.jefe, self.ev = self.crear()
