@@ -1337,6 +1337,42 @@ def documento(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, ar
     return HttpResponse(contenido, content_type="application/pdf")
 
 
+class ArchivosProponenteOut(Schema):
+    # Todos los documentos de la oferta, para poder mirar la carpeta y buscar a
+    # mano el que el motor no encontró (llega con otro nombre, escaneado, etc.).
+    archivos: list[str]
+    # Certificados que el evaluador subió o que el programa consultó en línea.
+    aportados: list[str]
+
+
+@router.get("/{evaluacion_id}/proponentes/{proponente_id}/archivos", response=ArchivosProponenteOut)
+def archivos_del_proponente(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID) -> ArchivosProponenteOut:
+    """Lista todos los documentos de la oferta del proponente. Sirve para que,
+    cuando el motor no encuentra un documento (o lo encuentra con un nombre
+    distinto), la persona pueda abrir la carpeta, verla y buscarlo. Cada nombre
+    se abre con el endpoint /documento?archivo=…, incluidos los aportados."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    if evaluacion.proceso.documentos_eliminados_en:
+        raise HttpError(
+            410,
+            f"Los documentos de este proceso se eliminaron el {timezone.localtime(evaluacion.proceso.documentos_eliminados_en):%d/%m/%Y} "
+            "por la política de retención. Los resultados, decisiones e informes se conservan.",
+        )
+    from evaluaciones.models import DocumentoAportado
+
+    aportados = [
+        f"{PREFIJO_APORTADOS}Req {d.requisito} - {d.nombre_original}"
+        for d in DocumentoAportado.objects.filter(evaluacion=evaluacion, proponente=proponente)
+    ]
+    try:
+        zip_bytes = download_file_bytes(proponente.drive_file_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(502, "No se pudo descargar la oferta de Google Drive. Inténtelo de nuevo en unos minutos.") from exc
+    return ArchivosProponenteOut(archivos=sorted(extraer_pdfs(zip_bytes).keys()), aportados=sorted(aportados))
+
+
 _CLAVES_QUE_NO_EXPLICAN = {
     "contratos", "integrantes", "revisiones", "rups", "aporte_por_integrante", "lotes_presentados",
     "tarjetas", "estados", "no_aplica", "presentado",
