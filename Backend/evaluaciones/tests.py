@@ -439,6 +439,55 @@ class EntidadNueva(BaseEvaluaciones):
         self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
 
 
+class KitDeDemostracionTests(BaseEvaluaciones):
+    """Con un código «DEMO-…», el formulario de crear proceso pide el kit de este
+    equipo. Solo sirve lo que hay en la carpeta, por nombre exacto."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self._tmp = tempfile.TemporaryDirectory()
+        carpeta = Path(self._tmp.name)
+        (carpeta / "ofertas").mkdir()
+        (carpeta / "pliego.pdf").write_bytes(b"%PDF-1.4 pliego")
+        (carpeta / "ofertas" / "p1 ALFA SAS.zip").write_bytes(b"zip alfa")
+        (carpeta / "demo.json").write_text('{"fecha_cierre": "2026-07-24"}')
+        (carpeta.parent / "secreto.txt").write_text("no")
+        self.carpeta = carpeta
+        self.c = Cliente()
+        self.c.entrar("jefe@entidad.gov.co")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_el_kit_dice_que_hay(self):
+        from django.test import override_settings
+
+        with override_settings(DEMO_KIT_DIR=str(self.carpeta)):
+            r = self.c.get("/api/procesos/demo-kit").json()
+        self.assertEqual(r, {"disponible": True, "fecha_cierre": "2026-07-24", "ofertas": ["p1 ALFA SAS.zip"]})
+
+    def test_sin_carpeta_no_hay_kit(self):
+        from django.test import override_settings
+
+        with override_settings(DEMO_KIT_DIR=str(self.carpeta / "no-existe")):
+            self.assertEqual(self.c.get("/api/procesos/demo-kit").json(), {"disponible": False})
+
+    def test_solo_se_sirve_lo_del_kit(self):
+        from urllib.parse import quote
+
+        from django.test import override_settings
+
+        with override_settings(DEMO_KIT_DIR=str(self.carpeta)):
+            ok = self.c.get(f"/api/procesos/demo-kit/archivo?nombre={quote('p1 ALFA SAS.zip')}")
+            self.assertEqual(ok.status_code, 200)
+            self.assertEqual(b"".join(ok.streaming_content), b"zip alfa")
+            for intento in ["../secreto.txt", "../../secreto.txt", "demo.json", "ofertas/p1 ALFA SAS.zip"]:
+                r = self.c.get(f"/api/procesos/demo-kit/archivo?nombre={quote(intento)}")
+                self.assertEqual(r.status_code, 404, intento)
+
+
 class PrecargaDeLaDemoTests(SimpleTestCase):
     """Los resultados precargados se calcularon en otro proceso: al restaurarlos
     tienen que quedar con la hoja del proponente actual, o la pantalla (que

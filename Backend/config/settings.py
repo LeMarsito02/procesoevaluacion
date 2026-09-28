@@ -266,3 +266,8 @@ LOGGING = {
 # fila compartida (reparto justo entre entidades). Vacío = sin tope.
 _tope_entidad = os.environ.get("TOPE_PROPONENTES_POR_ENTIDAD")
 TOPE_PROPONENTES_POR_ENTIDAD = int(_tope_entidad) if _tope_entidad else None
+
+# Kit de la demostración en vivo: Documento Base y ofertas que el formulario de
+# «Crear proceso» carga solo al escribir un código «DEMO-…». Solo existe en el
+# equipo donde se presenta; sin esta carpeta la función no aparece.
+DEMO_KIT_DIR = os.environ.get("DEMO_KIT_DIR", str(BASE_DIR.parent.parent / "DEMO_OFERTAS"))

@@ -1,4 +1,4 @@
-import { detalleError, pedir } from './http'
+import { detalleError, pedir, pedirJson } from './http'
 
 export interface Lote {
   numero: string
@@ -329,3 +329,22 @@ export async function analizarPliego(archivo: File, entidadId: string | null): P
   if (!res.ok) throw new Error(await extractErrorDetail(res))
   return res.json()
 }
+
+// --- Kit de demostración ---
+// En el equipo de la presentación, un código «DEMO-…» en «Crear proceso» llena el
+// formulario solo con el Documento Base, las ofertas y la fecha de cierre.
+export interface KitDemo {
+  disponible: boolean
+  fecha_cierre?: string | null
+  ofertas?: string[]
+}
+
+export const demoKit = () => pedirJson<KitDemo>('/api/procesos/demo-kit')
+
+export async function archivoDemoKit(nombre: string): Promise<File> {
+  const res = await pedir(`/api/procesos/demo-kit/archivo?nombre=${encodeURIComponent(nombre)}`)
+  if (!res.ok) throw new Error(await detalleError(res))
+  const tipo = nombre.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/zip'
+  return new File([await res.blob()], nombre, { type: tipo })
+}
+

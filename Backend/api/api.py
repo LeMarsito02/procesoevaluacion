@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import json
 from datetime import date
+from pathlib import Path
 from uuid import UUID
 
 from asgiref.sync import sync_to_async
 from django.conf import settings
-from django.http import HttpRequest
+from django.http import FileResponse, HttpRequest
 from ninja import File, Form, NinjaAPI, Router
 from ninja.errors import HttpError, Throttled
 from ninja.files import UploadedFile
@@ -71,6 +73,58 @@ def demasiadas_peticiones(request: HttpRequest, exc: Throttled):
 @api.get("/health", throttle=[])
 def health(request: HttpRequest) -> dict[str, str]:
     return {"status": "ok"}
+
+
+# --- Kit de demostración ---
+# En el equipo de la presentación hay una carpeta (settings.DEMO_KIT_DIR) con el
+# Documento Base, las ofertas y un demo.json con la fecha de cierre. Al escribir
+# un código «DEMO-…» en «Crear proceso», el formulario la pide aquí y se llena
+# solo. Sin esa carpeta no hay kit y el formulario funciona como siempre.
+_EXTENSIONES_OFERTA = (".zip", ".rar", ".7z")
+
+
+def _kit_demo() -> tuple[Path, dict] | None:
+    carpeta = Path(settings.DEMO_KIT_DIR)
+    if not (carpeta / "pliego.pdf").is_file() or not (carpeta / "ofertas").is_dir():
+        return None
+    try:
+        info = json.loads((carpeta / "demo.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        info = {}
+    return carpeta, info
+
+
+def _ofertas_del_kit(carpeta: Path) -> list[str]:
+    return sorted(p.name for p in (carpeta / "ofertas").iterdir() if p.is_file() and p.suffix.lower() in _EXTENSIONES_OFERTA)
+
+
+@procesos.get("/demo-kit")
+def demo_kit(request: HttpRequest) -> dict:
+    if not puede_crear_procesos(request.auth):
+        raise HttpError(403, "Su rol no permite crear procesos.")
+    kit = _kit_demo()
+    if kit is None:
+        return {"disponible": False}
+    carpeta, info = kit
+    return {"disponible": True, "fecha_cierre": info.get("fecha_cierre"), "ofertas": _ofertas_del_kit(carpeta)}
+
+
+@procesos.get("/demo-kit/archivo")
+def demo_kit_archivo(request: HttpRequest, nombre: str) -> FileResponse:
+    if not puede_crear_procesos(request.auth):
+        raise HttpError(403, "Su rol no permite crear procesos.")
+    kit = _kit_demo()
+    if kit is None:
+        raise HttpError(404, "No hay kit de demostración en este equipo.")
+    carpeta, _ = kit
+    # Solo lo que está en el kit, por nombre exacto: nada de rutas.
+    if nombre == "pliego.pdf":
+        ruta = carpeta / "pliego.pdf"
+    elif nombre in _ofertas_del_kit(carpeta):
+        ruta = carpeta / "ofertas" / nombre
+    else:
+        raise HttpError(404, "Ese archivo no está en el kit de demostración.")
+    return FileResponse(ruta.open("rb"), as_attachment=False, filename=ruta.name)
 
 
 # Cuánto se acepta en una sola carga de ofertas. Una oferta de obra pesa entre 20

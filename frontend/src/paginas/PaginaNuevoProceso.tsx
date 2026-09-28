@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { analizarDocumentoBase, analizarPliego, consultarPliego, type AnalisisPliego, type DecisionPliego, type Proponente } from '../api'
+import { analizarDocumentoBase, analizarPliego, archivoDemoKit, consultarPliego, demoKit, type AnalisisPliego, type DecisionPliego, type Proponente } from '../api'
 import PasoDatos from '../components/PasoDatos'
 import PasoNuevo from '../components/PasoNuevo'
 import PasoPliego from '../components/PasoPliego'
@@ -65,6 +65,36 @@ export default function PaginaNuevoProceso() {
       window.clearInterval(t)
     }
   }, [pliegoLeyendo, pliegoId, esSuper, pliegoEntidad])
+
+  // Demostración: con un código «DEMO-…» el formulario se llena solo con el kit
+  // de este equipo (Documento Base, ofertas y fecha de cierre). Donde no hay
+  // kit, la consulta dice que no está disponible y no cambia nada.
+  const [kitCargado, setKitCargado] = useState(false)
+  useEffect(() => {
+    if (kitCargado || !/^DEMO-/i.test(codigoProceso.trim()) || archivo || ofertas.length) return
+    let vivo = true
+    const t = window.setTimeout(async () => {
+      try {
+        const kit = await demoKit()
+        if (!vivo || !kit.disponible) return
+        const [pliegoKit, ...ofertasKit] = await Promise.all([
+          archivoDemoKit('pliego.pdf'),
+          ...(kit.ofertas ?? []).map((nombre) => archivoDemoKit(nombre)),
+        ])
+        if (!vivo) return
+        if (kit.fecha_cierre) setFechaCierre((actual) => actual || kit.fecha_cierre!)
+        setArchivo(pliegoKit)
+        setOfertas(ofertasKit)
+        setKitCargado(true)
+      } catch {
+        // Sin kit en este equipo: el formulario sigue como siempre.
+      }
+    }, 400)
+    return () => {
+      vivo = false
+      window.clearTimeout(t)
+    }
+  }, [codigoProceso, kitCargado, archivo, ofertas.length])
 
   async function analizar() {
     if (!archivo) return
