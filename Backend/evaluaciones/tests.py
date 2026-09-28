@@ -439,6 +439,38 @@ class EntidadNueva(BaseEvaluaciones):
         self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
 
 
+class PrecargaDeLaDemoTests(SimpleTestCase):
+    """Los resultados precargados se calcularon en otro proceso: al restaurarlos
+    tienen que quedar con la hoja del proponente actual, o la pantalla (que
+    agrupa por hoja) muestra «En espera» aunque estén guardados."""
+
+    def test_los_resultados_restaurados_toman_la_hoja_del_proponente_actual(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from evaluaciones import precarga
+        from motor.esquemas.proceso import Proponente as ProponenteMotor
+
+        original = ResultadoRequisito(hoja="P-10", numero_orden=10, nombre_proponente="Download", requisito=1, cumple=True)
+        actual = ProponenteMotor(numero_orden=1, hoja="P-01", nombre_proponente="CONSORCIO INTERVIAS COLOMBIA",
+                                 nombre_archivo="p1 CONSORCIO INTERVIAS COLOMBIA.zip", drive_file_id="x")
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(precarga, "DIR_PRECARGA", Path(tmp)), \
+                mock.patch.object(precarga, "_hash_oferta", return_value="abc"):
+            (Path(tmp) / "abc.juridica.json").write_text(json.dumps([original.model_dump(mode="json")]))
+            r = precarga.cargar(actual, "juridica")[0]
+        self.assertEqual((r.hoja, r.numero_orden, r.nombre_proponente), ("P-01", 1, "CONSORCIO INTERVIAS COLOMBIA"))
+        self.assertTrue(r.cumple)
+
+    def test_solo_los_procesos_demo_usan_precarga(self):
+        from evaluaciones import precarga
+
+        self.assertTrue(precarga.es_demo("DEMO-INTERVENTORIA-2026"))
+        self.assertFalse(precarga.es_demo("ICCU-CM-043-2026"))
+        self.assertFalse(precarga.es_demo(None))
+
+
 class FilaJustaPorEntidadTests(BaseEvaluaciones):
     """La fila reparte justo entre entidades: una con muchos proponentes
     encolados no bloquea a otra con pocos. reclamar() toma de la entidad con

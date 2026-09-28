@@ -62,7 +62,20 @@ def cargar(proponente: ProponenteMotor, tipo: str) -> list[ResultadoRequisito] |
         return None
     try:
         datos = json.loads(ruta.read_text(encoding="utf-8"))
-        return [ResultadoRequisito.model_validate(d) for d in datos]
+    except Exception:  # noqa: BLE001
+        log.exception("Precarga ilegible en %s: se evalúa normal", ruta)
+        return None
+    # Los resultados se calcularon en otro proceso: traen la hoja, el número y
+    # el nombre que el proponente tenía allá (P-10, P-100…). La pantalla agrupa
+    # por la hoja, así que sin esto la tabla buscaba P-01 y mostraba «En
+    # espera» aunque los resultados estuvieran guardados.
+    propios = {
+        "hoja": proponente.hoja,
+        "numero_orden": proponente.numero_orden,
+        "nombre_proponente": proponente.nombre_proponente,
+    }
+    try:
+        return [ResultadoRequisito.model_validate({**d, **propios}) for d in datos]
     except Exception:  # noqa: BLE001
         log.exception("Precarga ilegible en %s: se evalúa normal", ruta)
         return None
