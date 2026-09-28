@@ -4,6 +4,7 @@ import { useDialogo } from '../dialogo'
 import { claveRevision, ETIQUETA_ESTADO, esPendiente, estadoDe, resumenProponente, usaIA, type Estado, type Revisiones } from '../estado'
 import { GRUPOS, ORDEN_GRUPOS, ordenarArchivosPorRequisito, REQUISITOS } from '../requisitos'
 import { fuenteDe } from '../historico'
+import { archivosDelProponente } from '../evaluaciones'
 import Icono from './Icono'
 import DetalleFinanciero from './DetalleFinanciero'
 import DetalleTecnico from './DetalleTecnico'
@@ -74,6 +75,28 @@ export default function PanelProponente(p: Props) {
   // Antecedentes que el evaluador consulta en línea y sube (Contraloría, Procuraduría, Policía, RNMC, REDAM).
   const fuente = (numero: number) => fuenteDe(REQUISITOS.find((x) => x.numero === numero)?.pistas ?? [])
   const [archivoElegido, setArchivoElegido] = useState<Record<number, string>>({})
+  // La carpeta completa del proponente (todos los documentos de la oferta), que
+  // se pide una sola vez cuando la persona quiere buscar un documento a mano.
+  const [carpeta, setCarpeta] = useState<{ archivos: string[]; aportados: string[] } | null>(null)
+  const [cargandoCarpeta, setCargandoCarpeta] = useState(false)
+  const [errorCarpeta, setErrorCarpeta] = useState<string | null>(null)
+  const [verCarpeta, setVerCarpeta] = useState<Set<number>>(new Set())
+  async function abrirCarpeta(numero: number) {
+    setErrorCarpeta(null)
+    try {
+      let datos = carpeta
+      if (!datos) {
+        setCargandoCarpeta(true)
+        datos = await archivosDelProponente(p.evaluacionId, p.proponenteId)
+        setCarpeta(datos)
+      }
+      setVerCarpeta((prev) => new Set(prev).add(numero))
+    } catch (e) {
+      setErrorCarpeta(e instanceof Error ? e.message : 'No se pudo abrir la carpeta del proponente.')
+    } finally {
+      setCargandoCarpeta(false)
+    }
+  }
 
   useEffect(() => {
     function tecla(e: KeyboardEvent) {
@@ -185,9 +208,12 @@ export default function PanelProponente(p: Props) {
                 const abierto = abiertos.has(info.numero)
                 const decision = p.revisiones[claveRevision(r.hoja, r.requisito)]
                 const texto = r.revision_forzada ?? r.error ?? r.motivo
-                const archivos = r.archivo_evaluado
-                  ? [r.archivo_evaluado]
-                  : ordenarArchivosPorRequisito(info.numero, r.archivos_disponibles)
+                const verTodo = verCarpeta.has(info.numero) && carpeta
+                const archivos = verTodo
+                  ? [...carpeta!.archivos, ...carpeta!.aportados]
+                  : r.archivo_evaluado
+                    ? [r.archivo_evaluado]
+                    : ordenarArchivosPorRequisito(info.numero, r.archivos_disponibles)
                 const archivo = archivoElegido[info.numero] ?? (r.archivo_evaluado ?? '')
                 return (
                   <div key={info.numero} id={`req-${info.numero}`} className="req" data-destacado={p.requisitoDestacado === info.numero}>
@@ -253,6 +279,28 @@ export default function PanelProponente(p: Props) {
                             )}
                           </div>
                         )}
+                        {!verCarpeta.has(info.numero) && (
+                          <div className="acciones">
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              type="button"
+                              disabled={cargandoCarpeta}
+                              onClick={() => void abrirCarpeta(info.numero)}
+                            >
+                              {cargandoCarpeta ? <span className="spinner oscuro" /> : <Icono nombre="documento" tam={15} />}
+                              Buscar en la carpeta del proponente
+                            </button>
+                            {archivos.length === 0 && (
+                              <span className="small muted">El sistema no asoció ningún documento a este requisito.</span>
+                            )}
+                          </div>
+                        )}
+                        {verCarpeta.has(info.numero) && carpeta && (
+                          <span className="small muted">
+                            Viendo toda la carpeta: {carpeta.archivos.length + carpeta.aportados.length} documentos. Elija uno y ábralo.
+                          </span>
+                        )}
+                        {errorCarpeta && <span className="small" style={{ color: 'var(--bad, #c0392b)' }}>{errorCarpeta}</span>}
                         {archivos.length > 0 && (
                           <div className="acciones">
                             {archivos.length > 1 || !r.archivo_evaluado ? (

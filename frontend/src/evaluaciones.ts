@@ -189,6 +189,13 @@ export const descargarConsolidado = (id: string) => descargarBlob(`/api/evaluaci
 export const verDocumentoProponente = (id: string, proponenteId: string, archivo: string) =>
   descargarBlob(`/api/evaluaciones/${id}/proponentes/${proponenteId}/documento?archivo=${encodeURIComponent(archivo)}`).then((r) => r.blob)
 
+/** Todos los documentos de la oferta del proponente, para mirar la carpeta y
+ * buscar a mano el que el motor no encontró. */
+export const archivosDelProponente = (id: string, proponenteId: string) =>
+  pedirJson<{ archivos: string[]; aportados: string[] }>(
+    `/api/evaluaciones/${id}/proponentes/${proponenteId}/archivos`,
+  )
+
 export type { AnalisisResponse }
 
 // --- Muestra de control (expediente LEG-004, numerales 3 y 3.1) ---
