@@ -455,6 +455,12 @@ class FilaJustaPorEntidadTests(BaseEvaluaciones):
         self.j2, self.e2 = self.crear(email="jefe@otraentidad.gov.co", codigo="OTRA-CM-001")
         self.j1.post(f"/api/evaluaciones/{self.e1['id']}/evaluar", {})
         self.j2.post(f"/api/evaluaciones/{self.e2['id']}/evaluar", {})
+        # reclamar() lo corre el trabajador bajo contexto de sistema (ve todas
+        # las entidades); las peticiones anteriores dejaron el aislamiento fijado
+        # en una entidad, así que aquí se replica el contexto real del worker.
+        from cuentas.aislamiento import SISTEMA, fijar_entidad
+
+        fijar_entidad(SISTEMA)
 
     def test_una_entidad_ocupada_cede_el_turno_a_otra(self):
         # entidad1 ya tiene un proponente en curso; la otra, ninguno.
@@ -466,6 +472,7 @@ class FilaJustaPorEntidadTests(BaseEvaluaciones):
         self.assertEqual(str(t.entidad_id), str(self.otra.id))
 
     def test_con_tope_por_entidad_una_no_acapara(self):
+        from django.test import override_settings
         with override_settings(TOPE_PROPONENTES_POR_ENTIDAD=1):
             # entidad1 llega a su tope (1 en curso): se salta hasta que baje.
             uno = Trabajo.objects.filter(evaluacion_id=self.e1["id"], estado=EstadoTrabajo.EN_FILA).first()
