@@ -366,6 +366,22 @@ class ExperienciaTests(SimpleTestCase):
         self.assertIsNone(objeto_valido("MANTENIMIENTO RUTINARIO DE LA MALLA VIAL", lote2))
         self.assertFalse(objeto_valido("CONSTRUCCION DE UN COLEGIO", lote2))
 
+    def test_la_infraestructura_de_aeropuerto_no_es_experiencia_en_vias(self):
+        """Aprobación indebida de P-81 (LP-022): dos contratos de la AERONÁUTICA
+        CIVIL sobre la pista y las calles de rodaje de un aeropuerto se contaban
+        para un lote de vías, porque el vocabulario nombra "PISTA" y "CALLE".
+        El lado aire de un aeropuerto no es una vía."""
+        lote1, _ = _parametros().lotes
+        self.assertFalse(objeto_valido(
+            "ESTUDIOS, DISEÑOS Y MANTENIMIENTO DE LA PISTA, LA PLATAFORMA E INFRAESTRUCTURA "
+            "COMPLEMENTARIA EN EL AEROPUERTO JOSE CELESTINO MUTIS", lote1))
+        self.assertFalse(objeto_valido(
+            "MANTENIMIENTO DE LA PISTA, LA PLATAFORMA Y LAS CALLES DE RODAJE DEL AEROPUERTO DE IBAGUE", lote1))
+        # Una vía de acceso al aeropuerto SÍ es una vía: no se descarta.
+        self.assertIsNot(objeto_valido("MEJORAMIENTO DE LA VIA DE ACCESO AL AEROPUERTO EL DORADO", lote1), False)
+        # Una "pista" rural (camino) sigue siendo vía.
+        self.assertIsNot(objeto_valido("MEJORAMIENTO DE LA PISTA RURAL DE LA VEREDA LA ESPERANZA", lote1), False)
+
     def test_objeto_de_edificaciones_cuando_el_lote_no_es_de_vias(self):
         """En un proceso de edificaciones (bienes de interés cultural) un
         contrato de sedes, instalaciones o templos sí cuenta; antes se
