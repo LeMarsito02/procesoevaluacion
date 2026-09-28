@@ -315,6 +315,14 @@ def pide_interventoria(lote: LoteTecnico) -> bool:
     return False
 
 
+_AERONAUTICA_RE = re.compile(
+    r"CALLES?\s+DE\s+RODAJE"                                   # calle de rodaje: solo aeropuerto
+    r"|PISTA\s+DE\s+ATERRIZAJE"                                # pista de aterrizaje
+    r"|(?:AEROPUERTO|AERONAUTIC|AERODROMO)[^.]{0,120}?(?:PISTA|PLATAFORMA|RODAJE|ATERRIZAJE)"
+    r"|(?:PISTA|PLATAFORMA|RODAJE|ATERRIZAJE)[^.]{0,120}?(?:AEROPUERTO|AERONAUTIC|AERODROMO)"
+)
+
+
 def objeto_valido(objeto: str, lote: LoteTecnico) -> bool | None:
     """True si el objeto nombra una actividad de la experiencia general del
     lote y la clase de obra que pide el proceso; False si claramente es de
@@ -323,6 +331,14 @@ def objeto_valido(objeto: str, lote: LoteTecnico) -> bool | None:
     texto = normalizar(objeto)
     if not texto.strip() or objeto_ilegible(texto):
         return None
+    # La infraestructura aeroportuaria (pista, plataforma, calles de rodaje de
+    # un aeropuerto) no es experiencia en vías, aunque el vocabulario de vías
+    # nombre "PISTA" o "CALLE": era la aprobación indebida de P-81 en LP-022
+    # (dos contratos de la AERONÁUTICA CIVIL sobre la pista de un aeropuerto se
+    # contaban para un lote de vías). Se exige la señal aeroportuaria junto al
+    # elemento del lado aire para no descartar una vía de acceso al aeropuerto.
+    if _AERONAUTICA_RE.search(texto):
+        return False
     actividades = actividades_del_lote(lote)
     if pide_interventoria(lote):
         actividades = [a for a in actividades if _DE_INTERVENTORIA_RE.match(a)] or actividades
