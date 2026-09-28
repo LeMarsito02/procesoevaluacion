@@ -8,7 +8,8 @@ from datetime import timedelta
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import Count, F, Max, Q
+from django.conf import settings
+from django.db.models import Count, F, Max, Min, Q
 from django.utils import timezone
 
 from evaluaciones.models import (
@@ -519,14 +520,39 @@ def estado_fila(evaluacion_ids: list[UUID]) -> dict[UUID, EstadoFila]:
 
 
 def reclamar(trabajador_id: str) -> Trabajo | None:
-    """Toma el siguiente trabajo (sin bloquear a los demás trabajadores)."""
+    """Toma el siguiente trabajo, repartiendo justo entre entidades.
+
+    En vez del más viejo de toda la fila, atiende a la entidad con menos
+    proponentes en curso (desempatando por el turno más viejo), para que una
+    entidad con muchos encolados no bloquee a otra con pocos. El tope opcional
+    TOPE_PROPONENTES_POR_ENTIDAD evita que una sola acapare la máquina. No
+    bloquea a los demás trabajadores: si el trabajo de la entidad elegida ya lo
+    tomó otro (skip_locked), se pasa a la siguiente."""
+    tope = getattr(settings, "TOPE_PROPONENTES_POR_ENTIDAD", None)
     with transaction.atomic():
-        trabajo = (
-            Trabajo.objects.select_for_update(skip_locked=True)
-            .filter(estado=EstadoTrabajo.EN_FILA, entidad__activa=True)
-            .order_by("turno", "creado_en", "id")
-            .first()
+        en_curso = dict(
+            Trabajo.objects.filter(estado=EstadoTrabajo.PROCESANDO)
+            .values_list("entidad_id").annotate(n=Count("id"))
         )
+        candidatas = (
+            Trabajo.objects.filter(estado=EstadoTrabajo.EN_FILA, entidad__activa=True)
+            .values("entidad_id").annotate(turno_min=Min("turno"))
+        )
+        elegibles = sorted(
+            (en_curso.get(c["entidad_id"], 0), c["turno_min"], c["entidad_id"])
+            for c in candidatas
+            if tope is None or en_curso.get(c["entidad_id"], 0) < tope
+        )
+        trabajo = None
+        for _, _, entidad_id in elegibles:
+            trabajo = (
+                Trabajo.objects.select_for_update(skip_locked=True)
+                .filter(estado=EstadoTrabajo.EN_FILA, entidad_id=entidad_id)
+                .order_by("turno", "creado_en", "id")
+                .first()
+            )
+            if trabajo is not None:
+                break
         if trabajo is None:
             return None
         ahora = timezone.now()
