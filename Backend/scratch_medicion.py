@@ -17,8 +17,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
 import requests
+from dotenv import load_dotenv
 
 sys.path.insert(0, ".")
+# El .env se carga aquí, antes de leer cualquier variable: si se dejaba para el
+# import de scratch_comparar (más abajo), MEDICION_FECHA_CIERRE ya se había leído
+# con el default 2026-01-01 y las vigencias salían mal.
+load_dotenv(".env")
 from motor.integrations.drive import list_proponentes
 from motor.parsers.documento_base import build_proceso
 
