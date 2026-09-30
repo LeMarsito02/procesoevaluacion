@@ -1,13 +1,29 @@
 #!/bin/bash
 # Arranca el entorno de desarrollo de MiEvaluador: PostgreSQL (clúster de
-# usuario, puerto 5433), backend Django (8000) y frontend Vite (5173).
+# usuario, puerto 5433), backend Django (8000), trabajador de la fila y
+# frontend Vite (5173). Se puede correr las veces que haga falta: reinicia lo
+# que ya estaba corriendo y deja todo arriba.
+#
+#   Backend/scripts/iniciar_dev.sh
+#
+# Solo toca los procesos de ESTE proyecto (backend en el 8000, vite en el 5173
+# y el trabajador de su fila): en el equipo hay otros proyectos con el mismo
+# uvicorn y otro vite, y antes el script los mataba también.
 set -e
 BACKEND="$(cd "$(dirname "$0")/.." && pwd)"
 PGDATA="$HOME/.local/share/mievaluador/pgdata"
+mkdir -p "$BACKEND/.scratch"
+
+detener() {  # $1 = patrón que deben cumplir TODOS los argumentos buscados
+  for pid in $(ps -eo pid,args | awk -v pat="$1" '$0 ~ pat && !/awk/ {print $1}'); do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+}
 
 if ! pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then
   pg_ctl -D "$PGDATA" -o "-p 5433 -k /tmp -c listen_addresses=localhost" -l "$HOME/.local/share/mievaluador/postgres.log" start
 fi
+for _ in $(seq 1 20); do pg_isready -q -h 127.0.0.1 -p 5433 && break; sleep 1; done
 
 cd "$BACKEND"
 source venv/bin/activate
@@ -17,23 +33,35 @@ source venv/bin/activate
 EXPONER=$(grep -E "^EXPONER_EN_RED=" .env 2>/dev/null | tail -1 | cut -d= -f2)
 if [ "$EXPONER" = "1" ]; then HOST=0.0.0.0; else HOST=127.0.0.1; fi
 python manage.py migrate --noinput
-python manage.py preparar_desarrollo
-pkill -f "uvicorn config.asgi:application" 2>/dev/null || true
+python manage.py preparar_desarrollo   # exige DEBUG: en producción el script se detiene aquí
+
+# En desarrollo el superadministrador ve todas las entidades (en producción
+# necesita el permiso temporal de la entidad; settings lo ignora sin DEBUG).
+export SUPERADMIN_SIN_PERMISO="${SUPERADMIN_SIN_PERMISO:-1}"
+
+detener "uvicorn config.asgi:application.*--port 8000"
+detener "manage.py trabajar_fila"
+sleep 2
 nohup uvicorn config.asgi:application --host "$HOST" --port 8000 > .scratch/backend_dev.log 2>&1 &
 # Trabajador de la fila central (evalúa en segundo plano). Al detenerse con
 # SIGTERM devuelve a la fila lo que tenía a medias.
-pkill -TERM -f "manage.py trabajar_fila" 2>/dev/null || true
-sleep 2
-nohup python manage.py trabajar_fila --capacidad "${MAX_WORKERS:-2}" > .scratch/fila_dev.log 2>&1 &
+nohup python manage.py trabajar_fila --capacidad "${MAX_WORKERS:-2}" >> .scratch/fila_dev.log 2>&1 &
 
 cd "$BACKEND/../frontend"
-# Se reinicia siempre: si ya estaba corriendo podría estar escuchando en otra dirección.
-for pid in $(ps -eo pid,cmd | awk '/node .*vite/ && !/awk/ {print $1}'); do kill "$pid" 2>/dev/null; done
+detener "vite.*--port 5173"
 sleep 1
 nohup npm run dev -- --host "$HOST" --port 5173 > "$BACKEND/.scratch/frontend_dev.log" 2>&1 &
+
+# Esperar a que todo responda y decir cómo quedó.
+ok() { printf '  %-14s %s\n' "$1" "$2"; }
+for _ in $(seq 1 30); do curl -sf http://127.0.0.1:8000/api/health >/dev/null && break; sleep 1; done
+for _ in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:5173/ && break; sleep 1; done
+echo "MiEvaluador:"
+pg_isready -q -h 127.0.0.1 -p 5433 && ok "Base de datos" "arriba (5433)" || ok "Base de datos" "NO RESPONDE"
+curl -sf http://127.0.0.1:8000/api/health >/dev/null && ok "Backend" "arriba (8000)" || ok "Backend" "NO RESPONDE · mira Backend/.scratch/backend_dev.log"
+pgrep -f "manage.py trabajar_fila" >/dev/null && ok "Trabajador" "arriba" || ok "Trabajador" "NO ARRANCÓ · mira Backend/.scratch/fila_dev.log"
+curl -sf -o /dev/null http://127.0.0.1:5173/ && ok "Frontend" "arriba → http://localhost:5173" || ok "Frontend" "NO RESPONDE · mira Backend/.scratch/frontend_dev.log"
 if [ "$HOST" = "0.0.0.0" ]; then
   IP=$(ip -4 addr show scope global | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
-  echo "PostgreSQL :5433 · Fila: .scratch/fila_dev.log · App http://localhost:5173 · En la red: http://$IP:5173"
-else
-  echo "PostgreSQL :5433 · Fila: .scratch/fila_dev.log · API http://localhost:8000/api/docs · App http://localhost:5173"
+  ok "En la red" "http://$IP:5173"
 fi

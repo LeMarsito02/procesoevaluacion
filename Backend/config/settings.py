@@ -201,7 +201,9 @@ MUESTRA_VERIFICACIONES = max(10, int(os.environ.get("MUESTRA_VERIFICACIONES", "1
 # El superadministrador de LeMarTek solo ve los procesos de una entidad con un
 # permiso temporal que otorga el administrador de esa entidad, igual que el
 # soporte (expediente LEG-004, numeral 4.5). "1" lo desactiva (solo desarrollo).
-SUPERADMIN_SIN_PERMISO = os.environ.get("SUPERADMIN_SIN_PERMISO", "0") == "1"
+# Solo en desarrollo: en un servidor sin DEBUG el superadministrador nunca ve
+# datos de una entidad sin su permiso temporal, aunque la variable esté puesta.
+SUPERADMIN_SIN_PERMISO = DEBUG and os.environ.get("SUPERADMIN_SIN_PERMISO", "0") == "1"
 
 # Días que se conservan los documentos de los proponentes tras aprobar el proceso.
 RETENCION_DIAS = int(os.environ.get("RETENCION_DIAS", "30"))
