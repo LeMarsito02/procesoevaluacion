@@ -439,6 +439,49 @@ class EntidadNueva(BaseEvaluaciones):
         self.assertEqual(c.get("/api/evaluaciones/procesos").json(), [])
 
 
+class AntiInvencionNumericaTests(SimpleTestCase):
+    """aparece_en_texto(numerico=True) es la verificación de que la IA no
+    inventó un número. Buscaba los dígitos dentro de todos los dígitos del
+    documento pegados, así que "$1.500.000.000,00" validaba 10x y 100x, y
+    cualquier fecha cuyos dígitos aparecieran seguidos en algún lado."""
+
+    POLIZA = "VALOR ASEGURADO $1.500.000.000,00 VIGENCIA HASTA 29/11/2026 TOMADOR NIT 900.123.456-7"
+
+    def test_rechaza_un_valor_diez_o_cien_veces_mayor(self):
+        from motor.llm.cliente import aparece_en_texto
+
+        for invento in ["15.000.000.000", "$150.000.000.000", "15000000000", "150000000"]:
+            self.assertFalse(aparece_en_texto(invento, self.POLIZA, numerico=True), invento)
+
+    def test_rechaza_una_fecha_imposible_o_que_no_esta(self):
+        from motor.llm.cliente import aparece_en_texto
+
+        self.assertFalse(aparece_en_texto("26/30/1120", "PLAZO 26301120 DIAS " + self.POLIZA, numerico=True))
+        self.assertFalse(aparece_en_texto("29/11/2027", self.POLIZA, numerico=True))
+
+    def test_acepta_el_valor_escrito_de_cualquier_forma(self):
+        from motor.llm.cliente import aparece_en_texto
+
+        for valor in ["1.500.000.000", "$1.500.000.000,00", "1500000000", "1500000000.00", "1,500,000,000"]:
+            self.assertTrue(aparece_en_texto(valor, self.POLIZA, numerico=True), valor)
+
+    def test_acepta_la_fecha_con_otros_separadores(self):
+        from motor.llm.cliente import aparece_en_texto
+
+        for texto in ["HASTA 29/11/2026", "HASTA 29-11-2026", "HASTA 29 11 2026", "HASTA 2026/11/29"]:
+            self.assertTrue(aparece_en_texto("29/11/2026", texto, numerico=True), texto)
+
+    def test_cedulas_y_nit(self):
+        from motor.llm.cliente import aparece_en_texto
+
+        self.assertTrue(aparece_en_texto("1121331690", "C.C. No. 1.121.331.690 de Valledupar", numerico=True))
+        self.assertTrue(aparece_en_texto("900123456", self.POLIZA, numerico=True))
+        self.assertTrue(aparece_en_texto("900123456-7", self.POLIZA, numerico=True))
+        self.assertTrue(aparece_en_texto("9001234567", self.POLIZA, numerico=True))
+        # Una cédula que es solo un pedazo de otro número no está escrita.
+        self.assertFalse(aparece_en_texto("1121331", "C.C. 1.121.331.690", numerico=True))
+
+
 class KitDeDemostracionTests(BaseEvaluaciones):
     """Con un código «DEMO-…», el formulario de crear proceso pide el kit de este
     equipo. Solo sirve lo que hay en la carpeta, por nombre exacto."""

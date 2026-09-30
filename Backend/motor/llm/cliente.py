@@ -154,17 +154,68 @@ def solo_digitos(texto: str) -> str:
     return re.sub(r"\D", "", texto or "")
 
 
+# Un número tal como se escribe en un documento: con separadores de miles
+# (punto o coma, en grupos de tres) o seguido, y opcionalmente una parte decimal
+# de uno o dos dígitos. No empieza a mitad de otro número.
+_NUMERO_RE = re.compile(r"(?<!\d)(?<!\d[.,])(\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,](\d{1,2}))?(?!\d)")
+_FECHA_VALOR_RE = re.compile(r"\s*(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})\s*")
+
+
+def _numero_escrito(valor: str, texto: str) -> bool:
+    """El número `valor` está escrito tal cual en el texto, como un número
+    completo: misma parte entera y mismos decimales, con los separadores que
+    sea. Antes se buscaban sus dígitos dentro de TODOS los dígitos del documento
+    pegados, y así "$1.500.000.000,00" validaba 15.000.000.000 (diez veces más)
+    o una fecha imposible: justo lo que esta verificación debe atajar."""
+    m = _NUMERO_RE.search(valor)
+    if m is None:
+        return False
+    entero, decimales = solo_digitos(m.group(1)), (m.group(2) or "").ljust(2, "0")
+    if len(entero) < 4:
+        return False
+    for n in _NUMERO_RE.finditer(texto):
+        entero_texto = solo_digitos(n.group(1))
+        if entero_texto == entero and (n.group(2) or "").ljust(2, "0") == decimales:
+            return True
+        # NIT con el dígito de verificación pegado en el valor ("9001234567")
+        # y separado en el documento ("900.123.456-7").
+        dv = re.match(r"\s*-\s*(\d)(?!\d)", texto[n.end():])
+        if dv and entero == entero_texto + dv.group(1):
+            return True
+    return False
+
+
+def _fecha_escrita(dia: str, mes: str, anio: str, texto: str) -> bool:
+    """La fecha existe y está en el texto como fecha: "29/11/2026",
+    "29-11-2026", "29 11 2026" o "2026/11/29". Con separadores: una cifra
+    pegada ("26301120") no es una fecha."""
+    from datetime import date
+
+    d, m, a = int(dia), int(mes), anio
+    try:
+        date(int(a), m, d)
+    except ValueError:
+        return False
+    sep = r"(?:\s*[/\-.]\s*|\s+)"
+    return bool(
+        re.search(rf"(?<!\d)0?{d}{sep}0?{m}{sep}{a}(?!\d)", texto)
+        or re.search(rf"(?<!\d){a}{sep}0?{m}{sep}0?{d}(?!\d)", texto)
+    )
+
+
 def aparece_en_texto(valor: str | None, texto: str, *, numerico: bool = False) -> bool:
     """Verificación anti-invención: el valor extraído por el modelo debe
-    estar en el documento. Para números (cédulas, valores, fechas) se
-    comparan solo los dígitos, tolerando separadores distintos; para texto,
-    todas sus palabras deben aparecer (el modelo puede reordenar un nombre
-    "APELLIDOS NOMBRES" pero no inventar palabras)."""
+    estar en el documento. Para números (cédulas, NIT, valores, fechas) tiene
+    que estar escrito como un número completo, tolerando separadores
+    distintos; para texto, todas sus palabras deben aparecer (el modelo puede
+    reordenar un nombre "APELLIDOS NOMBRES" pero no inventar palabras)."""
     if not valor:
         return False
     if numerico:
-        digitos = solo_digitos(valor)
-        return len(digitos) >= 4 and digitos in solo_digitos(texto)
+        fecha = _FECHA_VALOR_RE.fullmatch(valor)
+        if fecha:
+            return _fecha_escrita(*fecha.groups(), texto)
+        return _numero_escrito(valor, texto)
     texto_norm = _normalizar(texto)
     palabras = [p for p in re.findall(r"[A-Z0-9Ñ]+", _normalizar(valor)) if len(p) > 1]
     return bool(palabras) and all(re.search(rf"\b{re.escape(p)}\b", texto_norm) for p in palabras)
