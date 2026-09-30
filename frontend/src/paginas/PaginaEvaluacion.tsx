@@ -134,6 +134,10 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const [errorInforme, setErrorInforme] = useState<string | null>(null)
   const [guardandoDatos, setGuardandoDatos] = useState(false)
   const [ocupadoFila, setOcupadoFila] = useState(false)
+  // Al evaluar desde los datos del proceso, las otras áreas pueden ir a la
+  // fila a la vez: no hay que entrar a cada una a darle «Evaluar».
+  const otras = inicial.otras_por_evaluar ?? []
+  const [conOtras, setConOtras] = useState(true)
 
   const datos = useDatosProceso()
   const [datosCargados, setDatosCargados] = useState(false)
@@ -245,6 +249,16 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     try {
       await guardarDocumentoBase(id, datos.construir(codigo, fechaCierre))
       await evaluarPendientes()
+      if (conOtras && otras.length) {
+        const enFila = await Promise.allSettled(otras.map((o) => encolarEvaluacion(o.id)))
+        const bien = otras.filter((_, i) => enFila[i].status === 'fulfilled').map((o) => o.tipo_nombre)
+        const mal = otras.filter((_, i) => enFila[i].status === 'rejected').map((o) => o.tipo_nombre)
+        setAviso(
+          mal.length
+            ? `No se pudo poner en la fila: ${mal.join(', ')}. Ábrala desde la lista y pulse «Evaluar».`
+            : `También quedaron evaluándose: ${bien.join(' y ')}.`,
+        )
+      }
     } catch (err) {
       setAviso(mensajeDe(err, 'No se pudieron guardar los datos del proceso.'))
     } finally {
@@ -433,6 +447,12 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           antesDeAcciones={
             <>
               <PliegoProceso evaluacionId={id} pliego={inicial.pliego} />
+              {!soloLectura && otras.length > 0 && (
+                <label className="check-linea" style={{ marginTop: 16 }}>
+                  <input type="checkbox" checked={conOtras} onChange={(e) => setConOtras(e.target.checked)} />
+                  Evaluar también {otras.map((o) => o.tipo_nombre.toLowerCase()).join(' y ')} con estos mismos datos.
+                </label>
+              )}
               {resumen.tipo === 'financiera' && <ParametrosFinancieros evaluacionId={id} soloLectura={soloLectura} />}
               {resumen.tipo !== 'juridica' && (
                 <>

@@ -95,6 +95,8 @@ export interface EvaluacionDetalle {
   revisiones: RevisionGuardada[]
   catalogo: InfoRequisito[]
   pliego: PliegoProceso | null
+  /** Otras áreas del proceso que este usuario puede poner a evaluar ahora. */
+  otras_por_evaluar: { id: string; tipo_nombre: string }[]
 }
 
 /** Decisión tomada al crear el proceso sobre un hallazgo del pliego. */

@@ -75,6 +75,8 @@ export default function PanelProponente(p: Props) {
   // Antecedentes que el evaluador consulta en línea y sube (Contraloría, Procuraduría, Policía, RNMC, REDAM).
   const fuente = (numero: number) => fuenteDe(REQUISITOS.find((x) => x.numero === numero)?.pistas ?? [])
   const [archivoElegido, setArchivoElegido] = useState<Record<number, string>>({})
+  // Matrícula para consultar el COPNIA cuando no se leyó de la oferta (o se leyó mal).
+  const [matriculaEscrita, setMatriculaEscrita] = useState<Record<number, string>>({})
   // La carpeta completa del proponente (todos los documentos de la oferta), que
   // se pide una sola vez cuando la persona quiere buscar un documento a mano.
   const [carpeta, setCarpeta] = useState<{ archivos: string[]; aportados: string[] } | null>(null)
@@ -247,23 +249,36 @@ export default function PanelProponente(p: Props) {
                             requisito={info.numero}
                           />
                         )}
-                        {p.onConsultarCopnia && r.matricula_profesional && fuente(info.numero)?.clave === 'copnia' && esPendiente(estado) && (
-                          <div className="acciones">
-                            <span className="small muted">
-                              El COPNIA entrega este certificado en línea con la matrícula {r.matricula_profesional}.
-                            </span>
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              type="button"
-                              disabled={p.consultandoCopnia !== null}
-                              onClick={() => void p.onConsultarCopnia?.(info.numero, r.matricula_profesional!)}
-                            >
-                              {p.consultandoCopnia === info.numero ? <span className="spinner oscuro" /> : <Icono nombre="descargar" tam={15} />}
-                              Consultar el COPNIA y adjuntarlo
-                            </button>
-                          </div>
-                        )}
-                        {fuente(info.numero) && fuente(info.numero)?.clave !== 'copnia' && esPendiente(estado) && (
+                        {p.onConsultarCopnia && fuente(info.numero)?.clave === 'copnia' && esPendiente(estado) && (() => {
+                          const matricula = (matriculaEscrita[info.numero] ?? r.matricula_profesional ?? '').trim()
+                          return (
+                            <div className="acciones">
+                              <span className="small muted">
+                                {r.matricula_profesional
+                                  ? 'El COPNIA entrega este certificado en línea con la matrícula leída de la oferta:'
+                                  : 'No se leyó la matrícula profesional de la oferta. Escríbala y el certificado se consulta en línea:'}
+                              </span>
+                              <input
+                                className="input"
+                                style={{ maxWidth: 200, height: 34 }}
+                                aria-label="Matrícula profesional"
+                                placeholder="Matrícula profesional"
+                                value={matriculaEscrita[info.numero] ?? r.matricula_profesional ?? ''}
+                                onChange={(e) => setMatriculaEscrita((prev) => ({ ...prev, [info.numero]: e.target.value }))}
+                              />
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                type="button"
+                                disabled={p.consultandoCopnia !== null || matricula.length < 4}
+                                onClick={() => void p.onConsultarCopnia?.(info.numero, matricula)}
+                              >
+                                {p.consultandoCopnia === info.numero ? <span className="spinner oscuro" /> : <Icono nombre="descargar" tam={15} />}
+                                Consultar el COPNIA y adjuntarlo
+                              </button>
+                            </div>
+                          )
+                        })()}
+                        {fuente(info.numero) && esPendiente(estado) && (
                           <div className="acciones">
                             <span className="small muted">
                               Si ya lo consultó en{' '}

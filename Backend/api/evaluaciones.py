@@ -200,6 +200,10 @@ class EvaluacionDetalleOut(Schema):
     # Pliego del proceso: {nombre_archivo, paginas, documento_tipo, ajustes,
     # aclaraciones} o None si el proceso se creó sin analizarlo.
     pliego: dict | None = None
+    # Las otras áreas del mismo proceso que este usuario puede poner a evaluar
+    # ahora (les faltan proponentes): [{id, tipo_nombre}]. Para evaluar las
+    # tres a la vez desde los datos del proceso.
+    otras_por_evaluar: list[dict] = []
 
 
 class AsignarIn(Schema):
@@ -711,7 +715,22 @@ def detalle(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionDetalleOut:
             for r in revisiones
         ],
         pliego=_pliego_out(proceso),
+        otras_por_evaluar=_otras_por_evaluar(usuario, evaluacion, len(proponentes)),
     )
+
+
+def _otras_por_evaluar(usuario: Usuario, evaluacion: Evaluacion, n_proponentes: int) -> list[dict]:
+    otras = (
+        Evaluacion.objects.filter(proceso_id=evaluacion.proceso_id)
+        .exclude(id=evaluacion.id)
+        .exclude(estado__in=[EstadoEvaluacion.APROBADA, EstadoEvaluacion.EVALUANDO])
+        .annotate(evaluados=Count("resultados__proponente", distinct=True))
+    )
+    return [
+        {"id": str(e.id), "tipo_nombre": TIPOS[e.tipo].nombre}
+        for e in sorted(otras, key=lambda e: list(TIPOS).index(e.tipo) if e.tipo in TIPOS else 99)
+        if TIPOS[e.tipo].disponible and puede_trabajar(usuario, e) and e.evaluados < n_proponentes
+    ]
 
 
 def _pliego_out(proceso: Proceso) -> dict | None:

@@ -279,6 +279,27 @@ class CrearYAsignarTests(BaseEvaluaciones):
         tipos = {t["clave"]: t["disponible"] for t in c.get("/api/evaluaciones/tipos").json()}
         self.assertEqual(tipos, {"juridica": True, "tecnica": True, "financiera": True})
 
+    def test_otras_areas_por_evaluar_segun_quien_mira(self):
+        c = Cliente()
+        c.entrar("abogado@entidad.gov.co")
+        r = c.post(
+            "/api/evaluaciones/procesos",
+            {"documento_base": DOCUMENTO_BASE, "proponentes": PROPONENTES, "tipos": ["juridica", "tecnica", "financiera"]},
+        )
+        self.assertEqual(r.status_code, 201, r.content)
+        por_tipo = {e["tipo"]: e["id"] for e in r.json()}
+        # Quien creó el proceso es responsable de las tres: desde cualquiera ve las otras dos.
+        otras = c.get(f"/api/evaluaciones/{por_tipo['juridica']}").json()["otras_por_evaluar"]
+        self.assertEqual([o["id"] for o in otras], [por_tipo["tecnica"], por_tipo["financiera"]])
+        # Otro abogado sin responsabilidad en el proceso no las ve.
+        a2 = Cliente()
+        a2.entrar("abogado2@entidad.gov.co")
+        self.assertEqual(a2.get(f"/api/evaluaciones/{por_tipo['juridica']}").json()["otras_por_evaluar"], [])
+        # Evaluada la técnica, ya no aparece.
+        self.evaluar_todo(c, por_tipo["tecnica"])
+        otras = c.get(f"/api/evaluaciones/{por_tipo['juridica']}").json()["otras_por_evaluar"]
+        self.assertEqual([o["id"] for o in otras], [por_tipo["financiera"]])
+
     def test_tipo_invalido(self):
         c = Cliente()
         c.entrar("jefe@entidad.gov.co")
