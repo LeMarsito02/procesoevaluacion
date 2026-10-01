@@ -277,8 +277,11 @@ def ver_pliego_analizado(request: HttpRequest, analisis_id: UUID, entidad_id: UU
     analisis = AnalisisPliego.objects.filter(pk=analisis_id, entidad_id=entidad).first()
     if analisis is None or not analisis.archivo:
         raise HttpError(404, "No se encontró el pliego.")
-    return FileResponse(analisis.archivo.open("rb"), content_type="application/pdf",
-                        filename=analisis.nombre_archivo)
+    # El visor del pliego lo incrusta en la página: con el DENY por defecto de
+    # Django el navegador mostraba «localhost refused to connect».
+    respuesta = FileResponse(analisis.archivo.open("rb"), content_type="application/pdf", filename=analisis.nombre_archivo)
+    respuesta["X-Frame-Options"] = "SAMEORIGIN"
+    return respuesta
 
 
 @procesos.get("/pliego/{analisis_id}")

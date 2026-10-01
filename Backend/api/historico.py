@@ -643,7 +643,11 @@ def ver_pliego(request: HttpRequest, evaluacion_id: UUID) -> FileResponse:
         raise HttpError(404, "Este proceso se creó sin analizar el pliego.")
     # Las decisiones que salen del pliego (N.A.) exigen haberlo abierto.
     auditar(request, "pliego.visto", objeto=evaluacion)
-    return FileResponse(analisis.archivo.open("rb"), content_type="application/pdf", filename=analisis.nombre_archivo)
+    # El visor del pliego lo incrusta en la página: con el DENY por defecto de
+    # Django el navegador mostraba «localhost refused to connect».
+    respuesta = FileResponse(analisis.archivo.open("rb"), content_type="application/pdf", filename=analisis.nombre_archivo)
+    respuesta["X-Frame-Options"] = "SAMEORIGIN"
+    return respuesta
 
 
 @router.get("/{evaluacion_id}/aportados/{documento_id}/archivo")

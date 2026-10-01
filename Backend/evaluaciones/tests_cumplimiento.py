@@ -138,6 +138,24 @@ class MuestraTests(BaseFlujo):
         self.assertEqual(r.status_code, 200, r.content)
         self.assertTrue(ItemMuestra.objects.get(pk=item["id"]).soporte_visto)
 
+    def test_el_pliego_se_puede_ver_dentro_de_la_plataforma(self):
+        from django.core.files.base import ContentFile
+
+        from evaluaciones.models import AnalisisPliego, Proceso
+
+        self.preparar(MUCHOS[:1])
+        proceso = Proceso.objects.get(evaluaciones__id=self.eid)
+        analisis = AnalisisPliego(entidad_id=proceso.entidad_id, sha256="1" * 64, nombre_archivo="pliego.pdf", paginas=1, extraccion={}, version=1)
+        analisis.archivo.save("pliego.pdf", ContentFile(b"%PDF-1.4"), save=False)
+        analisis.save()
+        proceso.analisis_pliego = analisis
+        proceso.save()
+        r = self.abogado.get(f"/api/evaluaciones/{self.eid}/pliego")
+        self.assertEqual(r.status_code, 200)
+        # El visor lo incrusta: DENY hacía que el navegador dijera «refused to connect».
+        self.assertEqual(r.headers["X-Frame-Options"], "SAMEORIGIN")
+        self.assertTrue(EventoAuditoria.objects.filter(accion="pliego.visto", objeto_id=str(self.eid)).exists())
+
     def test_un_error_amplia_la_revision_a_todo_el_requisito(self):
         self.preparar()
         m = self.abogado.post(f"/api/evaluaciones/{self.eid}/muestra").json()["muestra"]
