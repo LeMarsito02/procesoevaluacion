@@ -99,6 +99,7 @@ function Stepper({ lista, paso, pasosDisponibles, onIr }: PropsPasos) {
               disabled={!clicable}
               onClick={() => clicable && onIr(p.id)}
               aria-current={estado === 'active' ? 'step' : undefined}
+              title={p.nombre}
             >
               <span className="step-dot">{estado === 'done' ? <Icono nombre="check" tam={13} grosor={3} /> : i + 1}</span>
               <span className="step-nombre">{p.nombre}</span>

@@ -574,16 +574,21 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
   .decision-botones .btn { flex: 1 1 100%; justify-content: center; }
 }
 
-/* Cuando los tres pasos con nombre no caben junto al logo: solo el número,
-   y el nombre únicamente del paso actual (antes se montaban sobre el logo). */
+/* Cuando los pasos con nombre no caben junto al logo y al usuario: solo el
+   número, y el nombre únicamente del paso actual (antes se montaban sobre el
+   logo o quedaban debajo del usuario). Con cuatro pasos hacen falta ~1.350 px. */
 .stepper { min-width: 0; }
-@media (max-width: 1100px) {
+.menu-usuario { flex: none; }
+.topbar-inner[data-con-pasos='true'] { max-width: 1640px; }
+@media (max-width: 1440px) {
   .stepper { gap: 2px; }
   .step { padding: 4px; }
   .step:not([data-state='active']) .step-nombre { display: none; }
   .step[data-state='active'] { padding-right: 10px; min-width: 0; }
   .step[data-state='active'] .step-nombre { overflow: hidden; text-overflow: ellipsis; max-width: 30vw; }
   .step-sep { width: 8px; }
+}
+@media (max-width: 1100px) {
   .volver-topbar .volver-texto { display: none; }
 }
 @media (max-width: 760px) {
