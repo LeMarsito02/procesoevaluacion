@@ -20,7 +20,14 @@ detener() {  # $1 = patrón que deben cumplir TODOS los argumentos buscados
   done
 }
 
-if ! pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then
+# Se pregunta si la base RESPONDE, no si «pg_ctl status» la cree viva: tras un
+# reinicio queda el postmaster.pid viejo y, si otro proceso heredó ese PID,
+# pg_ctl dice «running» sin que nada escuche en el 5433.
+if ! pg_isready -q -h 127.0.0.1 -p 5433; then
+  if ! pgrep -f -- "postgres.*-D $PGDATA" >/dev/null && [ -f "$PGDATA/postmaster.pid" ]; then
+    echo "Archivo de bloqueo viejo de PostgreSQL (reinicio del equipo): se aparta."
+    mv "$PGDATA/postmaster.pid" "$PGDATA/postmaster.pid.viejo"
+  fi
   pg_ctl -D "$PGDATA" -o "-p 5433 -k /tmp -c listen_addresses=localhost" -l "$HOME/.local/share/mievaluador/postgres.log" start
 fi
 for _ in $(seq 1 20); do pg_isready -q -h 127.0.0.1 -p 5433 && break; sleep 1; done
