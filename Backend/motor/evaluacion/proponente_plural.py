@@ -303,11 +303,18 @@ def evaluar_requisito4(
             archivo_formato2=None,
         )
     if tipo_proponente not in ("consorcio", "union_temporal"):
+        # El tipo se lee en la carta de presentación: ese es el soporte del
+        # N.A. Sin él, quien revisa (y la muestra de control) veía «sin
+        # documento» en una decisión que sí sale de la oferta.
+        from motor.evaluacion.formato1 import encontrar_formato1
+
+        carta = encontrar_formato1(pdfs)
         return ResultadoEvaluacionPlural(
             cumple=True,
-            motivo="N.A. — persona natural o jurídica individual",
+            motivo=("N.A. — según la carta de presentación, el proponente es persona natural o jurídica individual"
+                    if carta else "N.A. — persona natural o jurídica individual (según su nombre: no se encontró la carta)"),
             datos=None,
-            archivo_formato2=None,
+            archivo_formato2=carta[0] if carta else None,
         )
 
     encontrado = datos_formato2(pdfs, codigo_proceso)

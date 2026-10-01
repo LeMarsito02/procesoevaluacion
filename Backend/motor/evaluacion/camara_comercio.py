@@ -1019,8 +1019,11 @@ def evaluar_requisito18(pdfs: dict[str, bytes], tipo_proponente: str | None) -> 
             archivo=encontrados[0],
         )
     if not faltan and not certificaciones:
+        # El soporte del N.A. es el certificado donde se leyó el tipo de sociedad.
         return ResultadoEvaluacionCamara(
-            cumple=True, motivo="N.A. — el proponente no es una Sociedad Anónima (S.A.)", archivo=None
+            cumple=True,
+            motivo="N.A. — según el Certificado de Existencia, el proponente no es una Sociedad Anónima (S.A.)",
+            archivo=encontrados[0],
         )
     if not faltan:
         return ResultadoEvaluacionCamara(cumple=True, motivo=None, archivo=certificaciones[0])

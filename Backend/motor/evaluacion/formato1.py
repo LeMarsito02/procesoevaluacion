@@ -68,6 +68,12 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
 VERSION_LOGICA = 63
+# Lo mismo, para un solo requisito: corregir uno no invalida la caché de todos.
+# Solo entra en la clave si está aquí (así las claves de los demás no cambian).
+VERSION_REQUISITO = {
+    4: 1,  # el N.A. de un proponente individual trae la carta como soporte
+    18: 1,  # el N.A. de una sociedad que no es S.A. trae su certificado como soporte
+}
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -82,6 +88,8 @@ def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str
         # serviría el resultado anterior, sin ese documento.
         "aportados": sorted(nombre for nombre, _ in (proponente.documentos_aportados or [])),
     }
+    if requisito in VERSION_REQUISITO:
+        payload["version_requisito"] = VERSION_REQUISITO[requisito]
     # Datos que cambian el resultado y que el usuario puede corregir antes de
     # volver a evaluar: sin ellos se servirían resultados viejos desde la caché.
     g = proceso.garantia_seriedad

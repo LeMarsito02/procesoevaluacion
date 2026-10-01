@@ -1650,6 +1650,20 @@ class TipoProponenteDesconocidoTests(TestCase):
         self.assertTrue(resultado.cumple)
         self.assertIn("N.A.", resultado.motivo)
 
+    def test_el_no_aplica_trae_la_carta_como_soporte(self):
+        from unittest import mock
+
+        from motor.evaluacion.proponente_plural import evaluar_requisito4
+
+        # El tipo de proponente se lee en la carta: es el documento que debe
+        # abrir quien revisa (antes salía «sin documento»).
+        pdfs = {"01 CARTA.pdf": b"%PDF-", "02 RUT.pdf": b"%PDF-"}
+        with mock.patch("motor.evaluacion.formato1.encontrar_formato1", return_value=("01 CARTA.pdf", b"%PDF-")):
+            resultado = evaluar_requisito4(pdfs, "persona_juridica")
+        self.assertTrue(resultado.cumple)
+        self.assertEqual(resultado.archivo_formato2, "01 CARTA.pdf")
+        self.assertIn("carta de presentación", resultado.motivo)
+
 
 
 class AuditoriaNoAplicaTests(TestCase):
