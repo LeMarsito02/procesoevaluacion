@@ -211,6 +211,8 @@ export interface ItemMuestra {
   resultado: 'conforme' | 'no_conforme' | null
   nota: string
   soporte_visto: boolean
+  /** La decisión sale del pliego (N.A.): su soporte es el pliego, no la oferta. */
+  soporte_pliego: boolean
   usuario: string | null
   fecha: string | null
 }

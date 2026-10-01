@@ -641,6 +641,8 @@ def ver_pliego(request: HttpRequest, evaluacion_id: UUID) -> FileResponse:
     analisis = evaluacion.proceso.analisis_pliego
     if analisis is None:
         raise HttpError(404, "Este proceso se creó sin analizar el pliego.")
+    # Las decisiones que salen del pliego (N.A.) exigen haberlo abierto.
+    auditar(request, "pliego.visto", objeto=evaluacion)
     return FileResponse(analisis.archivo.open("rb"), content_type="application/pdf", filename=analisis.nombre_archivo)
 
 

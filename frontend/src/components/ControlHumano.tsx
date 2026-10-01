@@ -212,7 +212,17 @@ export default function ControlHumano(p: Props) {
                       )}
                     </span>
                     <span>
-                      {r && archivo ? (
+                      {item.soporte_pliego ? (
+                        <a
+                          className="btn btn-ghost btn-sm"
+                          href={`/api/evaluaciones/${p.evaluacionId}/pliego`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Esta decisión sale del pliego, no de la oferta"
+                        >
+                          <Icono nombre="ojo" tam={15} /> Ver pliego
+                        </a>
+                      ) : r && archivo ? (
                         <button type="button" className="btn btn-ghost btn-sm" onClick={() => p.onVerDocumento(r, archivo)}>
                           <Icono nombre="ojo" tam={15} /> Ver soporte
                         </button>
@@ -236,7 +246,7 @@ export default function ControlHumano(p: Props) {
                             title="Revisé el soporte y la verificación del sistema es correcta"
                             onClick={async () => {
                               let nota = ''
-                              if (!archivo) {
+                              if (!archivo && !item.soporte_pliego) {
                                 // Sin documento que abrir, la ley pide dejar dicho qué se consultó.
                                 const escrito = await pedirTexto({
                                   titulo: '¿Qué consultó para confirmar este requisito?',

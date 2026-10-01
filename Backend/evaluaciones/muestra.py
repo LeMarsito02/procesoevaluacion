@@ -69,11 +69,30 @@ def vio_soporte(usuario, evaluacion: Evaluacion, hoja: str, desde) -> bool:
     ).exists()
 
 
+def soporte_en_pliego(datos: dict | None) -> bool:
+    """La decisión no sale de la oferta sino del pliego ("N.A. — el pliego no
+    exige capacidad residual"): su soporte es el pliego del proceso, y es la
+    misma para todos los proponentes."""
+    return bool(datos) and (datos.get("motivo") or "").startswith("N.A. — el pliego")
+
+
+def vio_pliego(usuario, evaluacion: Evaluacion, desde) -> bool:
+    from cuentas.models import EventoAuditoria
+
+    return EventoAuditoria.objects.filter(
+        usuario=usuario, accion="pliego.visto", objeto_tipo="Evaluacion", objeto_id=str(evaluacion.pk), fecha__gte=desde
+    ).exists()
+
+
 def exigir_soporte(usuario, evaluacion: Evaluacion, proponente: Proponente, datos: dict | None, nota: str, desde=None) -> bool:
     """Valida que quien decide haya visto el soporte. Si el resultado no tiene
     documento (p. ej., "no aportó"), exige en cambio una justificación que diga
     qué se consultó. Devuelve si el soporte fue visto."""
     desde = desde or (timezone.now() - VENTANA_SOPORTE)
+    if soporte_en_pliego(datos) and evaluacion.proceso.analisis_pliego_id:
+        if vio_pliego(usuario, evaluacion, desde):
+            return True
+        raise ErrorMuestra("Esta decisión sale del pliego: ábralo antes de decidir, la decisión debe tomarse viendo la evidencia.")
     if vio_soporte(usuario, evaluacion, proponente.hoja, desde):
         return True
     if datos and datos.get("archivo_evaluado"):
@@ -91,7 +110,7 @@ def exigir_soporte(usuario, evaluacion: Evaluacion, proponente: Proponente, dato
 # --- Universo y sorteo ----------------------------------------------------------
 def universo(evaluacion: Evaluacion) -> dict:
     """Por proponente, las verificaciones del sistema que ninguna persona ha
-    revisado: [(requisito, usa_ia)]. Sin el puntaje técnico."""
+    revisado: [(requisito, usa_ia, del_pliego)]. Sin el puntaje técnico."""
     from evaluaciones.cumplimiento import numeros_puntaje, usa_ia
     from evaluaciones.servicios import definicion_de
 
@@ -101,7 +120,7 @@ def universo(evaluacion: Evaluacion) -> dict:
     for r in Resultado.objects.filter(evaluacion=evaluacion, requiere_revision=False).order_by("requisito"):
         if r.requisito in excluidos or (r.proponente_id, r.requisito) in revisados:
             continue
-        salida.setdefault(r.proponente_id, []).append((r.requisito, usa_ia(r.datos)))
+        salida.setdefault(r.proponente_id, []).append((r.requisito, usa_ia(r.datos), soporte_en_pliego(r.datos)))
     return salida
 
 
@@ -160,8 +179,19 @@ def crear(evaluacion: Evaluacion, usuario) -> MuestraControl:
     candidatos = [
         (proponentes[pid].numero_orden, proponentes[pid].hoja, req, ia, str(pid))
         for pid, lista in items_por_proponente.items()
-        for req, ia in lista
+        for req, ia, del_pliego in lista
+        if not del_pliego
     ]
+    # Lo que sale del pliego es una sola decisión repetida en cada oferta: entra
+    # al sorteo una vez por requisito (en un proponente al azar), no seis veces.
+    # Antes ocupaba la mitad de la muestra con lo mismo, sin documento de la oferta.
+    del_pliego: dict[int, list[tuple]] = {}
+    for pid, lista in items_por_proponente.items():
+        for req, ia, es_del_pliego in lista:
+            if es_del_pliego:
+                del_pliego.setdefault(req, []).append((proponentes[pid].numero_orden, proponentes[pid].hoja, req, ia, str(pid)))
+    azar = random.Random(semilla)
+    candidatos += [azar.choice(sorted(lista)) for _, lista in sorted(del_pliego.items())]
     elegidos = sortear(candidatos, semilla, settings.MUESTRA_VERIFICACIONES)
     with transaction.atomic():
         MuestraControl.objects.filter(evaluacion=evaluacion).exclude(estado=EstadoMuestra.ANULADA).update(
@@ -174,7 +204,7 @@ def crear(evaluacion: Evaluacion, usuario) -> MuestraControl:
             parametros={
                 "verificaciones": settings.MUESTRA_VERIFICACIONES,
                 "universo_ofertas": len(proponentes),
-                "universo_verificaciones": len(candidatos),
+                "universo_verificaciones": sum(len(lista) for lista in items_por_proponente.values()),
                 "version_sistema": settings.MIEVALUADOR_VERSION,
             },
             ofertas_sorteadas=[hoja for _, hoja in sorted({(c[0], c[1]) for c in elegidos})],
@@ -275,6 +305,10 @@ def resumen(muestra: MuestraControl | None) -> dict | None:
     if muestra is None:
         return None
     items = list(muestra.items.select_related("proponente", "usuario").order_by("proponente__numero_orden", "requisito"))
+    datos = {
+        (r.proponente_id, r.requisito): r.datos
+        for r in Resultado.objects.filter(evaluacion_id=muestra.evaluacion_id, proponente_id__in={i.proponente_id for i in items})
+    }
     return {
         "id": str(muestra.id),
         "estado": muestra.estado,
@@ -298,6 +332,8 @@ def resumen(muestra: MuestraControl | None) -> dict | None:
                 "resultado": i.resultado or None,
                 "nota": i.nota,
                 "soporte_visto": i.soporte_visto,
+                # El soporte es el pliego del proceso, no un documento de la oferta.
+                "soporte_pliego": soporte_en_pliego(datos.get((i.proponente_id, i.requisito))),
                 "usuario": i.usuario.nombre_completo if i.usuario_id else None,
                 "fecha": i.fecha.isoformat() if i.fecha else None,
             }

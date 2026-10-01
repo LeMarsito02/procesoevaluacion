@@ -105,6 +105,39 @@ class MuestraTests(BaseFlujo):
         self.assertEqual(r.status_code, 200, r.content)
         self.assertTrue(ItemMuestra.objects.get(pk=item["id"]).soporte_visto)
 
+    def test_lo_que_sale_del_pliego_entra_una_vez_y_su_soporte_es_el_pliego(self):
+        from evaluaciones.models import AnalisisPliego, Proceso
+
+        self.preparar()
+        # El requisito 13 queda como "N.A. por el pliego" en las 12 ofertas: es
+        # una sola decisión, no 12, y no tiene documento de la oferta.
+        for res in Resultado.objects.filter(evaluacion_id=self.eid, requisito=13):
+            Resultado.objects.filter(pk=res.pk).update(datos={**res.datos, "cumple": True, "motivo": "N.A. — el pliego no exige capacidad residual"})
+        proceso = Proceso.objects.get(evaluaciones__id=self.eid)
+        proceso.analisis_pliego = AnalisisPliego.objects.create(
+            entidad_id=proceso.entidad_id, sha256="0" * 64, nombre_archivo="pliego.pdf", archivo="pliegos/x.pdf",
+            paginas=1, extraccion={}, version=1,
+        )
+        proceso.save()
+        m = self.abogado.post(f"/api/evaluaciones/{self.eid}/muestra").json()["muestra"]
+        del_pliego = [i for i in m["items"] if i["requisito"] == 13]
+        self.assertEqual(len(del_pliego), 1)
+        self.assertTrue(del_pliego[0]["soporte_pliego"])
+        self.assertEqual(m["parametros"]["universo_verificaciones"], 24)
+        item = del_pliego[0]
+        # Abrir la oferta no basta: el soporte es el pliego.
+        self.ver_soporte(self.evaluador, self.eid, item["hoja"])
+        r = self.abogado.put(f"/api/evaluaciones/{self.eid}/muestra/items/{item['id']}", {"conforme": True, "nota": "Visto en el pliego 3.11"})
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("sale del pliego", r.json()["detail"])
+        EventoAuditoria.objects.create(
+            usuario=self.evaluador, entidad_id=self.evaluador.entidad_id, accion="pliego.visto",
+            objeto_tipo="Evaluacion", objeto_id=str(self.eid), detalles={},
+        )
+        r = self.abogado.put(f"/api/evaluaciones/{self.eid}/muestra/items/{item['id']}", {"conforme": True})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertTrue(ItemMuestra.objects.get(pk=item["id"]).soporte_visto)
+
     def test_un_error_amplia_la_revision_a_todo_el_requisito(self):
         self.preparar()
         m = self.abogado.post(f"/api/evaluaciones/{self.eid}/muestra").json()["muestra"]
