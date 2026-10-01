@@ -26,6 +26,7 @@ import {
 import { mensajeDe } from '../http'
 import { REQUISITOS } from '../requisitos'
 import Icono from './Icono'
+import type { DecisionMuestra } from './VisorDocumento'
 import { useDialogos } from '../dialogos'
 
 interface Props {
@@ -35,7 +36,7 @@ interface Props {
   aprobada: boolean
   pendientes: number
   resultados: Record<string, ResultadoRequisito[]>
-  onVerDocumento: (resultado: ResultadoRequisito, archivo: string) => void
+  onVerDocumento: (resultado: ResultadoRequisito, archivo: string, muestra?: DecisionMuestra) => void
   onAviso: (texto: string) => void
   /** La muestra cambió resultados (amplió la revisión) o el estado para aprobar. */
   onCambio: () => void
@@ -80,6 +81,30 @@ export default function ControlHumano(p: Props) {
     } finally {
       setOcupado(null)
     }
+  }
+
+  async function marcarConforme(item: ItemMuestra, archivo: string | null) {
+    let nota = ''
+    if (!archivo && !item.soporte_pliego) {
+      // Sin documento que abrir, la ley pide dejar dicho qué se consultó.
+      const escrito = await pedirTexto({
+        titulo: '¿Qué consultó para confirmar este requisito?',
+        mensaje: (
+          <>
+            Esta verificación no tiene un documento que abrir, así que su justificación es la
+            evidencia. <strong>Queda en el acta de la muestra</strong>, a su nombre.
+          </>
+        ),
+        etiqueta: 'Qué consultó',
+        placeholder: 'Ej.: el RUP del integrante, donde el indicador aparece en la página 3',
+        largo: true,
+        minimo: 15,
+        aceptar: 'Marcar conforme',
+      })
+      if (escrito === null) return
+      nota = escrito
+    }
+    void ejecutar(`item-${item.id}`, () => revisarItemMuestra(p.evaluacionId, item.id, true, nota))
   }
 
   function resultadoDe(item: ItemMuestra) {
@@ -223,7 +248,16 @@ export default function ControlHumano(p: Props) {
                           <Icono nombre="ojo" tam={15} /> Ver pliego
                         </a>
                       ) : r && archivo ? (
-                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => p.onVerDocumento(r, archivo)}>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() =>
+                            p.onVerDocumento(
+                              r,
+                              archivo,
+                              // Abierto desde la muestra, el visor decide sobre el ítem de la muestra.
+                              puedeActuar && enCurso && !item.resultado
+                                ? { conforme: () => void marcarConforme(item, archivo), noConforme: () => setHallazgo(item) }
+                                : undefined,
+                            )
+                          }>
                           <Icono nombre="ojo" tam={15} /> Ver soporte
                         </button>
                       ) : (
@@ -244,29 +278,7 @@ export default function ControlHumano(p: Props) {
                             className="btn btn-ok btn-sm"
                             disabled={ocupado !== null}
                             title="Revisé el soporte y la verificación del sistema es correcta"
-                            onClick={async () => {
-                              let nota = ''
-                              if (!archivo && !item.soporte_pliego) {
-                                // Sin documento que abrir, la ley pide dejar dicho qué se consultó.
-                                const escrito = await pedirTexto({
-                                  titulo: '¿Qué consultó para confirmar este requisito?',
-                                  mensaje: (
-                                    <>
-                                      Esta verificación no tiene un documento que abrir, así que su justificación es la
-                                      evidencia. <strong>Queda en el acta de la muestra</strong>, a su nombre.
-                                    </>
-                                  ),
-                                  etiqueta: 'Qué consultó',
-                                  placeholder: 'Ej.: el RUP del integrante, donde el indicador aparece en la página 3',
-                                  largo: true,
-                                  minimo: 15,
-                                  aceptar: 'Marcar conforme',
-                                })
-                                if (escrito === null) return
-                                nota = escrito
-                              }
-                              void ejecutar(`item-${item.id}`, () => revisarItemMuestra(p.evaluacionId, item.id, true, nota))
-                            }}
+                            onClick={() => void marcarConforme(item, archivo)}
                           >
                             Conforme
                           </button>

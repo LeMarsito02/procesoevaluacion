@@ -8,6 +8,12 @@ import Icono from './Icono'
 import ExplicacionIA from './ExplicacionIA'
 import Motivos from './Motivos'
 
+/** El visor se abrió desde la muestra de control: se decide sobre el ítem de la muestra. */
+export interface DecisionMuestra {
+  conforme: () => void
+  noConforme: () => void
+}
+
 interface Props {
   url: string
   archivo: string
@@ -18,9 +24,10 @@ interface Props {
   revisiones: Revisiones
   onRevisar: ((hoja: string, requisito: number, cumple: boolean | undefined) => void) | null
   onCerrar: () => void
+  muestra?: DecisionMuestra
 }
 
-export default function VisorDocumento({ url, archivo, evaluacionId, proponenteId, resultado, revisiones, onRevisar, onCerrar }: Props) {
+export default function VisorDocumento({ url, archivo, evaluacionId, proponenteId, resultado, revisiones, onRevisar, onCerrar, muestra }: Props) {
   const caja = useRef<HTMLDivElement>(null)
   useDialogo(caja)
   const info = REQUISITO_POR_NUMERO[resultado.requisito]
@@ -77,19 +84,44 @@ export default function VisorDocumento({ url, archivo, evaluacionId, proponenteI
             <ExplicacionIA evaluacionId={evaluacionId} proponenteId={proponenteId} requisito={resultado.requisito} />
           )}
           <div className="decision" style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {!onRevisar ? (
+            {muestra ? (
+              <>
+                <span className="small muted">Muestra de control: ¿la verificación del sistema es correcta?</span>
+                <button className="btn btn-ok" type="button" onClick={() => { onCerrar(); muestra.conforme() }}>
+                  <Icono nombre="check" tam={16} /> Conforme
+                </button>
+                <button className="btn btn-bad" type="button" onClick={() => { onCerrar(); muestra.noConforme() }}>
+                  <Icono nombre="x" tam={16} /> No conforme
+                </button>
+              </>
+            ) : !onRevisar ? (
               <span className="small muted">
                 {decision === undefined ? 'Solo lectura' : <>Decisión registrada: <strong>{decision ? 'Cumple' : 'No cumple'}</strong></>}
               </span>
             ) : decision === undefined ? (
               <>
-                <span className="small muted">{esPendiente(estado) ? 'Después de revisar el documento:' : '¿Está de acuerdo con el resultado?'}</span>
-                <button className="btn btn-ok" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, true)}>
-                  <Icono nombre="check" tam={16} /> Cumple
-                </button>
-                <button className="btn btn-bad" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, false)}>
-                  <Icono nombre="x" tam={16} /> No cumple
-                </button>
+                {esPendiente(estado) || resultado.cumple == null ? (
+                  <>
+                    <span className="small muted">Después de revisar el documento:</span>
+                    <button className="btn btn-ok" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, true)}>
+                      <Icono nombre="check" tam={16} /> Cumple
+                    </button>
+                    <button className="btn btn-bad" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, false)}>
+                      <Icono nombre="x" tam={16} /> No cumple
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {/* El sistema ya decidió: se está de acuerdo o no con esa decisión. */}
+                    <span className="small muted">¿Está de acuerdo con el resultado del sistema?</span>
+                    <button className="btn btn-ok" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, resultado.cumple!)}>
+                      <Icono nombre="check" tam={16} /> De acuerdo
+                    </button>
+                    <button className="btn btn-bad" type="button" onClick={() => onRevisar?.(resultado.hoja, resultado.requisito, !resultado.cumple)}>
+                      <Icono nombre="x" tam={16} /> En desacuerdo
+                    </button>
+                  </>
+                )}
               </>
             ) : (
               <>

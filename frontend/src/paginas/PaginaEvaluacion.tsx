@@ -15,7 +15,7 @@ import PasoEvaluacion from '../components/PasoEvaluacion'
 import PasoInforme from '../components/PasoInforme'
 import Topbar from '../components/Topbar'
 import { PASOS_EVALUACION, type Paso } from '../pasos'
-import VisorDocumento from '../components/VisorDocumento'
+import VisorDocumento, { type DecisionMuestra } from '../components/VisorDocumento'
 import { propsDatos, useDatosProceso } from '../datosProceso'
 import { claveRevision, esPendiente, estadoDe, resumenProponente, type Revisiones } from '../estado'
 import {
@@ -126,7 +126,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const [subirCertificado, setSubirCertificado] = useState<number | null>(null)
   // Requisito cuyo COPNIA se está consultando en línea.
   const [consultandoCopnia, setConsultandoCopnia] = useState<number | null>(null)
-  const [visor, setVisor] = useState<{ url: string; archivo: string; resultado: ResultadoRequisito } | null>(null)
+  const [visor, setVisor] = useState<{ url: string; archivo: string; resultado: ResultadoRequisito; muestra?: DecisionMuestra } | null>(null)
   const [abriendoDocumento, setAbriendoDocumento] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
   const [generando, setGenerando] = useState(false)
@@ -326,13 +326,13 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     }
   }
 
-  async function abrirDocumento(resultado: ResultadoRequisito, archivo: string) {
+  async function abrirDocumento(resultado: ResultadoRequisito, archivo: string, muestra?: DecisionMuestra) {
     const pr = proponentes.find((p) => p.hoja === resultado.hoja)
     if (!pr) return
     setAbriendoDocumento(`${resultado.hoja}|${archivo}`)
     try {
       const blob = await verDocumentoProponente(id, pr.id, archivo)
-      setVisor({ url: URL.createObjectURL(blob), archivo, resultado })
+      setVisor({ url: URL.createObjectURL(blob), archivo, resultado, muestra })
     } catch (err) {
       setAviso(`No se pudo abrir: ${mensajeDe(err)}`)
     } finally {
@@ -616,6 +616,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           resultado={visor.resultado}
           revisiones={revisiones}
           onRevisar={onRevisar}
+          muestra={visor.muestra}
           onCerrar={() => {
             URL.revokeObjectURL(visor.url)
             setVisor(null)
