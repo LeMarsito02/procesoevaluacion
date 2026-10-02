@@ -79,6 +79,7 @@ function Navegacion() {
     { ruta: '/procesos', nombre: 'Procesos', visible: true },
     { ruta: '/fila', nombre: 'Fila', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad' },
     { ruta: '/equipo', nombre: 'Equipo', visible: puedeGestionarEquipo(u) },
+    { ruta: '/metricas', nombre: 'Métricas', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad' },
     { ruta: '/entidades', nombre: 'Entidades', visible: u.rol === 'superadmin' },
     { ruta: '/rendimiento', nombre: 'Rendimiento', visible: u.rol === 'superadmin' },
     { ruta: '/mejoras', nombre: 'Qué falta automatizar', visible: u.rol === 'superadmin' || u.rol === 'soporte' },

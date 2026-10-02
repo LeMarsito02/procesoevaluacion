@@ -556,3 +556,50 @@ class TransparenciaTests(BaseEvaluaciones):
         from django.test import Client
 
         self.assertEqual(Client().get("/api/acerca").status_code, 401)
+
+
+class MetricasTests(BaseFlujo):
+    """Tablero de métricas: el administrador ve su entidad; el evaluador no
+    entra; el superadministrador elige la entidad o ve todas."""
+
+    def test_administrador_ve_las_metricas_de_su_entidad(self):
+        self.preparar(MUCHOS[:3])
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        r = admin.get("/api/metricas?anio=" + str(timezone.now().year))
+        self.assertEqual(r.status_code, 200, r.content)
+        d = r.json()
+        self.assertEqual(d["procesos"]["creados"], 1)
+        self.assertEqual(d["procesos"]["evaluados"], 1)
+        self.assertEqual(d["totales"]["ofertas"], 3)
+        juridica = next(a for a in d["areas"] if a["clave"] == "juridica")
+        self.assertEqual(juridica["verificaciones"], 9)  # 3 ofertas × 3 requisitos
+        self.assertEqual(juridica["revisadas_personas"], 3)  # el requisito 2, revisado en cada oferta
+        self.assertNotIn("entidades", d)
+        # Un mes sin procesos no muestra nada.
+        otro_mes = 1 if timezone.now().month != 1 else 2
+        self.assertEqual(admin.get(f"/api/metricas?mes={otro_mes}").json()["procesos"]["creados"], 0)
+        # La otra entidad no ve los procesos de esta, ni pidiéndolos.
+        otra = Cliente()
+        otra.entrar("admin@otraentidad.gov.co")
+        d2 = otra.get(f"/api/metricas?entidad_id={self.entidad1.id}").json()
+        self.assertEqual(d2["procesos"]["creados"], 0)
+
+    def test_evaluador_no_ve_metricas(self):
+        c = Cliente()
+        c.entrar("abogado@entidad.gov.co")
+        self.assertEqual(c.get("/api/metricas").status_code, 403)
+
+    def test_modalidad_por_pliego_codigo_u_objeto(self):
+        from evaluaciones.metricas import modalidad_de
+        from evaluaciones.models import Proceso
+
+        def p(codigo, modalidad=None, objeto=""):
+            return Proceso(codigo=codigo, documento_base={"modalidad": modalidad}, objeto=objeto)
+
+        self.assertEqual(modalidad_de(p("X", "interventoria_transporte")), "interventoria")
+        self.assertEqual(modalidad_de(p("X", "licitacion_social")), "obra")
+        self.assertEqual(modalidad_de(p("ICCU-CM-043-2026")), "interventoria")
+        self.assertEqual(modalidad_de(p("ICCU-LP-027-2026")), "obra")
+        self.assertEqual(modalidad_de(p("DEMO-1", objeto="Interventoría técnica de la vía")), "interventoria")
+        self.assertEqual(modalidad_de(p("DEMO-2", objeto="Compra de papelería")), "otra")

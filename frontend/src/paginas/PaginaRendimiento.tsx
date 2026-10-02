@@ -173,7 +173,7 @@ export default function PaginaRendimiento() {
           <section className="rend-tiles">
             <Tile etiqueta="Procesos reales medidos" valor={entero(g.pruebas)} detalle={`${entero(g.proponentes)} ofertas evaluadas`} />
             <Tile
-              etiqueta="Resuelto sin intervención"
+              etiqueta="Verificado por el sistema"
               valor={pct(g.automatizacion, 0)}
               detalle={`${entero(g.automaticas)} de ${entero(g.decisiones)} verificaciones`}
             />

@@ -387,3 +387,6 @@ api.add_router("/configuracion", configuracion_router)
 from api.transparencia import router as transparencia_router  # noqa: E402
 
 api.add_router("/acerca", transparencia_router)
+from api.metricas import router as metricas_router  # noqa: E402
+
+api.add_router("/metricas", metricas_router)

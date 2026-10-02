@@ -15,6 +15,7 @@ const PaginaEquipo = lazy(() => import('./paginas/PaginaEquipo'))
 const PaginaFila = lazy(() => import('./paginas/PaginaFila'))
 const PaginaMejoras = lazy(() => import('./paginas/PaginaMejoras'))
 const PaginaRendimiento = lazy(() => import('./paginas/PaginaRendimiento'))
+const PaginaMetricas = lazy(() => import('./paginas/PaginaMetricas'))
 const PaginaSoporte = lazy(() => import('./paginas/PaginaSoporte'))
 const PaginaRestablecer = lazy(() => import('./paginas/PaginaRestablecer'))
 const PaginaAcerca = lazy(() => import('./paginas/PaginaAcerca'))
@@ -163,6 +164,7 @@ export default function Raiz() {
   else if (ruta === '/equipo' && puedeGestionarEquipo(usuario)) pagina = <PaginaEquipo />
   else if (ruta === '/entidades' && usuario.rol === 'superadmin') pagina = <PaginaEntidades />
   else if (ruta === '/rendimiento' && usuario.rol === 'superadmin') pagina = <PaginaRendimiento />
+  else if (ruta === '/metricas' && (usuario.rol === 'superadmin' || usuario.rol === 'admin_entidad')) pagina = <PaginaMetricas />
   // El registro junta información de varias entidades: solo nosotros.
   else if (ruta === '/mejoras' && (usuario.rol === 'superadmin' || usuario.rol === 'soporte')) pagina = <PaginaMejoras />
   else if (ruta === '/cuenta') pagina = <PaginaCuenta />

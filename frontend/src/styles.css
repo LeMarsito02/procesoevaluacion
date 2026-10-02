@@ -872,3 +872,32 @@ html.a11y-contraste .a11y-interruptor::after { top: 0; left: 0; background: #000
 html.a11y-contraste .a11y-opcion[aria-pressed='true'] .a11y-interruptor { background: var(--brand); border-color: var(--brand); }
 html.a11y-contraste .a11y-opcion[aria-pressed='true'] .a11y-interruptor::after { left: 16px; background: #fff; }
 html.a11y-contraste .a11y-opcion[aria-pressed='true'] { border-width: 3px; }
+
+/* --- Métricas de la entidad --- */
+.metricas-filtros { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-bottom: 20px; }
+.metricas-filtros .field { margin: 0; min-width: 180px; }
+.metricas .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.metricas-bloque { margin-bottom: 16px; }
+.metricas-bloque h2 { font-size: 17px; margin-bottom: 4px; }
+.metricas-modalidades { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 12px; }
+.metricas-modalidad { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.metricas-barra { height: 8px; border-radius: 999px; background: var(--na-soft); overflow: hidden; margin-bottom: 4px; min-width: 90px; }
+.metricas-barra span { display: block; height: 100%; background: var(--ok); border-radius: 999px; }
+.metricas-meses { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px; align-items: end; height: 200px; margin-top: 16px; }
+.metricas-mes { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+.metricas-mes-barra { width: 70%; max-width: 40px; min-height: 2px; background: var(--brand); border-radius: 4px 4px 0 0; }
+.metricas-mes-valor { font-size: 12px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.metricas-mes-nombre { font-size: 12px; color: var(--ink-3); }
+.metricas-dos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.metricas-lista { margin: 8px 0 0; display: flex; flex-direction: column; }
+.metricas-lista > div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.metricas-lista > div:first-child { border-top: 0; }
+.metricas-lista dt { color: var(--ink-2); font-size: 14px; }
+.metricas-lista dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.metricas-causas { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.metricas-causas li { font-size: 14px; }
+.metricas-causas li > span:first-child { display: inline; }
+.metricas-causa-n { float: right; font-weight: 600; color: var(--warn); font-variant-numeric: tabular-nums; }
+@media (max-width: 1000px) { .metricas .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .metricas .kpis { grid-template-columns: minmax(0, 1fr); } .metricas-meses { gap: 2px; } .metricas-mes-nombre { font-size: 10px; } }
+.metricas-dos > .card { margin-top: 0; }
