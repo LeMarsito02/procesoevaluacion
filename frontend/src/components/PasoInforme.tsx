@@ -127,7 +127,7 @@ export default function PasoInforme(p: Props) {
         </div>
       )}
 
-      <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+      <section className="card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 18 }}>
         <div className="dropzone-icon" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>
           <Icono nombre="descargar" tam={22} />
         </div>
@@ -154,7 +154,7 @@ export default function PasoInforme(p: Props) {
       </section>
 
       {p.onGenerarConsolidado && (
-        <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 16 }}>
+        <section className="card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 18, marginTop: 16 }}>
           <div className="dropzone-icon">
             <Icono nombre="balanza" tam={22} />
           </div>

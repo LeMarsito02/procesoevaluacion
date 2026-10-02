@@ -17,7 +17,7 @@ RAIZ="$(cd "$(dirname "$0")/../.." && pwd)"
 BACKEND="$RAIZ/Backend"
 FRONTEND="$RAIZ/frontend"
 SALIDA="$RAIZ/docs/normas/evidencias/$(date +%F)"
-mkdir -p "$SALIDA"
+mkdir -p "$SALIDA/accesibilidad"
 cd "$BACKEND" && source venv/bin/activate
 
 ORDEN=()
@@ -36,7 +36,7 @@ paso "Análisis estático (Bandit)" bandit.txt uvx bandit -q -r api cuentas eval
 paso "Compilación y lint del frontend" frontend.txt bash -c "cd '$FRONTEND' && npx tsc -b && npx eslint ."
 paso "Integridad de la auditoría" auditoria.txt python manage.py verificar_auditoria
 paso "Inventario de la IA (ISO 42001)" inventario_ia.txt python manage.py inventario_ia
-paso "Accesibilidad WCAG 2.1 AA" accesibilidad.txt python scripts/auditar_accesibilidad.py --salida "$SALIDA/accesibilidad.json"
+paso "Accesibilidad WCAG 2.1 AA" accesibilidad.txt python scripts/auditar_accesibilidad.py --internas --salida "$SALIDA/accesibilidad/informe.json"
 
 {
   echo "# Auditoría técnica — $(date '+%F %H:%M')"

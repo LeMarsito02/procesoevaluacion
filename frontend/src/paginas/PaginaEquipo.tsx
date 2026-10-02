@@ -237,7 +237,7 @@ export default function PaginaEquipo() {
                   <tr key={u.id} data-inactivo={!u.activo}>
                     <td>
                       <div className="persona">
-                        <span className="avatar">{iniciales(u.nombre_completo)}</span>
+                        <span className="avatar" aria-hidden="true">{iniciales(u.nombre_completo)}</span>
                         <div>
                           <strong>
                             {u.nombre_completo} {soyYo && <span className="tag">Usted</span>}

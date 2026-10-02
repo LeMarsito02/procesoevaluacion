@@ -14,7 +14,7 @@
 | Compilación, tipos y lint del frontend | 25010 | Aprobado |
 | Integridad de la auditoría | 27001 8.15 | Aprobado: cadena íntegra |
 | Inventario de la IA | 42001 | **Pendiente:** 3 modelos en uso sin aprobación formal |
-| Accesibilidad WCAG 2.1 AA (axe-core) | Res. 1519 de 2020 | Aprobado: 0 infracciones en 4 combinaciones de pantalla y tamaño |
+| Accesibilidad (WCAG 2.1 AA, por tipo de discapacidad) | Res. 1519 de 2020 | Aprobado: 10 pantallas, incluidas las internas, a 3 tamaños; ceguera, baja visión, daltonismo, motriz, movimiento y cognitiva (documento 10) |
 | Restauración de respaldo | 27001 8.13 | Aprobado: restaurado en 1 s, datos completos, auditoría íntegra |
 | Escaneo con Nessus | 27001 8.8 | **Pendiente** (documento 07) |
 
@@ -32,6 +32,7 @@
 | 8 | Una prueba en desarrollo mostró que borrar a la fuerza una cuenta rompe la cadena de la auditoría | Baja | Procedimiento: las cuentas se desactivan, no se borran; los huecos autorizados se documentan sin recalcular la cadena (documento 08) |
 | 9 | Faltaba saltar la navegación con teclado (WCAG 2.4.1) | Media | Enlace «Saltar al contenido principal» |
 | 10 | El título de la pestaña era el mismo en todas las pantallas (WCAG 2.4.2) | Baja | Dice el paso y el proceso |
+| 12 | Accesibilidad de las pantallas internas: contraste de «Cumple» y «No aplica», desbordamiento a 320 px en 6 pantallas, pasos tapados por el avatar y sin nombre accesible | Media | Corregidos; ver documento 10 |
 | 11 | El modelo de visión (Qwen2.5-VL-3B) tiene licencia de investigación que **prohíbe el uso comercial**; Ollama lo etiqueta mal como Apache 2.0 | Alta (legal) | Reemplazado por Qwen2.5-VL-7B (Apache 2.0); el inventario rechaza modelos sin licencia comercial verificada |
 
 ## 3. Controles nuevos
@@ -50,6 +51,6 @@
 | Medir el modelo de visión 7B y aprobar los 3 modelos con nombre real del responsable | Responsable de la IA | 06 |
 | Escaneo con Nessus de la aplicación desplegada | Responsable de seguridad | 07 |
 | Primera ejecución de la integración continua en GitHub | Desarrollo | 05 |
-| Revisión de accesibilidad con lector de pantalla y zoom al 200 % | Desarrollo | 10 |
+| Sesión de accesibilidad con usuarios reales (lector de pantalla y ampliación) | Desarrollo | 10 |
 | Asignar nombres a los roles y aprobar la política | Representante legal | 01 |
 | Infraestructura de LeMarTek Cloud (20 controles en fase 2) | LeMarTek | 03 |

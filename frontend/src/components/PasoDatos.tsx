@@ -217,7 +217,7 @@ export default function PasoDatos(p: Props) {
             <p style={{ color: 'var(--ink-2)', marginBottom: 16 }}>{p.objetoGeneral || <span className="muted">Sin objeto general</span>}</p>
             <div style={{ display: 'grid', gap: 10 }}>
               {p.lotes.map((lote) => (
-                <div key={lote.numero} style={{ display: 'flex', gap: 16, padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--line)' }}>
+                <div key={lote.numero} style={{ display: 'flex', flexWrap: 'wrap', gap: 16, padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--line)' }}>
                   <span className="tag" style={{ flex: 'none' }}>
                     {lote.numero}
                   </span>

@@ -18,7 +18,7 @@ La ISO/IEC 25010 define el modelo de calidad; no es certificable. Este plan fija
 | | Coexistencia | Varias entidades en la misma instalación sin interferir | Sí | Fila con reparto justo por entidad | `evaluaciones/trabajador.py` |
 | **Capacidad de interacción** (usabilidad) | Reconocibilidad y aprendizaje | Flujo guiado por pasos | 4 pasos | Datos → Evaluación → Control → Informe | Interfaz |
 | | Protección contra errores | Decisiones con justificación y soporte visto | 100 % | Obligatorio por diseño | `evaluaciones/muestra.py` |
-| | Inclusividad | Infracciones WCAG 2.1 AA automáticas | 0 | **0** | Documento 10 |
+| | Inclusividad | Pantallas sin fallas de accesibilidad (WCAG 2.1 AA, 200 %, 320 px, foco) | 100 % | **10 de 10** | Documento 10 |
 | | | Prueba con usuarios evaluadores | 1 por versión mayor | Pendiente | — |
 | **Fiabilidad** | Tolerancia a fallos | Un fallo de la IA no detiene la evaluación | Sí | Sí: se manda a revisión humana | `motor/llm/cliente.py` |
 | | Recuperabilidad | Trabajos que sobreviven a un reinicio | 100 % | Sí (fila persistente en la base) | `evaluaciones/trabajador.py` |
@@ -47,4 +47,4 @@ La ISO/IEC 25010 define el modelo de calidad; no es certificable. Este plan fija
 |---|---|---|
 | Prueba de usabilidad con evaluadores reales | Sesión con el equipo de la primera entidad | Implementación (semanas 3–5) |
 | Escaneo con Nessus | Documento 07 | Antes de la salida a producción |
-| Accesibilidad de las pantallas internas | Auditoría manual con lector de pantalla (documento 10) | Próxima versión |
+| Accesibilidad con usuarios reales | Sesión con lector de pantalla y ampliación (documento 10) | Próxima versión |

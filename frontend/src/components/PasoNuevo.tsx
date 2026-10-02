@@ -258,7 +258,7 @@ export default function PasoNuevo(props: Props) {
               Falta {falta.length > 1 ? `${falta.slice(0, -1).join(', ')} y ${falta[falta.length - 1]}` : falta[0]}.
             </span>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
             <button className="btn btn-ghost" type="button" onClick={props.onCancelar}>
               Cancelar
             </button>

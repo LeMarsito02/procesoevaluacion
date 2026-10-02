@@ -25,13 +25,13 @@
   --gold-soft: #e6f3ff;
   --teal: #00c9a7;
 
-  --ok: #07806b;
+  --ok: #06735f; /* 5,2:1 sobre --ok-soft (WCAG 1.4.3 pide 4,5:1) */
   --ok-soft: #e0f7f2;
   --warn: #a15c07;
   --warn-soft: #fdf1dc;
   --bad: #c0262d;
   --bad-soft: #fdebec;
-  --na: #6f7c96;
+  --na: #58647d; /* 5,3:1 sobre --na-soft */
   --na-soft: #eef2f8;
   --ai: #5b4bd6;
   --ai-soft: #efedfd;
@@ -795,4 +795,21 @@ body[data-con-sesion='true'] .grecaptcha-badge { visibility: hidden; }
 @media (max-width: 480px) {
   .dialogo { width: calc(100vw - 24px); padding: 18px; }
   .dialogo-pie .btn { flex: 1 1 auto; }
+}
+
+/* Reflujo (WCAG 1.4.10, Res. 1519 de 2020): a 320 px de ancho —una pantalla
+   de 1280 px ampliada al 400 %, como la usa una persona con baja visión— nada
+   obliga a desplazarse de lado ni queda tapado. */
+@media (max-width: 480px) {
+  .acceso { grid-template-columns: minmax(0, 1fr); }
+  .acceso-panel { padding: 24px 12px; }
+  .acceso-caja { padding: 24px 18px; }
+  .acceso-logo { width: 140px; height: 140px; border-radius: 28px; margin-bottom: 16px; }
+  .btn, .btn-lg { white-space: normal; height: auto; min-height: 40px; padding-top: 8px; padding-bottom: 8px; text-align: center; }
+  .segmented { flex-wrap: wrap; max-width: 100%; }
+  /* Los pasos pasan a su propia fila: antes quedaban debajo del avatar y no
+     se podían pulsar. */
+  .topbar-inner[data-con-pasos='true'] { flex-wrap: wrap; }
+  .topbar-inner[data-con-pasos='true'] .stepper { order: 3; flex: 1 1 100%; margin-left: 0; justify-content: center; }
+  .topbar-inner[data-con-pasos='true'] .menu-usuario { margin-left: auto; }
 }

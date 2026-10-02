@@ -56,7 +56,7 @@ export default function DocumentosFinales({ resumen }: { resumen: EvaluacionResu
 
   return (
     <>
-      <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+      <section className="card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 18 }}>
         <div className="dropzone-icon" style={{ background: 'var(--brand-soft)' }}>
           <Icono nombre="documento" tam={22} />
         </div>

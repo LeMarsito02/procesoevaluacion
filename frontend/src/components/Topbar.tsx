@@ -123,6 +123,9 @@ function Stepper({ lista, paso, pasosDisponibles, onIr }: PropsPasos) {
               onClick={() => clicable && onIr(p.id)}
               aria-current={estado === 'active' ? 'step' : undefined}
               title={p.nombre}
+              // En pantallas angostas o ampliadas solo se ve el número: el
+              // lector de pantalla debe anunciar el nombre del paso, no «3».
+              aria-label={`Paso ${i + 1}: ${p.nombre}`}
             >
               <span className="step-dot">{estado === 'done' ? <Icono nombre="check" tam={13} grosor={3} /> : i + 1}</span>
               <span className="step-nombre">{p.nombre}</span>
@@ -170,7 +173,7 @@ function MenuUsuario() {
   return (
     <div className="menu-usuario" ref={caja}>
       <button type="button" className="menu-boton" onClick={() => setAbierto((a) => !a)} aria-expanded={abierto} aria-haspopup="menu">
-        <span className="avatar">{iniciales}</span>
+        <span className="avatar" aria-hidden="true">{iniciales}</span>
         <span className="menu-nombre">
           <strong>{u.nombre_completo.split(' ')[0]}</strong>
           <span>{u.entidad?.nombre ?? u.rol_nombre}</span>
