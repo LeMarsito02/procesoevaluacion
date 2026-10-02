@@ -18,6 +18,13 @@ interface Props {
 }
 
 export default function Topbar({ codigoProceso = null, pasos }: Props) {
+  // WCAG 2.4.2: el título de la pestaña dice dónde está la persona (lo leen
+  // primero los lectores de pantalla y distingue varias pestañas abiertas).
+  const pasoActual = pasos?.lista.find((p) => p.id === pasos.paso)?.nombre
+  useEffect(() => {
+    document.title = [pasoActual, codigoProceso, 'MiEvaluador'].filter(Boolean).join(' · ')
+  }, [pasoActual, codigoProceso])
+
   return (
     <header className="topbar">
       {/* WCAG 2.4.1 (MinTIC, Res. 1519 de 2020): con teclado o lector de
