@@ -35,7 +35,23 @@ python Backend/scripts/auditar_accesibilidad.py --internas --salida evidencias/A
 | **Discapacidad cognitiva** | Lenguaje claro, flujo por pasos, errores explicados, sin límites de tiempo en las tareas | 2.2.1, 3.2.3, 3.3.1, 3.3.2, 3.3.3 | **Cumple en lo revisado:** flujo de 4 pasos siempre igual; cada resultado explica su motivo y puede explicarse en palabras; errores en texto con la acción a seguir. La sesión dura una jornada (10 h) |
 | **Discapacidad auditiva** | Alternativas al audio | 1.2.x | **No aplica:** la plataforma no tiene audio ni video. El reCAPTCHA es invisible (no presenta desafíos de audio) |
 
-## 4. Lista de verificación WCAG 2.1 AA
+## 4. Menú de accesibilidad
+Botón flotante abajo a la izquierda, en todas las pantallas (también en el ingreso), como la barra de accesibilidad de los sitios GOV.CO. Cada persona ajusta la interfaz y la preferencia queda guardada en su navegador:
+
+| Opción | Para quién |
+|---|---|
+| Tamaño del texto (100 a 150 %) | Baja visión |
+| Alto contraste | Baja visión, daltonismo, pantallas con reflejo |
+| Resaltar enlaces y botones | Baja visión, discapacidad cognitiva |
+| Más espacio entre letras y líneas | Dislexia |
+| Letra fácil de leer | Dislexia, baja visión |
+| Guía de lectura | Dificultades de atención o de seguimiento visual |
+| Pausar animaciones | Sensibilidad al movimiento, epilepsia fotosensible |
+| Enlace al Centro de Relevo | Personas sordas |
+
+El propio menú se maneja con teclado (Escape lo cierra y devuelve el foco), anuncia cada opción como activada o no (`aria-pressed`) y pasa la auditoría WCAG.
+
+## 5. Lista de verificación WCAG 2.1 AA
 
 | Criterio | Estado | Cómo se cumple |
 |---|---|---|
@@ -57,7 +73,7 @@ python Backend/scripts/auditar_accesibilidad.py --internas --salida evidencias/A
 | 4.1.2 Nombre, función, valor | Cumple | `aria-label`, `aria-current`, `aria-expanded`, `aria-pressed` |
 | 4.1.3 Mensajes de estado | Cumple | `role="status"` en avisos y cargas |
 
-## 5. Pendientes
+## 6. Pendientes
 1. **Prueba con personas:** una sesión con un usuario de lector de pantalla (NVDA en Windows) y otro de ampliación. La auditoría automática verifica las reglas; la experiencia real solo la confirma quien la usa.
 2. Título propio en las pantallas fuera de un proceso (lista de procesos, equipo, configuración).
 3. Pantallas de administración (equipo, configuración, crear proceso) en la auditoría automática: piden un rol distinto de «Consulta».

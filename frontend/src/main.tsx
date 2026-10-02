@@ -3,6 +3,11 @@ import { createRoot } from 'react-dom/client'
 import './styles.css'
 import { ProveedorDialogos } from './dialogos.tsx'
 import Raiz from './Raiz.tsx'
+import MenuAccesibilidad from './components/MenuAccesibilidad.tsx'
+import { aplicarAccesibilidad } from './accesibilidad.ts'
+
+// Antes de dibujar: las preferencias de accesibilidad guardadas, sin parpadeo.
+aplicarAccesibilidad()
 
 const raiz = createRoot(document.getElementById('root')!)
 
@@ -17,6 +22,7 @@ if (import.meta.env.DEV && window.location.hash.startsWith('#/previsualizacion')
       <StrictMode>
         <ProveedorDialogos>
           <Previsualizacion />
+          <MenuAccesibilidad />
         </ProveedorDialogos>
       </StrictMode>,
     ),
@@ -26,6 +32,7 @@ if (import.meta.env.DEV && window.location.hash.startsWith('#/previsualizacion')
     <StrictMode>
       <ProveedorDialogos>
         <Raiz />
+        <MenuAccesibilidad />
       </ProveedorDialogos>
     </StrictMode>,
   )

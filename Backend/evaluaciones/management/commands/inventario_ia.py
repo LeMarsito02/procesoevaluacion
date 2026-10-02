@@ -75,7 +75,12 @@ class Command(BaseCommand):
                 "proposito": USOS.get(uso, ""),
             }
             aprobado = aprobados.get(uso, {})
-            if lic["comercial"] is not True:
+            if lic["comercial"] is not True and settings.DEBUG and huella:
+                # En desarrollo se prueba con modelos pequeños de investigación
+                # (la GPU del equipo no mueve los comerciales): se permiten,
+                # pero nunca se aprueban para producción.
+                estado = f"solo desarrollo ({lic['licencia']}); en producción se usa un modelo comercial"
+            elif lic["comercial"] is not True:
                 estado = ("LICENCIA SIN USO COMERCIAL" if lic["comercial"] is False else "LICENCIA SIN VERIFICAR") + \
                     f" ({lic['licencia']}): no se puede usar en producción"
                 sin_aprobar += 1
