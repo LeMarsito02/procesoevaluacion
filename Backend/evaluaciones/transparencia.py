@@ -18,18 +18,42 @@ from django.utils import timezone
 
 from evaluaciones.cumplimiento import AVISO_INTERFAZ, modelos_ia
 
-# Licencia de cada familia de modelos (verificar el archivo LICENSE del punto
-# de control exacto antes de desplegar; ver CHANGELOG.md).
+# Licencia de cada modelo, verificada en el archivo LICENSE oficial del punto de
+# control (Hugging Face o el repositorio del fabricante), NO en la etiqueta de
+# Ollama: Ollama marca Qwen2.5-VL-3B como Apache 2.0 y su licencia oficial es
+# de investigación (prohíbe el uso comercial). Se recorre en orden: los
+# prefijos más específicos van primero. `comercial`: True permitido, False
+# prohibido, None sin verificar. Un modelo sin uso comercial verificado no se
+# puede aprobar (manage.py inventario_ia).
 LICENCIAS = [
-    ("llama3.1", "Llama 3.1 Community License (uso comercial permitido con atribución «Built with Llama»)"),
-    ("qwen2.5vl:3b", "Por verificar: Qwen Research License o Apache 2.0 (ver el archivo LICENSE del modelo)"),
-    ("qwen2.5-vl-3b", "Por verificar: Qwen Research License o Apache 2.0 (ver el archivo LICENSE del modelo)"),
-    ("qwen3", "Apache 2.0"),
-    ("qwen2.5vl", "Apache 2.0"),
-    ("qwen2.5-vl", "Apache 2.0"),
-    ("mistral-small", "Apache 2.0"),
-    ("granite", "Apache 2.0"),
+    ("llama3.1", "Llama 3.1 Community License", True,
+     "Uso comercial permitido; exige mostrar «Built with Llama» y el aviso de copyright de Meta",
+     "https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/LICENSE"),
+    ("qwen3", "Apache 2.0", True, "", "https://huggingface.co/Qwen/Qwen3-4B"),
+    ("qwen2.5vl:3b", "Qwen Research License", False, "Solo investigación: prohíbe el uso comercial",
+     "https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/blob/main/LICENSE"),
+    ("qwen2.5-vl-3b", "Qwen Research License", False, "Solo investigación: prohíbe el uso comercial",
+     "https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/blob/main/LICENSE"),
+    ("qwen2.5vl:7b", "Apache 2.0", True, "", "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct"),
+    ("qwen2.5-vl-7b", "Apache 2.0", True, "", "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct"),
+    ("granite", "Apache 2.0", True, "", "https://huggingface.co/ibm-granite"),
+    ("mistral-small", "Apache 2.0", None, "Verificar la versión exacta", "https://huggingface.co/mistralai"),
 ]
+
+ATRIBUCION_LLAMA = (
+    "Built with Llama. Llama 3.1 is licensed under the Llama 3.1 Community License, "
+    "Copyright © Meta Platforms, Inc. All Rights Reserved."
+)
+
+
+def licencia_completa(modelo: str) -> dict:
+    """Licencia, si permite uso comercial, condiciones y fuente oficial."""
+    nombre = modelo.lower()
+    for prefijo, licencia, comercial, condiciones, fuente in LICENCIAS:
+        if nombre.startswith(prefijo):
+            return {"licencia": licencia, "comercial": comercial, "condiciones": condiciones, "fuente": fuente}
+    return {"licencia": "Por verificar", "comercial": None, "condiciones": "", "fuente": ""}
+
 
 USOS = {
     "extraccion_documentos": "Extraer datos de los documentos de la oferta (facultades del representante, integrantes, póliza).",
@@ -39,11 +63,10 @@ USOS = {
 
 
 def licencia_de(modelo: str) -> str:
-    nombre = modelo.lower()
-    for prefijo, licencia in LICENCIAS:
-        if nombre.startswith(prefijo):
-            return licencia
-    return "Por verificar"
+    d = licencia_completa(modelo)
+    if d["comercial"] is False:
+        return f"{d['licencia']} (NO permite uso comercial)"
+    return f"{d['licencia']} ({d['condiciones']})" if d["condiciones"] else d["licencia"]
 
 
 def ficha() -> dict:
@@ -101,7 +124,7 @@ def ficha() -> dict:
              "donde_se_ejecuta": "Servidores de LeMarTek (IA local); los documentos no salen a terceros"}
             for clave, modelo in modelos.items()
         ],
-        "atribucion": "Built with Llama" if usa_llama else None,
+        "atribucion": ATRIBUCION_LLAMA if usa_llama else None,
         "medicion": (
             {
                 "fecha": medicion.creada_en.isoformat(),

@@ -548,7 +548,7 @@ class TransparenciaTests(BaseEvaluaciones):
         self.assertTrue(any("No decide" in x for x in f["que_no_hace"]))
         self.assertEqual({m["modelo"] for m in f["modelos"]}, set(__import__("evaluaciones.cumplimiento", fromlist=["x"]).modelos_ia().values()))
         # Con Llama configurado, la licencia exige la atribución.
-        self.assertEqual(f["atribucion"], "Built with Llama")
+        self.assertTrue(f["atribucion"].startswith("Built with Llama"))
         r = c.get("/api/acerca/ficha")
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.content.startswith(b"PK"))

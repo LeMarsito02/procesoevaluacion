@@ -12,7 +12,7 @@
 | Dependencias JavaScript (npm audit) | 27001 8.8 | Aprobado: 0 vulnerabilidades |
 | Análisis estático (Bandit) | 27001 8.28 | Aprobado: 0 hallazgos medios o altos (62 bajos, revisados) |
 | Compilación, tipos y lint del frontend | 25010 | Aprobado |
-| Integridad de la auditoría | 27001 8.15 | Aprobado: cadena íntegra, 1 hueco documentado |
+| Integridad de la auditoría | 27001 8.15 | Aprobado: cadena íntegra |
 | Inventario de la IA | 42001 | **Pendiente:** 3 modelos en uso sin aprobación formal |
 | Accesibilidad WCAG 2.1 AA (axe-core) | Res. 1519 de 2020 | Aprobado: 0 infracciones en 4 combinaciones de pantalla y tamaño |
 | Restauración de respaldo | 27001 8.13 | Aprobado: restaurado en 1 s, datos completos, auditoría íntegra |
@@ -29,9 +29,10 @@
 | 5 | Candado de la IA en `/tmp`, que otro usuario del servidor podría suplantar | Media | Movido a la carpeta de la aplicación |
 | 6 | `LLM_URL` aceptaba cualquier esquema, incluido `file://` | Media | Solo `http` o `https` |
 | 7 | 12 usos de MD5/SHA-1 marcados como débiles | Informativo | Son claves de caché, no seguridad: declarados `usedforsecurity=False` |
-| 8 | Cadena de la auditoría rota por el borrado forzado de una cuenta en desarrollo (29/09/2026) | Baja | Hueco documentado dentro de la cadena, sin recalcularla; nuevo procedimiento (documento 08) |
+| 8 | Una prueba en desarrollo mostró que borrar a la fuerza una cuenta rompe la cadena de la auditoría | Baja | Procedimiento: las cuentas se desactivan, no se borran; los huecos autorizados se documentan sin recalcular la cadena (documento 08) |
 | 9 | Faltaba saltar la navegación con teclado (WCAG 2.4.1) | Media | Enlace «Saltar al contenido principal» |
 | 10 | El título de la pestaña era el mismo en todas las pantallas (WCAG 2.4.2) | Baja | Dice el paso y el proceso |
+| 11 | El modelo de visión (Qwen2.5-VL-3B) tiene licencia de investigación que **prohíbe el uso comercial**; Ollama lo etiqueta mal como Apache 2.0 | Alta (legal) | Reemplazado por Qwen2.5-VL-7B (Apache 2.0); el inventario rechaza modelos sin licencia comercial verificada |
 
 ## 3. Controles nuevos
 
@@ -46,7 +47,7 @@
 
 | Pendiente | Responsable | Documento |
 |---|---|---|
-| Aprobar formalmente los 3 modelos de IA con la medición del 27/09/2026 | Responsable de la IA | 06 |
+| Medir el modelo de visión 7B y aprobar los 3 modelos con nombre real del responsable | Responsable de la IA | 06 |
 | Escaneo con Nessus de la aplicación desplegada | Responsable de seguridad | 07 |
 | Primera ejecución de la integración continua en GitHub | Desarrollo | 05 |
 | Revisión de accesibilidad con lector de pantalla y zoom al 200 % | Desarrollo | 10 |

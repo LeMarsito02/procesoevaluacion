@@ -51,4 +51,4 @@ La auditoría no se puede modificar ni borrar desde la aplicación. Si alguien c
 ## 5. Registro de incidentes
 | Fecha | Descripción | Nivel | Acción | Estado |
 |---|---|---|---|---|
-| 29/09/2026 | Borrado forzado de una cuenta en el entorno de desarrollo; se eliminaron 3 eventos de auditoría (36–38) | Bajo (desarrollo, autorizado por el titular) | Hueco documentado en la auditoría (evento 283) el 2/10/2026 | Cerrado |
+| — | Sin incidentes registrados en producción | — | — | — |

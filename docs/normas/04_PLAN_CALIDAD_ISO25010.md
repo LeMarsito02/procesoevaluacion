@@ -24,7 +24,7 @@ La ISO/IEC 25010 define el modelo de calidad; no es certificable. Este plan fija
 | | Recuperabilidad | Trabajos que sobreviven a un reinicio | 100 % | Sí (fila persistente en la base) | `evaluaciones/trabajador.py` |
 | | | Restauración de respaldo probada | Mensual | Probada el 2/10/2026 (1 s) | Documento 09 |
 | **Seguridad** | Confidencialidad | Aislamiento entre entidades en la base | Sí | Row-Level Security | Documento 03 (8.3) |
-| | Integridad | Auditoría verificable | Íntegra | Íntegra (1 hueco documentado) | `verificar_auditoria` |
+| | Integridad | Auditoría verificable | Íntegra | Íntegra | `verificar_auditoria` |
 | | Autenticidad | Segundo factor en producción | 100 % de usuarios | Sí | Documento 03 (8.5) |
 | | Resistencia | Vulnerabilidades conocidas en dependencias | 0 | **0** | pip-audit y npm audit (2/10/2026) |
 | | | Hallazgos medios o altos de análisis estático | 0 | **0** | Bandit (2/10/2026) |

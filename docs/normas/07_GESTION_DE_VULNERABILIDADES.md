@@ -62,4 +62,5 @@ Cada hallazgo va a la tabla siguiente y se cierra con la evidencia del nuevo esc
 | 2/10/2026 | Bandit | `urlopen` sin restringir esquema (B310) | Media | `LLM_URL` solo http(s); URL fijas del SECOP revisadas | Cerrado |
 | 2/10/2026 | Revisión manual | Segundo factor solo para superadministrador y soporte | Alta | Obligatorio para todos en producción | Cerrado |
 | 2/10/2026 | Revisión manual | El respaldo diario se cortaba en silencio sin `RESPALDO_DIR` | Alta | Corregido; prueba de restauración | Cerrado |
+| 2/10/2026 | Revisión de licencias | Modelo de visión `qwen2.5vl:3b` con licencia de investigación (no comercial) | Alta (legal) | Reemplazado por `qwen2.5vl:7b` (Apache 2.0) | Cerrado |
 | — | Nessus | Escaneo de la aplicación | — | Pendiente | Abierto |

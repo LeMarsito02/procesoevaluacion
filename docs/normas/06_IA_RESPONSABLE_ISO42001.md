@@ -23,11 +23,13 @@ LeMarTek usa la inteligencia artificial en MiEvaluador **solo como apoyo** a la 
 
 ## 3. Inventario de sistemas de IA
 
-| Uso | Modelo (desarrollo) | Qué hace | Qué NO hace | Control |
-|---|---|---|---|---|
-| Extracción de documentos | `llama3.1:8b` (8B, Q4_K_M) | Extrae nombres, cédulas, valores y fechas de documentos de la oferta | Decidir si cumple | Anti-invención: el dato debe estar en el texto |
-| Lectura del pliego | `qwen3:4b` (4B, Q4_K_M) | Propone requisitos y parámetros del pliego, con su cita | Fijar requisitos sin confirmación | Una persona confirma cada parámetro antes de evaluar |
-| Visión | `qwen2.5vl:3b` (3.8B, Q4_K_M) | Lee documentos escaneados (fecha de expedición de la cédula) | Decidir antecedentes | Reglas de confianza; si duda, a revisión |
+| Uso | Modelo | Licencia (verificada en la fuente oficial) | Qué hace | Qué NO hace | Control |
+|---|---|---|---|---|---|
+| Extracción de documentos | `llama3.1:8b` (8B, Q4_K_M) | Llama 3.1 Community License: uso comercial permitido; exige mostrar «Built with Llama» y el aviso de copyright de Meta (se muestra en «Acerca de» y en la ficha del sistema) | Extrae nombres, cédulas, valores y fechas de documentos de la oferta | Decidir si cumple | Anti-invención: el dato debe estar en el texto |
+| Lectura del pliego | `qwen3:4b` (4B, Q4_K_M) | Apache 2.0 | Propone requisitos y parámetros del pliego, con su cita | Fijar requisitos sin confirmación | Una persona confirma cada parámetro antes de evaluar |
+| Visión | `qwen2.5vl:7b` (7B) | Apache 2.0 | Lee documentos escaneados (fecha de expedición de la cédula) | Decidir antecedentes | Reglas de confianza; si duda, a revisión |
+
+**Licencias:** se verifican en el archivo LICENSE oficial de cada modelo, no en la etiqueta de Ollama. El 2/10/2026 se encontró que Ollama marca `qwen2.5vl:3b` como Apache 2.0, cuando su licencia oficial (Qwen Research License) prohíbe el uso comercial: se reemplazó por el 7B. El registro está en `evaluaciones/transparencia.py` (`LICENCIAS`) y `inventario_ia` no deja aprobar un modelo sin uso comercial verificado.
 
 El inventario vivo, con la huella exacta de cada modelo y su aprobación, lo da:
 ```
@@ -49,7 +51,7 @@ Las aprobaciones quedan en `Backend/config/modelos_ia_aprobados.json` (versionad
 | **Cambio silencioso del modelo** | Resultados distintos sin aviso | Todos | Huella del modelo aprobada; el despliegue falla si no coincide | Bajo |
 
 ## 5. Ciclo de vida de un modelo
-1. **Selección:** licencia que permita el uso comercial local; capacidad para correr en el servidor.
+1. **Selección:** licencia que permita el uso comercial, verificada en el archivo LICENSE oficial; capacidad para correr en el servidor.
 2. **Medición:** contra informes reales de referencia, incluido al menos un proceso a ciegas. Criterio de aceptación: 0 aprobaciones indebidas, sin perder automatización frente al modelo anterior.
 3. **Aprobación:** `inventario_ia --aprobar`, con responsable y evidencia; modificación sustancial en `CHANGELOG.md`.
 4. **Operación:** cada resultado registra el modelo en su trazabilidad.
@@ -57,5 +59,5 @@ Las aprobaciones quedan en `Backend/config/modelos_ia_aprobados.json` (versionad
 6. **Retiro:** se desaprueba en el inventario; los resultados viejos conservan su trazabilidad.
 
 ## 6. Pendientes
-- Aprobar formalmente los modelos actuales con la medición del 27/09/2026 (`inventario_ia --aprobar`).
+- Medir el modelo de visión 7B (fecha de expedición de la cédula) y aprobar los tres modelos con `inventario_ia --aprobar` y el nombre real del responsable.
 - Publicar una ficha de transparencia del sistema para las entidades.

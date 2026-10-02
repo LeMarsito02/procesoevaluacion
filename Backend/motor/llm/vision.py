@@ -29,7 +29,9 @@ import requests
 log = logging.getLogger(__name__)
 
 URL = os.environ.get("LLM_URL", "http://localhost:11434")
-MODELO = os.environ.get("VISION_MODELO", "qwen2.5vl:3b")
+# qwen2.5vl:3b no: su licencia oficial es de investigación (ver LICENCIAS en
+# evaluaciones/transparencia.py). El 7B es Apache 2.0.
+MODELO = os.environ.get("VISION_MODELO", "qwen2.5vl:7b")
 HABILITADO = os.environ.get("VISION_HABILITADO", "1") == "1"
 TIEMPO_MAXIMO = float(os.environ.get("VISION_TIMEOUT", "180"))
 RESOLUCION = int(os.environ.get("VISION_RESOLUCION", "200"))

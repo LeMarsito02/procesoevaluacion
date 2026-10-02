@@ -25,6 +25,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from evaluaciones.cumplimiento import modelos_ia
+from evaluaciones.transparencia import licencia_completa
 
 APROBADOS = Path(settings.BASE_DIR) / "config" / "modelos_ia_aprobados.json"
 
@@ -62,15 +63,23 @@ class Command(BaseCommand):
             info = instalados.get(nombre) or instalados.get(f"{nombre}:latest")
             huella = info["digest"] if info else None
             detalles = (info or {}).get("details", {})
+            lic = licencia_completa(nombre)
             actuales[uso] = {
                 "modelo": nombre,
+                "licencia": lic["licencia"],
+                "uso_comercial": lic["comercial"],
+                "fuente_licencia": lic["fuente"],
                 "huella": huella,
                 "parametros": detalles.get("parameter_size"),
                 "cuantizacion": detalles.get("quantization_level"),
                 "proposito": USOS.get(uso, ""),
             }
             aprobado = aprobados.get(uso, {})
-            if huella is None:
+            if lic["comercial"] is not True:
+                estado = ("LICENCIA SIN USO COMERCIAL" if lic["comercial"] is False else "LICENCIA SIN VERIFICAR") + \
+                    f" ({lic['licencia']}): no se puede usar en producción"
+                sin_aprobar += 1
+            elif huella is None:
                 estado = "NO INSTALADO"
                 sin_aprobar += 1
             elif aprobado.get("modelo") == nombre and aprobado.get("huella") == huella:
@@ -80,12 +89,14 @@ class Command(BaseCommand):
                 sin_aprobar += 1
             self.stdout.write(
                 f"{uso}: {nombre} [{(huella or '—')[:12]}] {detalles.get('parameter_size', '')} "
-                f"{detalles.get('quantization_level', '')} → {estado}"
+                f"{detalles.get('quantization_level', '')} · {lic['licencia']} → {estado}"
             )
 
         if opciones["aprobar"]:
             if not opciones.get("por") or not opciones.get("evidencia"):
                 raise CommandError("Para aprobar se necesita --por y --evidencia (la medición que lo respalda).")
+            if any(a["uso_comercial"] is not True for a in actuales.values()):
+                raise CommandError("Hay modelos sin licencia de uso comercial verificada: cámbielos antes de aprobar.")
             if any(a["huella"] is None for a in actuales.values()):
                 raise CommandError("Hay modelos configurados que no están instalados: no se pueden aprobar.")
             for a in actuales.values():
