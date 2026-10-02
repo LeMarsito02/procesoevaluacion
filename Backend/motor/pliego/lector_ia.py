@@ -225,7 +225,7 @@ def _limpiar(crudo: dict, trozo: Trozo, pagina_de: Callable[[str, int], int]) ->
     condiciones = [str(c).strip() for c in (crudo.get("condiciones") or []) if isinstance(c, str) and c.strip()]
     documento = _texto_o_nada(crudo.get("documento"))
     return RequisitoPliego(
-        id=hashlib.sha1(_norm(requisito + (documento or "")).encode()).hexdigest()[:12],
+        id=hashlib.sha1(_norm(requisito + (documento or "")).encode(), usedforsecurity=False).hexdigest()[:12],
         requisito=requisito[:300],
         documento=str(documento).strip()[:200] if documento else None,
         titulo_documento=titulos[:4],

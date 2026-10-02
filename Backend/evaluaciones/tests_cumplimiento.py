@@ -412,10 +412,11 @@ class AuditoriaInmutableTests(TestCase):
     def test_la_cadena_de_huellas_detecta_manipulacion(self):
         from cuentas.management.commands.verificar_auditoria import verificar
 
+        EventoAuditoria.objects.create(accion="cero")
         primero = EventoAuditoria.objects.create(accion="uno")
         EventoAuditoria.objects.create(accion="dos", detalles={"x": "y"})
         EventoAuditoria.objects.create(accion="tres")
-        n, roto = verificar()
+        n, roto, _ = verificar()
         self.assertIsNone(roto)
         self.assertGreaterEqual(n, 3)
         out = io.StringIO()
@@ -427,8 +428,52 @@ class AuditoriaInmutableTests(TestCase):
             c.execute("ALTER TABLE cuentas_eventoauditoria DISABLE TRIGGER auditoria_inmutable")
             c.execute("UPDATE cuentas_eventoauditoria SET accion = 'alterado' WHERE id = %s", [primero.pk])
             c.execute("ALTER TABLE cuentas_eventoauditoria ENABLE TRIGGER auditoria_inmutable")
-        n, roto = verificar()
+        n, roto, _ = verificar()
         self.assertEqual(roto.pk, primero.pk)
+        # Un evento modificado no se puede pasar por hueco documentado.
+        with self.assertRaisesMessage(Exception, "MODIFICADO"):
+            call_command("documentar_brecha_auditoria", motivo="intento", por="nadie", stdout=io.StringIO())
+
+    def _borrar_a_la_fuerza(self, *eventos):
+        with connection.cursor() as c:
+            c.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            c.execute("ALTER TABLE cuentas_eventoauditoria DISABLE TRIGGER auditoria_inmutable")
+            c.execute("DELETE FROM cuentas_eventoauditoria WHERE id = ANY(%s)", [[e.pk for e in eventos]])
+            c.execute("ALTER TABLE cuentas_eventoauditoria ENABLE TRIGGER auditoria_inmutable")
+
+    def test_un_hueco_documentado_se_informa_y_la_cadena_se_sigue_verificando(self):
+        from cuentas.management.commands.verificar_auditoria import verificar
+
+        EventoAuditoria.objects.create(accion="uno")
+        b1 = EventoAuditoria.objects.create(accion="borrado 1")
+        b2 = EventoAuditoria.objects.create(accion="borrado 2")
+        siguiente = EventoAuditoria.objects.create(accion="sigue")
+        EventoAuditoria.objects.create(accion="después")
+        self._borrar_a_la_fuerza(b1, b2)
+        self.assertEqual(verificar()[1].pk, siguiente.pk)
+        call_command("documentar_brecha_auditoria", motivo="Borrado forzado de una cuenta", por="Administrador", stdout=io.StringIO())
+        n, roto, brechas = verificar()
+        self.assertIsNone(roto)
+        self.assertEqual(brechas[0]["faltantes"], [b1.pk, b2.pk])
+        out = io.StringIO()
+        call_command("verificar_auditoria", stdout=out)
+        self.assertIn("Hueco documentado", out.getvalue())
+        # Ni el evento ancla ni lo posterior se pueden alterar después.
+        with connection.cursor() as c:
+            c.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            c.execute("ALTER TABLE cuentas_eventoauditoria DISABLE TRIGGER auditoria_inmutable")
+            c.execute("UPDATE cuentas_eventoauditoria SET accion = 'alterado' WHERE id = %s", [siguiente.pk])
+            c.execute("ALTER TABLE cuentas_eventoauditoria ENABLE TRIGGER auditoria_inmutable")
+        self.assertEqual(verificar()[1].pk, siguiente.pk)
+
+    def test_un_hueco_sin_documentar_rompe_la_cadena(self):
+        from cuentas.management.commands.verificar_auditoria import verificar
+
+        EventoAuditoria.objects.create(accion="uno")
+        borrado = EventoAuditoria.objects.create(accion="borrado")
+        siguiente = EventoAuditoria.objects.create(accion="sigue")
+        self._borrar_a_la_fuerza(borrado)
+        self.assertEqual(verificar()[1].pk, siguiente.pk)
 
 
 class ProcesosConExpedienteTests(BaseFlujo):

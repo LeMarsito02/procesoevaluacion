@@ -181,7 +181,7 @@ def _huella(contenido: bytes) -> str:
     guardada = _HUELLAS.get(id(contenido))
     if guardada is not None and guardada[0] is contenido:
         return guardada[1]
-    huella = hashlib.md5(contenido).hexdigest()
+    huella = hashlib.md5(contenido, usedforsecurity=False).hexdigest()
     _HUELLAS[id(contenido)] = (contenido, huella)
     return huella
 

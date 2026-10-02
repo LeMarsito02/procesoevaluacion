@@ -88,7 +88,7 @@ def _archivo_de_cache(page, etiqueta: re.Pattern[str]):
     huella = getattr(page.pdf, "_huella_contenido", None)
     if not huella:
         return None
-    marca = hashlib.sha1(etiqueta.pattern.encode()).hexdigest()[:8]
+    marca = hashlib.sha1(etiqueta.pattern.encode(), usedforsecurity=False).hexdigest()[:8]
     return OCR_CACHE_DIR / f"{huella}_{page.page_number}_franja_{marca}.txt"
 
 

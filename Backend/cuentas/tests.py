@@ -160,6 +160,16 @@ class SegundoFactorTests(BaseCuentas):
         self.assertEqual(c2.entrar("santiagopebe01@lemartek.com")["estado"], "verificar_2fa")
         self.assertEqual(c2.post("/api/auth/2fa/configurar").status_code, 400)
 
+    def test_en_produccion_todos_los_roles_usan_2fa(self):
+        from django.test import override_settings
+
+        with override_settings(EXIGIR_2FA_A_TODOS=True):
+            c = Cliente()
+            self.assertEqual(c.entrar("abogado@entidad.gov.co")["estado"], "configurar_2fa")
+            self.assertEqual(c.get("/api/auth/yo").status_code, 401)
+        with override_settings(EXIGIR_2FA_A_TODOS=False):
+            self.assertEqual(Cliente().entrar("abogado@entidad.gov.co")["estado"], "ok")
+
     def test_2fa_sin_contrasena_previa(self):
         c = Cliente()
         self.assertEqual(c.post("/api/auth/2fa/verificar", {"codigo": "123456"}).status_code, 401)

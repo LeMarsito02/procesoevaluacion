@@ -43,6 +43,9 @@ interface Contexto {
 
 const ContextoDialogos = createContext<Contexto | null>(null)
 
+// El hook va junto a su proveedor y su contexto: separarlos solo por la recarga
+// en caliente de desarrollo dejaría el contexto partido en dos archivos.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useDialogos(): Contexto {
   const ctx = useContext(ContextoDialogos)
   if (!ctx) throw new Error('useDialogos necesita <ProveedorDialogos> arriba en el árbol')

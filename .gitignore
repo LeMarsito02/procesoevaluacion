@@ -41,3 +41,6 @@ evaluacuonfinanciera/
 # Material de pruebas (ofertas reales de los proponentes): nunca se sube
 datasetdepruebas/
 docs/MEJORAS_PENDIENTES.md
+
+# Evidencias de las auditorías (traen datos del entorno): se archivan aparte
+docs/normas/evidencias/

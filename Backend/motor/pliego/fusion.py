@@ -182,7 +182,7 @@ def clave_de_requisito(requisito: str) -> str:
     import hashlib
 
     troncos = ({_tronco(p) for p in _palabras(requisito)} - _RELLENO) | _cifras(requisito)
-    return hashlib.sha1(" ".join(sorted(troncos)).encode()).hexdigest()[:12]
+    return hashlib.sha1(" ".join(sorted(troncos)).encode(), usedforsecurity=False).hexdigest()[:12]
 
 
 def sin_verificar(ia: ParametrosIA | None, asumidos: list[str] | None = None) -> list[tuple[str, str, str]]:

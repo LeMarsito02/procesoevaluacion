@@ -54,7 +54,7 @@ class Command(BaseCommand):
             "$limit": max(1, min(opciones["limite"], 500)),
         })
         try:
-            with urllib.request.urlopen(f"{RECURSO}?{consulta}", timeout=60) as respuesta:
+            with urllib.request.urlopen(f"{RECURSO}?{consulta}", timeout=60) as respuesta:  # nosec B310 (RECURSO es una URL https fija)
                 filas = json.loads(respuesta.read())
         except Exception as exc:  # noqa: BLE001
             raise CommandError(f"No se pudo consultar el portal de datos abiertos: {exc}") from exc

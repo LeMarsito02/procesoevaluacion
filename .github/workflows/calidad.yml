@@ -1,0 +1,82 @@
+# Control de calidad en cada cambio (ISO/IEC 25010 mantenibilidad y fiabilidad;
+# ISO/IEC 27001 controles 8.8, 8.25, 8.28 y 8.29). Un cambio que rompe una
+# prueba, trae una dependencia vulnerable o un hallazgo de seguridad no se
+# integra. Ver docs/normas/05_CONTROL_DE_CAMBIOS.md.
+name: Calidad
+
+on:
+  push:
+    branches: [main, demo]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DJANGO_SECRET_KEY: clave-solo-para-pruebas-de-integracion-continua
+      DJANGO_DEBUG: "1"
+      DB_NOMBRE: mievaluador
+      DB_USUARIO: mievaluador
+      DB_CLAVE: mievaluador
+      DB_HOST: localhost
+      DB_PUERTO: "5432"
+      LLM_HABILITADO: "0"
+      PLIEGO_IA_HABILITADO: "0"
+      VISION_HABILITADO: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: Backend/requirements.txt
+      - name: Herramientas del sistema (OCR, .rar)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa 7zip
+      - name: Rol de la aplicación SIN superusuario ni BYPASSRLS (como en producción)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE mievaluador LOGIN NOSUPERUSER NOBYPASSRLS CREATEDB PASSWORD 'mievaluador'"
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE mievaluador OWNER mievaluador"
+      - name: Dependencias
+        working-directory: Backend
+        run: pip install -r requirements.txt
+      - name: Pruebas automáticas
+        working-directory: Backend
+        run: python manage.py test --parallel 4
+      - name: Vulnerabilidades de dependencias (pip-audit)
+        working-directory: Backend
+        run: pip install pip-audit && pip-audit -r requirements.txt --progress-spinner off
+      - name: Análisis estático de seguridad (Bandit, severidad media o alta)
+        working-directory: Backend
+        run: pip install bandit && bandit -q -r api cuentas evaluaciones motor config -x '*/tests*,*/migrations/*' -ll
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Dependencias
+        working-directory: frontend
+        run: npm ci
+      - name: Vulnerabilidades de dependencias (npm audit)
+        working-directory: frontend
+        run: npm audit
+      - name: Tipos, lint y compilación
+        working-directory: frontend
+        run: npm run lint && npm run build

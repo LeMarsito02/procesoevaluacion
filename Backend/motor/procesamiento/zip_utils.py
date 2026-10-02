@@ -78,7 +78,7 @@ def _deduplicar_por_contenido(pdfs: dict[str, bytes]) -> dict[str, bytes]:
     resultado: dict[str, bytes] = {}
     for ruta in sorted(pdfs.keys(), key=lambda r: (len(r), r)):
         contenido = pdfs[ruta]
-        huella = hashlib.md5(contenido).hexdigest()
+        huella = hashlib.md5(contenido, usedforsecurity=False).hexdigest()
         if huella in por_hash:
             continue
         por_hash[huella] = ruta
@@ -108,7 +108,7 @@ def extraer_pdfs(zip_bytes: bytes, _profundidad: int = 0, _ruta: str = "") -> di
     global _ULTIMO_ZIP
     if _ULTIMO_ZIP is not None and _ULTIMO_ZIP[0] is zip_bytes:
         return _ULTIMO_ZIP[2]
-    huella = hashlib.md5(zip_bytes).hexdigest()
+    huella = hashlib.md5(zip_bytes, usedforsecurity=False).hexdigest()
     if _ULTIMO_ZIP is not None and _ULTIMO_ZIP[1] == huella:
         return _ULTIMO_ZIP[2]
     _ULTIMO_ZIP = None

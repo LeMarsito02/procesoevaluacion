@@ -88,9 +88,9 @@ def resultado_tecnico(proponente: Proponente, proceso: ProcesoDocumentoBase) -> 
         md5 = (get_file_metadata(proponente.drive_file_id) or {}).get("md5Checksum")
     except Exception:  # noqa: BLE001
         md5 = None
-    aportados = hashlib.md5(b"".join(c for _, c in proponente.documentos_aportados)).hexdigest()
+    aportados = hashlib.md5(b"".join(c for _, c in proponente.documentos_aportados), usedforsecurity=False).hexdigest()
     parametros_json = json.dumps(proceso.parametros_tecnicos, sort_keys=True, default=str)
-    clave = f"{proponente.drive_file_id}|{md5}|{aportados}|{hashlib.md5(parametros_json.encode()).hexdigest()}"
+    clave = f"{proponente.drive_file_id}|{md5}|{aportados}|{hashlib.md5(parametros_json.encode(), usedforsecurity=False).hexdigest()}"
     if _ULTIMO is not None and _ULTIMO[0] == clave:
         return _ULTIMO[1]
     _ULTIMO = None

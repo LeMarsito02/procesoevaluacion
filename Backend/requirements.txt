@@ -52,7 +52,7 @@ sqlparse==0.6.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 uritemplate==4.2.0
-urllib3==2.7.0
+urllib3==2.8.0
 uvicorn==0.53.0
 uvloop==0.22.1
 watchfiles==1.2.0

@@ -24,6 +24,10 @@ import urllib.request
 from pathlib import Path
 
 LLM_URL = os.environ.get("LLM_URL", "http://localhost:11434")
+# La IA es local: solo se habla HTTP(S) con Ollama. Un LLM_URL mal puesto
+# ("file:///…") no debe convertir la consulta en una lectura de disco.
+if not LLM_URL.startswith(("http://", "https://")):
+    raise ValueError("LLM_URL debe empezar por http:// o https://")
 LLM_MODELO = os.environ.get("LLM_MODELO", "llama3.1:8b")
 LLM_HABILITADO = os.environ.get("LLM_HABILITADO", "1") == "1"
 # Ollama atiende una petición a la vez por defecto: con varios workers una
@@ -60,10 +64,14 @@ def _clave_cache(modelo: str, instruccion: str, documento: str) -> str:
 # Una sola consulta al modelo a la vez en toda la máquina (entre workers):
 # consultas simultáneas hacen que Ollama reserve memoria para cada una y el
 # modelo, que no cabe entero en la GPU, termina compitiendo por RAM.
-_CANDADO_LLM = Path(os.environ.get("LLM_CANDADO", "/tmp/evaluador-juridico-llm.lock"))
+# Vive en la carpeta de la app y no en /tmp: en /tmp otro usuario del servidor
+# podría crear antes el archivo (o un enlace con ese nombre) y bloquear la IA o
+# hacer que la app escriba donde no debe (hallazgo de Bandit B108).
+_CANDADO_LLM = Path(os.environ.get("LLM_CANDADO", str(CACHE_DIR.parent / "llm.lock")))
 
 
 def _llamar(instruccion: str, documento: str) -> str:
+    _CANDADO_LLM.parent.mkdir(parents=True, exist_ok=True)
     with open(_CANDADO_LLM, "a") as candado:
         fcntl.flock(candado, fcntl.LOCK_EX)
         try:
@@ -88,7 +96,7 @@ def _llamar_sin_candado(instruccion: str, documento: str) -> str:
     peticion = urllib.request.Request(
         f"{LLM_URL}/api/chat", data=json.dumps(cuerpo).encode(), headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(peticion, timeout=LLM_TIMEOUT_SEGUNDOS) as respuesta:
+    with urllib.request.urlopen(peticion, timeout=LLM_TIMEOUT_SEGUNDOS) as respuesta:  # nosec B310 (esquema validado arriba)
         return json.load(respuesta)["message"]["content"]
 
 

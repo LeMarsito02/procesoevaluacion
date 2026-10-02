@@ -205,6 +205,11 @@ MUESTRA_VERIFICACIONES = max(10, int(os.environ.get("MUESTRA_VERIFICACIONES", "1
 # datos de una entidad sin su permiso temporal, aunque la variable esté puesta.
 SUPERADMIN_SIN_PERMISO = DEBUG and os.environ.get("SUPERADMIN_SIN_PERMISO", "0") == "1"
 
+# Segundo factor para TODOS los roles (no solo superadministrador y soporte).
+# Obligatorio en producción; en desarrollo es opcional para no estorbar las
+# pruebas y la demostración. EXIGIR_2FA_A_TODOS=1 lo activa también ahí.
+EXIGIR_2FA_A_TODOS = os.environ.get("EXIGIR_2FA_A_TODOS", "0" if DEBUG else "1") == "1"
+
 # Días que se conservan los documentos de los proponentes tras aprobar el proceso.
 RETENCION_DIAS = int(os.environ.get("RETENCION_DIAS", "30"))
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024

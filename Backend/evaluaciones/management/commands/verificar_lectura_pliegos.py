@@ -90,7 +90,7 @@ class Command(BaseCommand):
             "$where": f"referencia_del_proceso like '{codigo}%'", "$limit": 5,
         })
         try:
-            with urllib.request.urlopen(f"{RECURSO}?{consulta}", timeout=40) as respuesta:
+            with urllib.request.urlopen(f"{RECURSO}?{consulta}", timeout=40) as respuesta:  # nosec B310 (RECURSO es una URL https fija)
                 filas = json.loads(respuesta.read())
         except Exception:  # noqa: BLE001 — sin red, se sigue sin comparar
             return None

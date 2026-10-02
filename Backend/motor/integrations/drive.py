@@ -312,7 +312,7 @@ def list_proponentes(carpeta_drive: str) -> ProponentesResult:
 
 
 def _list_proponentes_onedrive(enlace: str) -> ProponentesResult:
-    cache_listado = CACHE_LISTADOS_DIR / f"onedrive_{hashlib.sha1(enlace.encode()).hexdigest()[:16]}.json"
+    cache_listado = CACHE_LISTADOS_DIR / f"onedrive_{hashlib.sha1(enlace.encode(), usedforsecurity=False).hexdigest()[:16]}.json"
     if _solo_cache() and cache_listado.exists():
         return _proponentes_de(json.loads(cache_listado.read_text()))
     try:

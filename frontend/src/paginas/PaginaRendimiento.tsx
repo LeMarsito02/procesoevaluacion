@@ -89,7 +89,7 @@ export default function PaginaRendimiento() {
       .catch((e: unknown) => setError(mensajeDe(e)))
   }, [])
 
-  const pruebas = datos?.foto?.pruebas ?? []
+  const pruebas = useMemo(() => datos?.foto?.pruebas ?? [], [datos])
   const horas = useMemo(
     () => pruebas.reduce((s, p) => s + (p.automaticas * (minutos[p.area] ?? 0)) / 60, 0),
     [pruebas, minutos],

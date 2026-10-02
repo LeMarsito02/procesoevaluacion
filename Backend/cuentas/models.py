@@ -133,7 +133,13 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     @property
     def requiere_2fa(self) -> bool:
-        return self.rol in (Rol.SUPERADMIN, Rol.SOPORTE)
+        # Superadministrador y soporte, siempre. Los demás, cuando la
+        # instalación lo exige (por defecto, en todo servidor sin DEBUG):
+        # deciden sobre contratación pública y ven datos personales (ISO/IEC
+        # 27001, control 8.5; lineamientos de seguridad digital de MinTIC).
+        from django.conf import settings
+
+        return self.rol in (Rol.SUPERADMIN, Rol.SOPORTE) or settings.EXIGIR_2FA_A_TODOS
 
     @property
     def es_soporte(self) -> bool:

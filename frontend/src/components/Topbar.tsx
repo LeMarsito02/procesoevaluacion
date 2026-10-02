@@ -20,6 +20,22 @@ interface Props {
 export default function Topbar({ codigoProceso = null, pasos }: Props) {
   return (
     <header className="topbar">
+      {/* WCAG 2.4.1 (MinTIC, Res. 1519 de 2020): con teclado o lector de
+          pantalla, saltar la barra y llegar directo al contenido. */}
+      <a
+        className="saltar-contenido"
+        href="#contenido"
+        onClick={(e) => {
+          e.preventDefault()
+          const principal = document.querySelector<HTMLElement>('main')
+          if (!principal) return
+          principal.tabIndex = -1
+          principal.focus()
+          principal.scrollIntoView()
+        }}
+      >
+        Saltar al contenido principal
+      </a>
       <div className="topbar-inner" data-con-pasos={!!pasos}>
         <button type="button" className="brand brand-boton" onClick={() => navegar('/')} aria-label="Ir al inicio">
           <img className="brand-mark" src="/icono-mievaluador.png" alt="" />

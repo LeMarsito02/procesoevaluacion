@@ -72,6 +72,10 @@ a { color: var(--brand); }
 .num { font-variant-numeric: tabular-nums; }
 
 /* ---------- Barra superior y pasos ---------- */
+/* Enlace para saltar la barra: invisible hasta que recibe el foco del teclado. */
+.saltar-contenido { position: absolute; left: 12px; top: -48px; z-index: 100; padding: 10px 16px; border-radius: 10px; background: var(--brand); color: #fff; font-weight: 600; text-decoration: none; }
+.saltar-contenido:focus { top: 10px; }
+main:focus { outline: none; }
 .topbar {
   position: sticky; top: 0; z-index: 30;
   background: rgba(255, 255, 255, 0.92);

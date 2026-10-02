@@ -210,7 +210,7 @@ class Command(BaseCommand):
             contenido = memoria.getvalue()
             (CACHE_DIR / f"demo-{p.hoja.lower()}.zip").write_bytes(contenido)
             (CACHE_DIR / f"demo-{p.hoja.lower()}.meta.json").write_text(json.dumps({
-                "name": f"{p.hoja[2:]}. {p.nombre}.zip", "md5Checksum": hashlib.md5(contenido).hexdigest(), "size": str(len(contenido)),
+                "name": f"{p.hoja[2:]}. {p.nombre}.zip", "md5Checksum": hashlib.md5(contenido, usedforsecurity=False).hexdigest(), "size": str(len(contenido)),
             }))
 
         # 4) La plantilla de la demostración (no toca la de la entidad).

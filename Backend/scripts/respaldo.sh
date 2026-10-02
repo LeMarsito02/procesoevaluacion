@@ -11,7 +11,9 @@
 set -euo pipefail
 
 BACKEND="$(cd "$(dirname "$0")/.." && pwd)"
-leer() { grep -E "^$1=" "$BACKEND/.env" | tail -1 | cut -d= -f2-; }
+# Una variable que no está en .env da vacío (sin «|| true», set -e cortaba el
+# script en silencio y el respaldo nunca se hacía).
+leer() { { grep -E "^$1=" "$BACKEND/.env" || true; } | tail -1 | cut -d= -f2-; }
 
 DB_NOMBRE="$(leer DB_NOMBRE)"
 DB_HOST="$(leer DB_HOST)"
