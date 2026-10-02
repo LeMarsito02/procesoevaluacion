@@ -901,3 +901,10 @@ html.a11y-contraste .a11y-opcion[aria-pressed='true'] { border-width: 3px; }
 @media (max-width: 1000px) { .metricas .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .metricas .kpis { grid-template-columns: minmax(0, 1fr); } .metricas-meses { gap: 2px; } .metricas-mes-nombre { font-size: 10px; } }
 .metricas-dos > .card { margin-top: 0; }
+.metricas-modalidad h3 { font-size: 15px; margin-bottom: 8px; }
+.metricas-modalidad dl { margin: 0; display: flex; flex-direction: column; }
+.metricas-modalidad dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+.metricas-modalidad dt { font-size: 13.5px; color: var(--ink-2); }
+.metricas-modalidad dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.metricas-modalidad-promedio dt { font-weight: 600; color: var(--ink); }
+.metricas-modalidad-promedio dd { font-family: var(--serif); font-size: 24px; color: var(--brand); }

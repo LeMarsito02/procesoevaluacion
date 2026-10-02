@@ -202,17 +202,29 @@ export default function PaginaMetricas() {
 
           <section className="card metricas-bloque">
             <h2>Ofertas por proceso</h2>
-            <p className="small muted">Promedio de proponentes en los procesos evaluados, según la modalidad.</p>
+            <p className="small muted">
+              Cuántos proponentes se presentan, en promedio, a cada proceso evaluado en el periodo, según el tipo de proceso.
+            </p>
             <div className="metricas-modalidades">
               {datos.modalidades
                 .filter((m) => m.procesos || m.clave !== 'otra')
                 .map((m) => (
                   <div key={m.clave} className="metricas-modalidad">
-                    <div className="kpi-label">{m.nombre}</div>
-                    <div className="kpi-value">{m.promedio_ofertas == null ? '—' : m.promedio_ofertas.toLocaleString('es-CO')}</div>
-                    <div className="kpi-sub">
-                      ofertas por proceso · {entero(m.procesos)} {m.procesos === 1 ? 'proceso' : 'procesos'}, {entero(m.ofertas)} ofertas
-                    </div>
+                    <h3>{m.nombre}</h3>
+                    <dl>
+                      <div>
+                        <dt>Procesos evaluados</dt>
+                        <dd>{entero(m.procesos)}</dd>
+                      </div>
+                      <div>
+                        <dt>Ofertas en total</dt>
+                        <dd>{entero(m.ofertas)}</dd>
+                      </div>
+                      <div className="metricas-modalidad-promedio">
+                        <dt>Promedio de ofertas por proceso</dt>
+                        <dd>{m.promedio_ofertas == null ? '—' : m.promedio_ofertas.toLocaleString('es-CO')}</dd>
+                      </div>
+                    </dl>
                   </div>
                 ))}
             </div>
