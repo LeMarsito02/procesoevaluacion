@@ -696,6 +696,24 @@ class EstructuraTests(BaseFlujo):
         self.assertEqual(DesignacionComite.objects.filter(evaluacion_id=eid).order_by("-version").first().version, 2)
         self.assertFalse(abogado.get(f"/api/evaluaciones/{eid}").json()["evaluacion"]["puede_trabajar"])
 
+    def test_un_evaluador_puede_ser_jefe_de_su_dependencia(self):
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        r = admin.post("/api/estructura/dependencias", {"tipo": "tecnica", "nombre": "Área de Concesiones",
+                                                        "jefes": [str(self.tecnico.id)], "miembros": [str(self.evaluador.id)]})
+        self.assertEqual(r.status_code, 201, r.content)
+        eid = admin.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": MUCHOS[:1], "tipos": ["tecnica"]}).json()[0]["id"]
+        tecnico = Cliente()
+        tecnico.entrar("tecnico@entidad.gov.co")
+        self.assertTrue(tecnico.get(f"/api/evaluaciones/{eid}").json()["evaluacion"]["puede_gestionar"])
+        self.assertEqual(tecnico.put(f"/api/evaluaciones/{eid}/comite", {"miembros": [str(self.evaluador.id)]}).status_code, 200)
+        # Jefe e integrante a la vez, no; consulta, tampoco.
+        r = admin.post("/api/estructura/dependencias", {"tipo": "juridica", "nombre": "Dirección Jurídica",
+                                                        "jefes": [str(self.evaluador.id)], "miembros": [str(self.evaluador.id)]})
+        self.assertEqual(r.status_code, 400)
+        r = admin.post("/api/estructura/dependencias", {"tipo": "juridica", "nombre": "Dirección Jurídica", "miembros": [str(self.consulta.id)]})
+        self.assertEqual(r.status_code, 400)
+
     def test_consulta_no_entra_al_comite(self):
         admin, _ = self._dependencias()
         eid = admin.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": MUCHOS[:1], "tipos": ["tecnica"]}).json()[0]["id"]

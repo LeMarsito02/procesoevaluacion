@@ -67,8 +67,12 @@ def _guardar(request: HttpRequest, d: Dependencia, datos: DependenciaIn) -> dict
     personas = {u.id: u for u in Usuario.objects.filter(pk__in=[*datos.jefes, *datos.miembros], entidad_id=d.entidad_id, is_active=True)}
     if (set(datos.jefes) | set(datos.miembros)) - set(personas):
         raise HttpError(400, "Alguna persona no es un usuario activo de la entidad.")
-    if any(personas[j].rol not in (Rol.JEFE_AREA, Rol.ADMIN_ENTIDAD) for j in datos.jefes):
-        raise HttpError(400, "Los jefes de una dependencia deben tener rol de jefe de área (o administrador).")
+    # Ser jefe es un cargo en la dependencia (designa el comité y aprueba sus
+    # evaluaciones), no un rol de la plataforma; solo «consulta» no puede.
+    if any(personas[i].rol == Rol.CONSULTA for i in [*datos.jefes, *datos.miembros]):
+        raise HttpError(400, "Un usuario de consulta no puede ser jefe ni integrante de una dependencia.")
+    if set(datos.jefes) & set(datos.miembros):
+        raise HttpError(400, "Una persona es jefe o integrante, no las dos cosas.")
     d.tipo, d.nombre, d.palabras_clave = datos.tipo, nombre, datos.palabras_clave.strip()
     d.activa, d.orden = datos.activa, datos.orden
     try:

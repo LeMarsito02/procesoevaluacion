@@ -920,3 +920,32 @@ html.a11y-contraste .a11y-opcion[aria-pressed='true'] { border-width: 3px; }
 .estructura-dependencia { display: flex; gap: 10px; align-items: flex-start; width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
 .estructura-dependencia[data-activa='false'] { opacity: 0.7; }
 .estructura-personas { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 8px; max-height: 300px; overflow-y: auto; }
+
+/* Editor de dependencia: datos arriba, personas con su cargo, pie fijo. */
+.editor-dependencia form { display: flex; flex-direction: column; gap: 14px; }
+.editor-dependencia .field { margin: 0; }
+.editor-dependencia-datos { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }
+.editor-dependencia-personas { border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.editor-dependencia-personas-cabeza { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.editor-dependencia-personas-cabeza h3 { font-size: 15px; }
+.lista-personas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+.lista-personas-vacio { padding: 10px; }
+.persona-fila { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; border: 1px solid transparent; }
+.persona-fila[data-cargo='integrante'] { background: var(--surface-2); border-color: var(--line); }
+.persona-fila[data-cargo='jefe'] { background: var(--brand-soft); border-color: var(--brand); }
+.persona-datos { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 14px; }
+.persona-datos .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.persona-cargo { flex: none; }
+.persona-cargo button { padding: 6px 10px; }
+.persona-fila[data-cargo='jefe'] .persona-cargo button[aria-pressed='true'] { background: var(--brand); color: #fff; }
+.editor-dependencia-pie { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .editor-dependencia-datos { grid-template-columns: minmax(0, 1fr); }
+  .persona-fila { flex-wrap: wrap; }
+  .persona-cargo { width: 100%; display: flex; }
+  .persona-cargo button { flex: 1; }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.dialogo.editor-dependencia { width: min(760px, calc(100vw - 32px)); max-width: none; }
+.editor-dependencia .card-head { flex-wrap: nowrap; }
+.persona-cargo button { white-space: nowrap; }

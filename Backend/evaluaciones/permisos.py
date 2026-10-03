@@ -27,13 +27,12 @@ def puede_gestionar(usuario: Usuario, evaluacion: Evaluacion) -> bool:
         return False
     if usuario.es_superadmin or usuario.rol == Rol.ADMIN_ENTIDAD:
         return True
-    if usuario.rol != Rol.JEFE_AREA:
-        return False
-    # Con estructura por dependencias, la gestiona el jefe de esa dependencia;
-    # sin ella (evaluaciones anteriores), el jefe del área.
+    # Con estructura por dependencias, la gestiona quien sea jefe de esa
+    # dependencia (es un cargo en ella, sea cual sea su rol); sin ella
+    # (evaluaciones anteriores), el jefe del área.
     if evaluacion.dependencia_id:
-        return evaluacion.dependencia.jefes.filter(pk=usuario.pk).exists()
-    return tiene_area(usuario, evaluacion.tipo)
+        return usuario.rol != Rol.CONSULTA and evaluacion.dependencia.jefes.filter(pk=usuario.pk).exists()
+    return usuario.rol == Rol.JEFE_AREA and tiene_area(usuario, evaluacion.tipo)
 
 
 def puede_trabajar(usuario: Usuario, evaluacion: Evaluacion) -> bool:

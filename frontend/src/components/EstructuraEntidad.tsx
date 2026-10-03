@@ -111,6 +111,22 @@ export default function EstructuraEntidad({ entidadId, esSuper, onAviso }: Props
   )
 }
 
+type Cargo = 'fuera' | 'integrante' | 'jefe'
+const CARGOS: { valor: Cargo; nombre: string }[] = [
+  { valor: 'fuera', nombre: 'No participa' },
+  { valor: 'integrante', nombre: 'Integrante' },
+  { valor: 'jefe', nombre: 'Jefe' },
+]
+
+function iniciales(nombre: string): string {
+  return nombre
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join('')
+}
+
 function EditorDependencia({
   inicial,
   tipo,
@@ -135,17 +151,40 @@ function EditorDependencia({
     activa: inicial?.activa ?? true,
     orden: inicial?.orden ?? 0,
   })
+  const [busqueda, setBusqueda] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [guardando, setGuardando] = useState(false)
-  const posiblesJefes = equipo.filter((m) => m.rol === 'jefe_area' || m.rol === 'admin_entidad')
-  const posiblesMiembros = equipo.filter((m) => m.rol !== 'consulta')
-  const alternar = (campo: 'jefes' | 'miembros', id: string) =>
-    setD((x) => ({ ...x, [campo]: x[campo].includes(id) ? x[campo].filter((i) => i !== id) : [...x[campo], id] }))
+
+  useEffect(() => {
+    const tecla = (e: KeyboardEvent) => e.key === 'Escape' && onCerrar()
+    window.addEventListener('keydown', tecla)
+    return () => window.removeEventListener('keydown', tecla)
+  }, [onCerrar])
+
+  const cargo = (id: string): Cargo => (d.jefes.includes(id) ? 'jefe' : d.miembros.includes(id) ? 'integrante' : 'fuera')
+  function asignar(id: string, nuevo: Cargo) {
+    setD((x) => ({
+      ...x,
+      jefes: nuevo === 'jefe' ? [...x.jefes.filter((i) => i !== id), id] : x.jefes.filter((i) => i !== id),
+      miembros: nuevo === 'integrante' ? [...x.miembros.filter((i) => i !== id), id] : x.miembros.filter((i) => i !== id),
+    }))
+  }
+
+  // Los que ya están en la dependencia, primero; luego el resto por nombre.
+  const personas = equipo
+    .filter((m) => m.rol !== 'consulta')
+    .filter((m) => {
+      const q = busqueda.trim().toLowerCase()
+      return !q || m.nombre_completo.toLowerCase().includes(q) || m.email.toLowerCase().includes(q)
+    })
+    .sort((a, b) => Number(cargo(b.id) !== 'fuera') - Number(cargo(a.id) !== 'fuera') || a.nombre_completo.localeCompare(b.nombre_completo))
+  const nJefes = d.jefes.length
+  const nIntegrantes = d.miembros.length
 
   return (
     <>
       <div className="overlay" style={{ zIndex: 60 }} onClick={onCerrar} />
-      <div ref={caja} className="dialogo dialogo-ancho" style={{ zIndex: 61 }} role="dialog" aria-modal="true" aria-labelledby="titulo-dependencia" tabIndex={-1}>
+      <div ref={caja} className="dialogo dialogo-ancho editor-dependencia" style={{ zIndex: 61 }} role="dialog" aria-modal="true" aria-labelledby="titulo-dependencia" tabIndex={-1}>
         <form
           onSubmit={async (e) => {
             e.preventDefault()
@@ -160,68 +199,105 @@ function EditorDependencia({
           }}
         >
           <div className="card-head">
-            <h2 id="titulo-dependencia">{inicial ? 'Editar dependencia' : 'Nueva dependencia'}</h2>
+            <div>
+              <h2 id="titulo-dependencia">{inicial ? 'Editar dependencia' : 'Nueva dependencia'}</h2>
+              <p>Quién la integra y quién la dirige. El jefe designa el comité de cada proceso de la dependencia y aprueba sus evaluaciones.</p>
+            </div>
+            <button className="btn btn-ghost btn-icon" type="button" onClick={onCerrar} aria-label="Cerrar">
+              <Icono nombre="x" />
+            </button>
           </div>
           {error && (
             <div className="callout callout-bad" role="alert">
               {error}
             </div>
           )}
-          <div className="field">
-            <label htmlFor="dep-nombre">Nombre</label>
-            <input id="dep-nombre" className="input" value={d.nombre} onChange={(e) => setD({ ...d, nombre: e.target.value })} placeholder="Ej.: Área de Concesiones" required />
+
+          <div className="editor-dependencia-datos">
+            <div className="field">
+              <label htmlFor="dep-nombre">Nombre</label>
+              <input id="dep-nombre" className="input" value={d.nombre} onChange={(e) => setD({ ...d, nombre: e.target.value })} placeholder="Ej.: Área de Concesiones" required />
+            </div>
+            <div className="field">
+              <label htmlFor="dep-area">Evalúa el área</label>
+              <select id="dep-area" className="select" value={d.tipo} onChange={(e) => setD({ ...d, tipo: e.target.value })}>
+                {AREAS.map((a) => (
+                  <option key={a.tipo} value={a.tipo}>
+                    {a.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="field">
-            <label htmlFor="dep-area">Evalúa el área</label>
-            <select id="dep-area" className="select" value={d.tipo} onChange={(e) => setD({ ...d, tipo: e.target.value })}>
-              {AREAS.map((a) => (
-                <option key={a.tipo} value={a.tipo}>
-                  {a.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="dep-palabras">Palabras clave del objeto del contrato (una por línea)</label>
+            <label htmlFor="dep-palabras">Palabras clave del objeto del contrato</label>
             <textarea
               id="dep-palabras"
               className="textarea"
-              rows={3}
+              rows={2}
               value={d.palabras_clave}
               onChange={(e) => setD({ ...d, palabras_clave: e.target.value })}
-              placeholder={'concesión\nAPP'}
+              placeholder={'Una por línea, p. ej.:\nconcesión\nAPP'}
+              aria-describedby="dep-palabras-ayuda"
             />
+            <span id="dep-palabras-ayuda" className="small muted">
+              Sirven para sugerir esta dependencia al crear un proceso. Opcional si el área tiene una sola dependencia.
+            </span>
           </div>
-          <div className="estructura-personas">
-            <fieldset className="fieldset-limpio">
-              <legend className="small" style={{ fontWeight: 600 }}>Jefes (jefe de área o administrador)</legend>
-              {posiblesJefes.length === 0 && <p className="small muted">No hay usuarios con rol de jefe de área.</p>}
-              {posiblesJefes.map((m) => (
-                <label key={m.id} className="check-linea">
-                  <input type="checkbox" checked={d.jefes.includes(m.id)} onChange={() => alternar('jefes', m.id)} /> {m.nombre_completo}
-                </label>
-              ))}
-            </fieldset>
-            <fieldset className="fieldset-limpio">
-              <legend className="small" style={{ fontWeight: 600 }}>Integrantes</legend>
-              {posiblesMiembros.map((m) => (
-                <label key={m.id} className="check-linea">
-                  <input type="checkbox" checked={d.miembros.includes(m.id)} onChange={() => alternar('miembros', m.id)} /> {m.nombre_completo}
-                  <span className="small muted"> · {m.rol_nombre}</span>
-                </label>
-              ))}
-            </fieldset>
+
+          <div className="editor-dependencia-personas">
+            <div className="editor-dependencia-personas-cabeza">
+              <h3>Personas</h3>
+              <span className="small muted">
+                {nJefes} {nJefes === 1 ? 'jefe' : 'jefes'} · {nIntegrantes} {nIntegrantes === 1 ? 'integrante' : 'integrantes'}
+              </span>
+            </div>
+            <div className="field" style={{ marginBottom: 8 }}>
+              <label htmlFor="dep-buscar" className="sr-only">
+                Buscar persona
+              </label>
+              <input id="dep-buscar" className="input" type="search" placeholder="Buscar por nombre o correo…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+            </div>
+            <ul className="lista-personas">
+              {personas.length === 0 && <li className="small muted lista-personas-vacio">Nadie coincide con la búsqueda.</li>}
+              {personas.map((m) => {
+                const actual = cargo(m.id)
+                return (
+                  <li key={m.id} className="persona-fila" data-cargo={actual}>
+                    <span className="avatar" aria-hidden="true">
+                      {iniciales(m.nombre_completo)}
+                    </span>
+                    <span className="persona-datos">
+                      <strong>{m.nombre_completo}</strong>
+                      <span className="small muted">
+                        {m.email} · {m.rol_nombre}
+                      </span>
+                    </span>
+                    <span className="segmented persona-cargo" role="group" aria-label={`Cargo de ${m.nombre_completo} en la dependencia`}>
+                      {CARGOS.map((c) => (
+                        <button key={c.valor} type="button" aria-pressed={actual === c.valor} onClick={() => asignar(m.id, c.valor)}>
+                          {c.nombre}
+                        </button>
+                      ))}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
           </div>
-          <label className="check-linea" style={{ marginTop: 12 }}>
-            <input type="checkbox" checked={d.activa} onChange={(e) => setD({ ...d, activa: e.target.checked })} /> Activa (se puede elegir en los procesos nuevos)
-          </label>
-          <div className="acciones" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
-            <button type="button" className="btn btn-ghost" onClick={onCerrar}>
-              Cancelar
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={guardando}>
-              {guardando ? <span className="spinner" /> : <Icono nombre="check" tam={16} />} Guardar
-            </button>
+
+          <div className="editor-dependencia-pie">
+            <label className="check-linea">
+              <input type="checkbox" checked={d.activa} onChange={(e) => setD({ ...d, activa: e.target.checked })} /> Activa: se puede elegir en procesos nuevos
+            </label>
+            <div className="acciones">
+              <button type="button" className="btn btn-ghost" onClick={onCerrar}>
+                Cancelar
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={guardando}>
+                {guardando ? <span className="spinner" /> : <Icono nombre="check" tam={16} />} Guardar
+              </button>
+            </div>
           </div>
         </form>
       </div>
