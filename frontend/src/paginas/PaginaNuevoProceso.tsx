@@ -150,6 +150,8 @@ export default function PaginaNuevoProceso() {
         tipos: tiposElegidos.map(([clave]) => clave),
         entidad_id: esSuper ? entidadId : null,
         analisis_pliego_id: pliego?.id ?? null,
+        // Dependencia elegida por área; si no se eligió, el servidor usa la sugerida.
+        dependencias: Object.fromEntries(tiposElegidos.filter(([, s]) => s.dependencia).map(([clave, s]) => [clave, s.dependencia])),
         decisiones_pliego: pliego ? decisiones : {},
         // El evaluador queda a cargo de lo que crea; los demás eligen por tipo.
         ...(usuario.rol === 'evaluador'
@@ -256,7 +258,7 @@ export default function PaginaNuevoProceso() {
             textoAccion="Continuar: lo que exige el pliego"
             ocupado={analizandoPliego}
             deshabilitado={(esSuper && !entidadId) || tiposElegidos.length === 0}
-            antesDeAcciones={<QuienEvalua entidadId={entidadId} seleccion={seleccion} onEntidad={setEntidadId} onSeleccion={setSeleccion} />}
+            antesDeAcciones={<QuienEvalua entidadId={entidadId} seleccion={seleccion} onEntidad={setEntidadId} onSeleccion={setSeleccion} objeto={datos.objetoGeneral} />}
             onVolver={() => setPaso('nuevo')}
             onEvaluar={irAlPliego}
           />

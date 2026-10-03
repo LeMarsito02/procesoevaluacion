@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import EstructuraEntidad from '../components/EstructuraEntidad'
 import Icono from '../components/Icono'
 import {
   activarPlantilla,
@@ -123,6 +124,8 @@ export default function PaginaConfiguracion() {
           </button>
         </div>
       )}
+
+      {entidadId && <EstructuraEntidad key={entidadId} entidadId={entidadId} esSuper={esSuper} onAviso={setAviso} />}
 
       <div className="pestanas" role="tablist">
         {(evaluaciones ?? []).map((t) => (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ResultadoRequisito } from '../api'
 import Icono from '../components/Icono'
 import AntecedentesProponente from '../components/AntecedentesProponente'
@@ -16,6 +16,7 @@ import PasoInforme from '../components/PasoInforme'
 import Topbar from '../components/Topbar'
 import { PASOS_EVALUACION, type Paso } from '../pasos'
 import VisorDocumento, { type DecisionMuestra } from '../components/VisorDocumento'
+import ComiteEvaluador from '../components/ComiteEvaluador'
 import { propsDatos, useDatosProceso } from '../datosProceso'
 import { claveRevision, esPendiente, estadoDe, resumenProponente, type Revisiones } from '../estado'
 import {
@@ -24,8 +25,6 @@ import {
   encolarEvaluacion,
   novedadesEvaluacion,
   pausarEvaluacion,
-  asignarEvaluacion,
-  cargaEquipo,
   descargarConsolidado,
   descargarInforme,
   guardarDocumentoBase,
@@ -33,9 +32,11 @@ import {
   obtenerEvaluacion,
   reabrirEvaluacion,
   verDocumentoProponente,
+  soltarBloqueo,
+  tomarBloqueo,
+  type Bloqueo,
   type EvaluacionDetalle,
   type EvaluacionResumen,
-  type MiembroCarga,
 } from '../evaluaciones'
 import { consultarEnLinea } from '../historico'
 import { ErrorApi, mensajeDe } from '../http'
@@ -148,6 +149,55 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   }
 
   const soloLectura = !resumen.puede_trabajar || resumen.estado === 'aprobada'
+
+  // --- Colaboración: varias personas del comité trabajan a la vez ---
+  // Quién está revisando cada proponente (se consulta cada 10 s).
+  const [bloqueos, setBloqueos] = useState<Bloqueo[]>([])
+  useEffect(() => {
+    if (soloLectura) return
+    let vivo = true
+    const consultar = () =>
+      novedadesEvaluacion(id, new Date().toISOString())
+        .then((n) => vivo && setBloqueos(n.bloqueos ?? []))
+        .catch(() => undefined)
+    consultar()
+    const t = window.setInterval(consultar, 10000)
+    return () => {
+      vivo = false
+      window.clearInterval(t)
+    }
+  }, [id, soloLectura])
+
+  // El proponente abierto queda bloqueado para los demás mientras esté abierto:
+  // se toma al abrirlo, se renueva cada 30 s y se suelta al cerrarlo.
+  const proponenteAbierto = panel ? proponentes.find((pr) => pr.hoja === panel.hoja)?.id ?? null : null
+  useEffect(() => {
+    if (soloLectura || !proponenteAbierto || !panel) return
+    const hoja = panel.hoja
+    let vivo = true
+    const tomar = () =>
+      tomarBloqueo(id, proponenteAbierto)
+        .then((r) => {
+          if (!vivo) return
+          setBloqueos((prev) => [
+            ...prev.filter((b) => b.hoja !== hoja),
+            ...(r.nombre ? [{ hoja, nombre: r.nombre, propio: r.propio }] : []),
+          ])
+        })
+        .catch(() => undefined)
+    tomar()
+    const t = window.setInterval(tomar, 30000)
+    const alSalir = () => void soltarBloqueo(id, proponenteAbierto)
+    window.addEventListener('pagehide', alSalir)
+    return () => {
+      vivo = false
+      window.clearInterval(t)
+      window.removeEventListener('pagehide', alSalir)
+      void soltarBloqueo(id, proponenteAbierto)
+      setBloqueos((prev) => prev.filter((b) => !(b.hoja === hoja && b.propio)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- se re-toma solo al cambiar de proponente
+  }, [id, proponenteAbierto, soloLectura])
 
   // --- Fila del servidor: mientras haya trabajos pendientes se consultan las novedades ---
   const enFila = resumen.fila !== null
@@ -376,7 +426,9 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   }
   const panelProponente = panel ? proponentes.find((pr) => pr.hoja === panel.hoja) : null
   const indicePanel = panel ? evaluadosEnOrden.findIndex((pr) => pr.hoja === panel.hoja) : -1
-  const onRevisar = soloLectura ? null : pedirJustificacion
+  // Si otro integrante del comité tiene abierto este proponente, aquí solo se mira.
+  const bloqueoAjeno = panel ? (bloqueos.find((b) => b.hoja === panel.hoja && !b.propio)?.nombre ?? null) : null
+  const onRevisar = soloLectura || bloqueoAjeno ? null : pedirJustificacion
 
   if (!resumen.tipo_disponible) {
     return (
@@ -467,6 +519,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
 
       {paso === 'evaluacion' && (
         <PasoEvaluacion
+          bloqueos={Object.fromEntries(bloqueos.filter((b) => !b.propio).map((b) => [b.hoja, b.nombre]))}
           areaNombre={resumen.tipo_nombre}
           proponentes={proponentes}
           resultados={resultados}
@@ -558,6 +611,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           abriendoDocumento={abriendoDocumento}
           onCerrar={() => setPanel(null)}
           onRevisar={onRevisar}
+          bloqueadoPor={bloqueoAjeno}
           onVerDocumento={abrirDocumento}
           onSubirCertificado={soloLectura ? null : (requisito) => setSubirCertificado(requisito)}
           consultandoCopnia={consultandoCopnia}
@@ -704,7 +758,7 @@ function DialogoJustificacion({
   )
 }
 
-/** Estado, responsable y acciones del jefe (asignar, aprobar, reabrir). */
+/** Estado, comité y acciones del jefe (designar el comité, aprobar, reabrir). */
 function BarraEvaluacion({
   resumen,
   esYo,
@@ -717,20 +771,8 @@ function BarraEvaluacion({
   onAviso: (t: string) => void
 }) {
   const { confirmar } = useDialogos()
-  const [equipo, setEquipo] = useState<MiembroCarga[] | null>(null)
   const [ocupado, setOcupado] = useState(false)
-
-  useEffect(() => {
-    if (!resumen.puede_gestionar) return
-    cargaEquipo(resumen.entidad_id)
-      .then(setEquipo)
-      .catch(() => setEquipo([]))
-  }, [resumen.puede_gestionar, resumen.entidad_id])
-
-  const candidatos = useMemo(
-    () => (equipo ?? []).filter((m) => m.areas.includes(resumen.tipo) || m.rol !== 'evaluador' || m.id === resumen.responsable?.id),
-    [equipo, resumen.tipo, resumen.responsable],
-  )
+  const [comiteAbierto, setComiteAbierto] = useState(false)
 
   async function accion(f: () => Promise<EvaluacionResumen>, exito: string) {
     setOcupado(true)
@@ -795,33 +837,35 @@ function BarraEvaluacion({
               <Icono nombre="ojo" tam={15} /> Solo lectura
             </span>
           )}
-          <span className="small">Responsable:</span>
-          {resumen.puede_gestionar && equipo && resumen.estado !== 'aprobada' ? (
-            <select
-              className="select select-sm"
-              value={resumen.responsable?.id ?? ''}
-              disabled={ocupado}
-              onChange={(e) =>
-                accion(
-                  () => asignarEvaluacion(resumen.id, e.target.value || null),
-                  e.target.value ? 'Evaluación asignada' : 'Evaluación sin responsable',
-                )
-              }
-            >
-              <option value="">Sin asignar</option>
-              {candidatos.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.nombre_completo} · {m.evaluaciones_activas} activas
-                </option>
-              ))}
-            </select>
-          ) : resumen.puede_gestionar && !equipo && resumen.estado !== 'aprobada' ? (
-            // Mientras llega el equipo, la lista del mismo tamaño (no salta).
-            <select className="select select-sm" disabled value="" aria-busy="true">
-              <option value="">{resumen.responsable?.nombre_completo ?? 'Cargando equipo…'}</option>
-            </select>
-          ) : (
-            <strong className="small">{resumen.responsable ? (esYo ? 'Usted' : resumen.responsable.nombre_completo) : 'Sin asignar'}</strong>
+          <span className="small">Comité:</span>
+          <strong className="small" title={resumen.comite.map((m) => m.nombre_completo).join(', ')}>
+            {resumen.comite.length === 0
+              ? 'Sin designar'
+              : resumen.comite.length === 1
+                ? esYo
+                  ? 'Usted'
+                  : resumen.comite[0].nombre_completo
+                : `${resumen.comite[0].nombre_completo} y ${resumen.comite.length - 1} más`}
+          </strong>
+          {resumen.dependencia && <span className="small muted">· {resumen.dependencia.nombre}</span>}
+          <button className="btn btn-secondary btn-sm" type="button" onClick={() => setComiteAbierto(true)}>
+            <Icono nombre="usuarios" tam={15} /> {resumen.puede_gestionar && resumen.estado !== 'aprobada' ? 'Designar comité' : 'Ver comité'}
+          </button>
+          {comiteAbierto && (
+            <ComiteEvaluador
+              evaluacionId={resumen.id}
+              entidadId={resumen.entidad_id}
+              tipo={resumen.tipo}
+              tipoNombre={resumen.tipo_nombre}
+              puedeDesignar={resumen.puede_gestionar && resumen.estado !== 'aprobada'}
+              onCerrar={() => setComiteAbierto(false)}
+              onDesignado={() => {
+                onAviso('Comité designado: el documento de designación quedó en el expediente')
+                obtenerEvaluacion(resumen.id)
+                  .then((d) => onCambio(d.evaluacion))
+                  .catch(() => undefined)
+              }}
+            />
           )}
           {resumen.puede_gestionar &&
             (resumen.estado === 'aprobada' ? (

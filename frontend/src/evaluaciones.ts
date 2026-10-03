@@ -53,6 +53,9 @@ export interface EvaluacionResumen {
   plantilla_nombre: string
   plantilla_desactualizada: boolean
   fila: Fila | null
+  /** Dependencia que evalúa y comité designado (el primero coordina). */
+  dependencia: { id: string; nombre: string } | null
+  comite: Persona[]
 }
 
 export interface ProcesoResumen {
@@ -148,6 +151,7 @@ export const crearProceso = (datos: {
   proponentes_no_reconocidos: string[]
   tipos: string[]
   entidad_id?: string | null
+  dependencias?: Record<string, string | undefined>
   responsable_id?: string | null
   sin_responsable?: boolean
   responsables?: Record<string, string | null>
@@ -173,7 +177,7 @@ export const encolarEvaluacion = (id: string, proponenteIds?: string[]) =>
   enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/evaluar`, 'POST', { proponente_ids: proponenteIds ?? null })
 export const pausarEvaluacion = (id: string) => enviarJson<EvaluacionResumen>(`/api/evaluaciones/${id}/pausar`, 'POST')
 export const novedadesEvaluacion = (id: string, desde: string | null) =>
-  pedirJson<{ evaluacion: EvaluacionResumen; resultados: ResultadoRequisito[]; hasta: string }>(
+  pedirJson<{ evaluacion: EvaluacionResumen; resultados: ResultadoRequisito[]; hasta: string; bloqueos: Bloqueo[] }>(
     `/api/evaluaciones/${id}/novedades${desde ? `?desde=${encodeURIComponent(desde)}` : ''}`,
   )
 
@@ -428,3 +432,41 @@ export const explicacionDelResultado = (evaluacionId: string, proponenteId: stri
   pedirJson<{ texto: string | null }>(
     `/api/evaluaciones/${evaluacionId}/proponentes/${proponenteId}/explicacion/${requisito}`,
   )
+
+
+// --- Comité evaluador y colaboración en tiempo real ---
+/** Quién está revisando un proponente ahora mismo. */
+export interface Bloqueo {
+  hoja: string
+  nombre: string
+  propio: boolean
+}
+
+export interface Designacion {
+  id: number
+  consecutivo: string
+  version: number
+  dependencia: string
+  miembros: { nombre: string; email: string; coordinador: boolean }[]
+  designado_por: string
+  designado_en: string
+  sha256: string
+}
+
+export interface Comite {
+  dependencia: { id: string; nombre: string } | null
+  miembros: Persona[]
+  designaciones: Designacion[]
+}
+
+export const verComite = (id: string) => pedirJson<Comite>(`/api/evaluaciones/${id}/comite`)
+export const designarComite = (id: string, miembros: string[], dependenciaId: string | null) =>
+  enviarJson<Comite>(`/api/evaluaciones/${id}/comite`, 'PUT', { miembros, dependencia_id: dependenciaId })
+export const urlDesignacion = (id: string, designacionId: number) => `/api/evaluaciones/${id}/designaciones/${designacionId}/documento`
+export const tomarBloqueo = (id: string, proponenteId: string) =>
+  enviarJson<{ propio: boolean; nombre: string | null; solo_lectura: boolean }>(
+    `/api/evaluaciones/${id}/proponentes/${proponenteId}/bloqueo`,
+    'POST',
+  )
+export const soltarBloqueo = (id: string, proponenteId: string) =>
+  pedir(`/api/evaluaciones/${id}/proponentes/${proponenteId}/bloqueo`, { method: 'DELETE' }).catch(() => undefined)

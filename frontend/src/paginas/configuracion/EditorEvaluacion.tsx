@@ -267,6 +267,7 @@ export default function EditorEvaluacion({ plantilla, catalogo, entidadId, esSup
           {disponiblesMotor.length > 0 && (
             <select
               className="select"
+              aria-label="Agregar un requisito que el sistema verifica"
               value=""
               onChange={(e) => {
                 const v = catalogo.verificaciones.find((x) => x.clave === e.target.value)

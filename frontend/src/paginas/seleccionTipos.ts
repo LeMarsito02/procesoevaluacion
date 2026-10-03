@@ -1,7 +1,8 @@
 /** '' = sin asignar; 'yo' = quien crea; otro valor = id de la persona. */
 export type Eleccion = '' | 'yo' | string
 
-export type SeleccionTipos = Record<string, { incluir: boolean; eleccion: Eleccion }>
+/** dependencia: '' = la que sugiera el objeto del contrato; otro valor = id de la dependencia. */
+export type SeleccionTipos = Record<string, { incluir: boolean; eleccion: Eleccion; dependencia?: string }>
 
 export const SELECCION_INICIAL: SeleccionTipos = {
   juridica: { incluir: true, eleccion: '' },

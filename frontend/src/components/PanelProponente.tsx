@@ -32,6 +32,8 @@ interface Props {
   onCerrar: () => void
   /** null = solo lectura (sin permiso o evaluación aprobada). */
   onRevisar: ((hoja: string, requisito: number, cumple: boolean | undefined) => void) | null
+  /** Otro integrante del comité tiene abierto este proponente: aquí solo se mira. */
+  bloqueadoPor?: string | null
   onVerDocumento: (resultado: ResultadoRequisito, archivo: string) => void
   onAnterior: (() => void) | null
   onSiguiente: (() => void) | null
@@ -186,6 +188,15 @@ export default function PanelProponente(p: Props) {
             )}
             {resumen.revisados > 0 && <span className="pill" data-estado="no_aplica">{resumen.revisados} decididos por usted</span>}
           </div>
+          {p.bloqueadoPor && (
+            <div className="callout callout-warn" role="status" style={{ marginTop: 12 }}>
+              <Icono nombre="ojo" />
+              <div>
+                <strong>{p.bloqueadoPor} está revisando este proponente.</strong> Puede mirar, pero no decidir hasta que lo
+                cierre; así nadie decide lo mismo dos veces.
+              </div>
+            </div>
+          )}
           {pendientes.length > 0 && (
             <div className="indice-pendientes">
               <span className="small muted">Ir a:</span>

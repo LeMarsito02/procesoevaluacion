@@ -27,6 +27,8 @@ interface Props {
   progreso: ProgresoEvaluacion | null
   ocupado: boolean
   hojaActiva: string | null
+  /** Proponentes que otro integrante del comité está revisando ahora: {hoja: nombre}. */
+  bloqueos?: Record<string, string>
   /** false = sin permiso para lanzar la evaluación (solo lectura). */
   puedeEvaluar: boolean
   onDetener: () => void
@@ -414,6 +416,11 @@ export default function PasoEvaluacion(p: Props) {
                             <span className="pill pill-xs" data-estado="cumple">Listo</span>
                           )}
                           {lista && tipo ? <span className="muted"> · {TIPO[tipo] ?? ''}</span> : null}
+                          {p.bloqueos?.[pr.hoja] && (
+                            <span className="pill pill-xs pill-bloqueo" title={`${p.bloqueos[pr.hoja]} lo está revisando`}>
+                              <Icono nombre="ojo" tam={11} /> {p.bloqueos[pr.hoja].split(' ')[0]}
+                            </span>
+                          )}
                         </div>
                       </span>
                     </button>

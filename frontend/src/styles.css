@@ -908,3 +908,15 @@ html.a11y-contraste .a11y-opcion[aria-pressed='true'] { border-width: 3px; }
 .metricas-modalidad dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .metricas-modalidad-promedio dt { font-weight: 600; color: var(--ink); }
 .metricas-modalidad-promedio dd { font-family: var(--serif); font-size: 24px; color: var(--brand); }
+.pill-bloqueo { background: var(--ai-soft); color: var(--ai); margin-left: 6px; }
+.comite-candidatos { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
+.comite-candidato { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.comite-candidato > span:nth-child(2) { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 14px; }
+.comite-candidato[data-elegido='true'] { border-color: var(--brand); background: var(--brand-soft); }
+.estructura { margin-bottom: 20px; }
+.estructura-areas { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.estructura-area { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.estructura-area h3 { font-size: 15px; }
+.estructura-dependencia { display: flex; gap: 10px; align-items: flex-start; width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.estructura-dependencia[data-activa='false'] { opacity: 0.7; }
+.estructura-personas { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 8px; max-height: 300px; overflow-y: auto; }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import Icono from '../components/Icono'
 import { listarEntidades, type Entidad } from '../cuentas'
 import { cargaEquipo, listarTipos, type MiembroCarga, type TipoEvaluacion } from '../evaluaciones'
+import { listarDependencias, sugerirDependencia, type Dependencia } from '../estructura'
 import { gestionaEvaluaciones, useSesion } from '../sesion'
 import type { Eleccion, SeleccionTipos } from './seleccionTipos'
 
@@ -10,10 +11,12 @@ interface Props {
   seleccion: SeleccionTipos
   onEntidad: (id: string) => void
   onSeleccion: (s: SeleccionTipos) => void
+  /** Objeto del contrato: sugiere la dependencia que evalúa (p. ej. la técnica). */
+  objeto?: string
 }
 
 /** Qué evaluaciones tendrá el proceso y quién hace cada una (entidad: solo superadmin). */
-export default function QuienEvalua({ entidadId, seleccion, onEntidad, onSeleccion }: Props) {
+export default function QuienEvalua({ entidadId, seleccion, onEntidad, onSeleccion, objeto = '' }: Props) {
   const { usuario } = useSesion()!
   const esSuper = usuario.rol === 'superadmin'
   const gestiona = gestionaEvaluaciones(usuario)
@@ -41,7 +44,28 @@ export default function QuienEvalua({ entidadId, seleccion, onEntidad, onSelecci
       .catch(() => setEquipo([]))
   }, [gestiona, entidadId])
 
-  function cambiar(clave: string, cambios: Partial<{ incluir: boolean; eleccion: Eleccion }>) {
+  // Dependencias de la entidad y la que sugiere el objeto del contrato, por área.
+  const [dependencias, setDependencias] = useState<Dependencia[]>([])
+  const [sugeridas, setSugeridas] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!entidadId) return
+    listarDependencias(esSuper ? entidadId : null)
+      .then((l) => setDependencias(l.filter((d) => d.activa)))
+      .catch(() => setDependencias([]))
+  }, [entidadId, esSuper])
+  useEffect(() => {
+    if (!entidadId) return
+    let vivo = true
+    const tiposConVarias = [...new Set(dependencias.map((d) => d.tipo))].filter((t) => dependencias.filter((d) => d.tipo === t).length > 1)
+    Promise.all(tiposConVarias.map((t) => sugerirDependencia(t, objeto, esSuper ? entidadId : null).then((r) => [t, r.dependencia?.id ?? ''] as const)))
+      .then((pares) => vivo && setSugeridas(Object.fromEntries(pares)))
+      .catch(() => undefined)
+    return () => {
+      vivo = false
+    }
+  }, [dependencias, objeto, entidadId, esSuper])
+
+  function cambiar(clave: string, cambios: Partial<{ incluir: boolean; eleccion: Eleccion; dependencia: string }>) {
     onSeleccion({ ...seleccion, [clave]: { ...seleccion[clave], ...cambios } })
   }
 
@@ -109,6 +133,27 @@ export default function QuienEvalua({ entidadId, seleccion, onEntidad, onSelecci
                         {m.nombre_completo} · {m.evaluaciones_activas} activas
                       </option>
                     ))}
+                  </select>
+                </div>
+              )}
+              {sel.incluir && dependencias.filter((d) => d.tipo === t.clave).length > 1 && (
+                <div className="field tipo-evaluacion-responsable">
+                  <label htmlFor={`dep-${t.clave}`}>Dependencia que evalúa</label>
+                  <select
+                    id={`dep-${t.clave}`}
+                    className="select"
+                    value={sel.dependencia || sugeridas[t.clave] || ''}
+                    onChange={(e) => cambiar(t.clave, { dependencia: e.target.value })}
+                  >
+                    {!sugeridas[t.clave] && <option value="">Elija la dependencia…</option>}
+                    {dependencias
+                      .filter((d) => d.tipo === t.clave)
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.nombre}
+                          {d.id === sugeridas[t.clave] ? ' (sugerida por el objeto del contrato)' : ''}
+                        </option>
+                      ))}
                   </select>
                 </div>
               )}
