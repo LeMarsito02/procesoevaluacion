@@ -19,12 +19,13 @@ from ninja.errors import HttpError
 from cuentas.correo import enviar_asignacion
 from cuentas.models import Entidad, Rol, TipoArea, Usuario
 from cuentas.seguridad import auditar, entidades_con_datos, requiere_rol, sesion_activa, ve_datos_de
-from evaluaciones import cumplimiento, expediente, muestra, puntaje, servicios
+from evaluaciones import cumplimiento, estructura, expediente, muestra, puntaje, servicios
 from evaluaciones import pliego as pliego_servicio
 from evaluaciones.tipos import MENSAJE_EN_PREPARACION, TIPOS
 from evaluaciones.models import (
     AnalisisPliego,
     EstadoEvaluacion,
+    MiembroComite,
     ItemMuestra,
     MuestraControl,
     EstadoTrabajo,
@@ -110,6 +111,9 @@ class EvaluacionResumenOut(Schema):
     plantilla_desactualizada: bool
     # Solo cuando hay trabajos pendientes en la fila.
     fila: FilaOut | None = None
+    # Dependencia que evalúa y comité designado (el primero es el coordinador).
+    dependencia: dict | None = None
+    comite: list[PersonaOut] = []
 
 
 class ProcesoResumenOut(Schema):
@@ -157,6 +161,9 @@ class CrearProcesoIn(Schema):
     # "rechazado", "nota": "..."}}.
     analisis_pliego_id: UUID | None = None
     decisiones_pliego: dict[str, dict] = {}
+    # Dependencia que evalúa cada área: {"tecnica": id}. Sin enviar, la que
+    # sugiere el objeto del contrato (o la única del área).
+    dependencias: dict[str, UUID | None] | None = None
 
 
 class ProponenteOut(Schema):
@@ -241,6 +248,9 @@ def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[Evaluac
     }
     con_fila = [i for i in ids if avances[i].en_fila or avances[i].procesando]
     filas = servicios.estado_fila(con_fila)
+    comites: dict = {}
+    for m in MiembroComite.objects.filter(evaluacion_id__in=ids, retirado_en__isnull=True).select_related("usuario"):
+        comites.setdefault(m.evaluacion_id, []).append(m.usuario)
     return [
         EvaluacionResumenOut(
             id=e.id,
@@ -265,13 +275,15 @@ def _resumenes(usuario: Usuario, evaluaciones: list[Evaluacion]) -> list[Evaluac
             plantilla_version=e.plantilla.version if e.plantilla_id else None,
             plantilla_nombre=e.plantilla.nombre if e.plantilla_id else "Base del sistema",
             plantilla_desactualizada=activas.get((e.entidad_id, e.tipo)) not in (None, e.plantilla_id),
+            dependencia={"id": str(e.dependencia_id), "nombre": e.dependencia.nombre} if e.dependencia_id else None,
+            comite=[_persona(u) for u in comites.get(e.id, [])],
         )
         for e in evaluaciones
     ]
 
 
 def _evaluaciones_qs(usuario: Usuario):
-    qs = Evaluacion.objects.select_related("proceso", "responsable", "entidad", "plantilla")
+    qs = Evaluacion.objects.select_related("proceso", "responsable", "entidad", "plantilla", "dependencia")
     visibles = entidades_con_datos(usuario)
     if visibles is not None:
         qs = qs.filter(entidad_id__in=visibles)
@@ -478,10 +490,20 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
             evaluaciones = []
             for tipo in tipos:
                 responsable = responsables[tipo]
+                elegida = (datos.dependencias or {}).get(tipo)
+                try:
+                    dependencia = (
+                        estructura.dependencia_valida(entidad.id, tipo, elegida)
+                        if elegida
+                        else estructura.sugerir_dependencia(entidad.id, tipo, doc.objeto_general)
+                    )
+                except estructura.ErrorEstructura as exc:
+                    raise HttpError(400, str(exc)) from exc
                 evaluacion = Evaluacion.objects.create(
                     entidad=entidad,
                     proceso=proceso,
                     tipo=tipo,
+                    dependencia=dependencia,
                     plantilla=servicios.plantilla_activa(entidad.id, tipo),
                     responsable=responsable,
                     asignada_por=usuario if responsable else None,
@@ -489,6 +511,10 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
                     estado=EstadoEvaluacion.ASIGNADA if responsable else EstadoEvaluacion.SIN_ASIGNAR,
                 )
                 evaluaciones.append(evaluacion)
+                if responsable:
+                    # Queda en el comité; si lo designa un jefe o administrador,
+                    # con su documento de designación.
+                    estructura.designar_comite(evaluacion, [responsable], usuario, documentar=gestiona and responsable.id != usuario.id)
                 if responsable and responsable.id != usuario.id:
                     transaction.on_commit(lambda e=evaluacion, r=responsable: enviar_asignacion(e, r, usuario))
             auditar(
@@ -934,10 +960,19 @@ def asignar(request: HttpRequest, evaluacion_id: UUID, datos: AsignarIn) -> Eval
     if (anterior and anterior.id) == (nuevo and nuevo.id):
         return _resumenes(usuario, [evaluacion])[0]
     with transaction.atomic():
-        evaluacion.responsable = nuevo
-        evaluacion.asignada_por = usuario if nuevo else None
-        evaluacion.asignada_en = timezone.now() if nuevo else None
-        evaluacion.save()
+        if nuevo:
+            # El nuevo coordinador encabeza el comité; los demás siguen.
+            otros = [u for u in estructura.comite_activo(evaluacion) if u.id not in (nuevo.id, anterior and anterior.id)]
+            try:
+                estructura.designar_comite(evaluacion, [nuevo, *otros], usuario)
+            except estructura.ErrorEstructura as exc:
+                raise HttpError(400, str(exc)) from exc
+        else:
+            MiembroComite.objects.filter(evaluacion=evaluacion, retirado_en__isnull=True).update(retirado_en=timezone.now())
+            evaluacion.responsable = None
+            evaluacion.asignada_por = None
+            evaluacion.asignada_en = None
+            evaluacion.save()
         servicios.actualizar_estado(evaluacion)
         auditar(
             request,
@@ -962,6 +997,8 @@ class NovedadesOut(Schema):
     evaluacion: EvaluacionResumenOut
     resultados: list[dict]
     hasta: datetime
+    # Quién está revisando cada proponente ahora mismo: [{hoja, nombre, propio}].
+    bloqueos: list[dict] = []
 
 
 @router.post("/{evaluacion_id}/evaluar", response=EvaluacionResumenOut)
@@ -1037,7 +1074,15 @@ def novedades(request: HttpRequest, evaluacion_id: UUID, desde: datetime | None 
         evaluacion=_resumenes(usuario, [evaluacion])[0],
         resultados=list(resultados.values_list("datos", flat=True)),
         hasta=ahora,
+        bloqueos=_bloqueos_out(evaluacion, usuario),
     )
+
+
+def _bloqueos_out(evaluacion: Evaluacion, usuario: Usuario) -> list[dict]:
+    return [
+        {"hoja": b.proponente.hoja, "nombre": b.usuario.nombre_completo, "propio": b.usuario_id == usuario.id}
+        for b in estructura.bloqueos_vigentes(evaluacion)
+    ]
 
 
 @router.put("/{evaluacion_id}/revisiones", response={200: RevisionOut | None})
@@ -1046,6 +1091,9 @@ def revisar(request: HttpRequest, evaluacion_id: UUID, datos: RevisarIn):
     evaluacion = _evaluacion(usuario, evaluacion_id)
     exigir_trabajo(usuario, evaluacion)
     proponente = get_object_or_404(Proponente, pk=datos.proponente_id, proceso_id=evaluacion.proceso_id)
+    otro = estructura.bloqueado_por_otro(evaluacion, proponente, usuario)
+    if otro is not None:
+        raise HttpError(409, f"{otro.nombre_completo} está revisando este proponente. Espere a que lo cierre.")
     if datos.cumple is not None and len(datos.nota.strip()) < 5:
         raise HttpError(400, "Escriba la justificación de su decisión: queda en el reporte formal de evaluación.")
     if datos.cumple is not None:
@@ -1454,3 +1502,103 @@ def explicacion_del_resultado(
         por_revisar=por_revisar[:8],
     )
     return ExplicacionOut(texto=texto)
+
+
+# --- Comité evaluador y colaboración ---
+class ComiteIn(Schema):
+    # El primero es el coordinador.
+    miembros: list[UUID]
+    dependencia_id: UUID | None = None
+
+
+class ComiteOut(Schema):
+    dependencia: dict | None
+    miembros: list[PersonaOut]
+    designaciones: list[dict]
+
+
+def _comite_out(evaluacion: Evaluacion) -> ComiteOut:
+    return ComiteOut(
+        dependencia={"id": str(evaluacion.dependencia_id), "nombre": evaluacion.dependencia.nombre} if evaluacion.dependencia_id else None,
+        miembros=[_persona(u) for u in estructura.comite_activo(evaluacion)],
+        designaciones=[
+            {
+                "id": d.id, "consecutivo": d.consecutivo, "version": d.version, "dependencia": d.dependencia,
+                "miembros": d.miembros, "designado_por": d.designado_por.nombre_completo,
+                "designado_en": d.designado_en.isoformat(), "sha256": d.sha256,
+            }
+            for d in evaluacion.designaciones.select_related("designado_por")
+        ],
+    )
+
+
+@router.get("/{evaluacion_id}/comite", response=ComiteOut)
+def ver_comite(request: HttpRequest, evaluacion_id: UUID) -> ComiteOut:
+    return _comite_out(_evaluacion(request.auth, evaluacion_id))
+
+
+@router.put("/{evaluacion_id}/comite", response=ComiteOut)
+def designar_comite(request: HttpRequest, evaluacion_id: UUID, datos: ComiteIn) -> ComiteOut:
+    """El jefe de la dependencia (o el administrador) designa el comité. Genera
+    el documento de designación y avisa a los nuevos integrantes."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_gestion(usuario, evaluacion)
+    miembros_qs = {u.id: u for u in Usuario.objects.filter(pk__in=datos.miembros)}
+    if len(miembros_qs) != len(set(datos.miembros)):
+        raise HttpError(400, "Algún integrante no existe.")
+    miembros = [miembros_qs[i] for i in datos.miembros]
+    antes = {u.id for u in estructura.comite_activo(evaluacion)}
+    try:
+        dependencia = estructura.dependencia_valida(evaluacion.entidad_id, evaluacion.tipo, datos.dependencia_id)
+        with transaction.atomic():
+            designacion = estructura.designar_comite(evaluacion, miembros, usuario, dependencia=dependencia)
+            auditar(
+                request, "comite.designado", objeto=evaluacion, proceso=evaluacion.proceso.codigo,
+                consecutivo=designacion.consecutivo, sha256=designacion.sha256,
+                dependencia=evaluacion.dependencia.nombre if evaluacion.dependencia_id else None,
+                miembros=[m.email for m in miembros],
+            )
+            for m in miembros:
+                if m.id not in antes and m.id != usuario.id:
+                    transaction.on_commit(lambda m=m: enviar_asignacion(evaluacion, m, usuario))
+    except estructura.ErrorEstructura as exc:
+        raise HttpError(400, str(exc)) from exc
+    evaluacion.refresh_from_db()
+    return _comite_out(evaluacion)
+
+
+@router.get("/{evaluacion_id}/designaciones/{designacion_id}/documento")
+def documento_designacion(request: HttpRequest, evaluacion_id: UUID, designacion_id: int):
+    from django.http import FileResponse
+
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    d = get_object_or_404(evaluacion.designaciones, pk=designacion_id)
+    auditar(request, "designacion.descargada", objeto=evaluacion, consecutivo=d.consecutivo)
+    return FileResponse(
+        d.archivo.open("rb"), as_attachment=True, filename=f"{d.consecutivo} designacion comite {evaluacion.proceso.codigo}.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+@router.post("/{evaluacion_id}/proponentes/{proponente_id}/bloqueo", response=dict)
+def tomar_bloqueo(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID) -> dict:
+    """Abre (o mantiene abierto) un proponente para revisarlo. Si otro
+    integrante del comité lo tiene abierto, dice quién y no lo toma."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    if not puede_trabajar(usuario, evaluacion) or evaluacion.estado == EstadoEvaluacion.APROBADA:
+        return {"propio": False, "nombre": None, "solo_lectura": True}
+    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    propio, quien = estructura.tomar_bloqueo(evaluacion, proponente, usuario)
+    return {"propio": propio, "nombre": quien.nombre_completo, "solo_lectura": False}
+
+
+@router.delete("/{evaluacion_id}/proponentes/{proponente_id}/bloqueo", response={204: None})
+def soltar_bloqueo(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID):
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    estructura.soltar_bloqueo(evaluacion, proponente, usuario)
+    return 204, None

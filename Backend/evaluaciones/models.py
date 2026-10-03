@@ -84,15 +84,49 @@ class EstadoEvaluacion(models.TextChoices):
     APROBADA = "aprobada", "Aprobada"
 
 
+class Dependencia(models.Model):
+    """Dependencia de la entidad que evalúa un área: cada entidad tiene su
+    propia estructura (en el ICCU, la Dirección Jurídica y la Subdirección de
+    Gestión Contractual evalúan lo jurídico; la Dirección Financiera, lo
+    financiero; y lo técnico, el área que corresponda al contrato:
+    Construcciones, Caminos e Infraestructura Vial o Concesiones)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="dependencias")
+    tipo = models.CharField(max_length=20, choices=TipoArea.choices)
+    nombre = models.CharField(max_length=200)
+    # Palabras del objeto del contrato que sugieren esta dependencia (una por
+    # línea), p. ej. «concesión» o «vía»: al crear el proceso se propone la que
+    # más coincide.
+    palabras_clave = models.TextField(blank=True)
+    jefes = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="dependencias_a_cargo")
+    miembros = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="dependencias")
+    activa = models.BooleanField(default=True)
+    orden = models.PositiveSmallIntegerField(default=0)
+    creada_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["tipo", "orden", "nombre"]
+        constraints = [models.UniqueConstraint(fields=["entidad", "tipo", "nombre"], name="dependencia_unica")]
+
+    def __str__(self) -> str:
+        return self.nombre
+
+
 class Evaluacion(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
     proceso = models.ForeignKey(Proceso, on_delete=models.CASCADE, related_name="evaluaciones")
     tipo = models.CharField(max_length=20, choices=TipoArea.choices)
     estado = models.CharField(max_length=20, choices=EstadoEvaluacion.choices, default=EstadoEvaluacion.SIN_ASIGNAR)
+    # Coordinador del comité evaluador (el primero designado). El comité
+    # completo está en MiembroComite.
     responsable = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="evaluaciones"
     )
+    # Dependencia que evalúa (None: evaluaciones anteriores a la estructura por
+    # dependencias, que se gestionan por área).
+    dependencia = models.ForeignKey(Dependencia, on_delete=models.PROTECT, null=True, blank=True, related_name="evaluaciones")
     asignada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     asignada_en = models.DateTimeField(null=True, blank=True)
     aprobada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
@@ -616,3 +650,63 @@ class AdopcionPuntaje(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["evaluacion", "proponente"], name="adopcion_puntaje_unica")]
+
+
+class MiembroComite(models.Model):
+    """Evaluador designado al comité de una evaluación. Se conserva la
+    historia: retirar a alguien no borra su designación, la cierra."""
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="comite")
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="comites")
+    designado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    designado_en = models.DateTimeField(auto_now_add=True)
+    retirado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["designado_en", "id"]
+
+
+def _ruta_designacion(instancia: "DesignacionComite", nombre: str) -> str:
+    return f"designaciones/{instancia.entidad_id}/{instancia.consecutivo}.docx"
+
+
+class DesignacionComite(models.Model):
+    """Documento controlado de designación del comité evaluador (ISO 9001,
+    7.5): consecutivo único por entidad, versión, quién designó y a quiénes, y
+    la huella del archivo. Cada cambio del comité genera una designación
+    nueva; las anteriores se conservan."""
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.PROTECT, related_name="designaciones")
+    consecutivo = models.CharField(max_length=40)  # DES-2026-0001
+    version = models.PositiveSmallIntegerField(default=1)  # del comité de esta evaluación
+    dependencia = models.CharField(max_length=200, blank=True)
+    miembros = models.JSONField(default=list)  # [{nombre, email, coordinador}]
+    designado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    designado_en = models.DateTimeField(auto_now_add=True)
+    archivo = models.FileField(upload_to=_ruta_designacion, max_length=300)
+    sha256 = models.CharField(max_length=64)
+
+    class Meta:
+        ordering = ["-designado_en"]
+        constraints = [models.UniqueConstraint(fields=["entidad", "consecutivo"], name="designacion_consecutivo_unico")]
+
+
+class BloqueoProponente(models.Model):
+    """Colaboración en tiempo real: quien abre un proponente para revisarlo lo
+    bloquea para los demás miembros del comité mientras lo tenga abierto. Vence
+    solo si deja de renovarse (cerró la pestaña, se fue la conexión)."""
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="bloqueos")
+    proponente = models.ForeignKey(Proponente, on_delete=models.CASCADE, related_name="+")
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    desde = models.DateTimeField(auto_now_add=True)
+    latido = models.DateTimeField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["evaluacion", "proponente"], name="bloqueo_unico")]

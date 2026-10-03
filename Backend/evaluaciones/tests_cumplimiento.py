@@ -603,3 +603,101 @@ class MetricasTests(BaseFlujo):
         self.assertEqual(modalidad_de(p("ICCU-LP-027-2026")), "obra")
         self.assertEqual(modalidad_de(p("DEMO-1", objeto="Interventoría técnica de la vía")), "interventoria")
         self.assertEqual(modalidad_de(p("DEMO-2", objeto="Compra de papelería")), "otra")
+
+
+class EstructuraTests(BaseFlujo):
+    """Dependencias por entidad, comité evaluador con designación documentada
+    y bloqueos para trabajar varias personas a la vez."""
+
+    def _dependencias(self):
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        creadas = {}
+        for nombre, palabras, jefes in (
+            ("Área de Construcciones", "construcción\nedificación", [self.jefe_usuario.id]),
+            ("Caminos e Infraestructura Vial", "vía\nvial\npavimento", []),
+            ("Área de Concesiones", "concesión", []),
+        ):
+            r = admin.post("/api/estructura/dependencias", {"tipo": "tecnica", "nombre": nombre, "palabras_clave": palabras,
+                                                            "jefes": [str(j) for j in jefes], "miembros": [str(self.tecnico.id)]})
+            self.assertEqual(r.status_code, 201, r.content)
+            creadas[nombre] = r.json()["id"]
+        return admin, creadas
+
+    def setUp(self):
+        super().setUp()
+        from cuentas.models import Rol, TipoArea, Usuario
+
+        self.jefe_usuario = Usuario.objects.get(email="jefe@entidad.gov.co")
+        self.jefe_usuario.areas.set(self.entidad1.areas.all())
+        self.jefe2 = Usuario.objects.create_user("jefe2@entidad.gov.co", "Clave-Segura-2026", nombre_completo="Jefe Dos",
+                                                 entidad=self.entidad1, rol=Rol.JEFE_AREA)
+        self.jefe2.areas.set(self.entidad1.areas.filter(tipo=TipoArea.TECNICA))
+
+    def test_sugerencia_por_objeto_y_eleccion_al_crear(self):
+        from evaluaciones.estructura import sugerir_dependencia
+
+        admin, dep = self._dependencias()
+        self.assertEqual(sugerir_dependencia(self.entidad1.id, "tecnica", "Concesión vial del corredor").nombre, "Área de Concesiones")
+        self.assertEqual(sugerir_dependencia(self.entidad1.id, "tecnica", "Mejoramiento de la vía Tocancipá").nombre,
+                         "Caminos e Infraestructura Vial")
+        doc = {**DOCUMENTO_BASE, "objeto_general": "Construcción de la edificación del colegio"}
+        r = admin.post("/api/evaluaciones/procesos", {"documento_base": doc, "proponentes": MUCHOS[:2], "tipos": ["tecnica"]})
+        self.assertEqual(r.json()[0]["dependencia"]["nombre"], "Área de Construcciones")
+        doc2 = {**doc, "codigo_proceso": "OTRO-1"}
+        r = admin.post("/api/evaluaciones/procesos", {"documento_base": doc2, "proponentes": MUCHOS[:2], "tipos": ["tecnica"],
+                                                      "dependencias": {"tecnica": dep["Área de Concesiones"]}})
+        self.assertEqual(r.json()[0]["dependencia"]["nombre"], "Área de Concesiones")
+
+    def test_comite_designado_con_documento_y_bloqueos(self):
+        from evaluaciones.models import DesignacionComite
+
+        admin, dep = self._dependencias()
+        doc = {**DOCUMENTO_BASE, "objeto_general": "Construcción de la edificación del colegio"}
+        eid = admin.post("/api/evaluaciones/procesos", {"documento_base": doc, "proponentes": MUCHOS[:2], "tipos": ["tecnica"]}).json()[0]["id"]
+        jefe, jefe2 = Cliente(), Cliente()
+        jefe.entrar("jefe@entidad.gov.co")
+        jefe2.entrar("jefe2@entidad.gov.co")
+        cuerpo = {"miembros": [str(self.tecnico.id), str(self.evaluador.id)]}
+        # Solo el jefe de ESA dependencia (o el administrador) designa.
+        self.assertEqual(jefe2.put(f"/api/evaluaciones/{eid}/comite", cuerpo).status_code, 403)
+        r = jefe.put(f"/api/evaluaciones/{eid}/comite", cuerpo)
+        self.assertEqual(r.status_code, 200, r.content)
+        comite = r.json()
+        self.assertEqual([m["email"] for m in comite["miembros"]], ["tecnico@entidad.gov.co", "abogado@entidad.gov.co"])
+        d = DesignacionComite.objects.get(evaluacion_id=eid)
+        self.assertRegex(d.consecutivo, r"^DES-\d{4}-0001$")
+        self.assertEqual(len(d.sha256), 64)
+        archivo = jefe.get(f"/api/evaluaciones/{eid}/designaciones/{d.id}/documento")
+        self.assertEqual(archivo.status_code, 200)
+        self.assertTrue(b"".join(archivo.streaming_content).startswith(b"PK"))
+        self.assertTrue(EventoAuditoria.objects.filter(accion="comite.designado").exists())
+
+        # Los dos integrantes trabajan la misma evaluación; el bloqueo evita que decidan a la vez.
+        tecnico, abogado = Cliente(), Cliente()
+        tecnico.entrar("tecnico@entidad.gov.co")
+        abogado.entrar("abogado@entidad.gov.co")
+        self.assertTrue(abogado.get(f"/api/evaluaciones/{eid}").json()["evaluacion"]["puede_trabajar"])
+        pid = tecnico.get(f"/api/evaluaciones/{eid}").json()["proponentes"][0]["id"]
+        self.assertTrue(tecnico.post(f"/api/evaluaciones/{eid}/proponentes/{pid}/bloqueo").json()["propio"])
+        otro = abogado.post(f"/api/evaluaciones/{eid}/proponentes/{pid}/bloqueo").json()
+        self.assertFalse(otro["propio"])
+        self.assertEqual(otro["nombre"], "Ingeniero Uno")
+        r = abogado.put(f"/api/evaluaciones/{eid}/revisiones", {"proponente_id": pid, "requisito": 101, "cumple": True, "nota": "Visto el soporte"})
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("está revisando", r.json()["detail"])
+        self.assertEqual(abogado.get(f"/api/evaluaciones/{eid}/novedades").json()["bloqueos"][0]["nombre"], "Ingeniero Uno")
+        tecnico.delete(f"/api/evaluaciones/{eid}/proponentes/{pid}/bloqueo")
+        self.assertTrue(abogado.post(f"/api/evaluaciones/{eid}/proponentes/{pid}/bloqueo").json()["propio"])
+
+        # Cambiar el comité genera la versión 2 y quien sale pierde el acceso.
+        r = jefe.put(f"/api/evaluaciones/{eid}/comite", {"miembros": [str(self.tecnico.id)]})
+        self.assertEqual(len(r.json()["designaciones"]), 2)
+        self.assertEqual(DesignacionComite.objects.filter(evaluacion_id=eid).order_by("-version").first().version, 2)
+        self.assertFalse(abogado.get(f"/api/evaluaciones/{eid}").json()["evaluacion"]["puede_trabajar"])
+
+    def test_consulta_no_entra_al_comite(self):
+        admin, _ = self._dependencias()
+        eid = admin.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": MUCHOS[:1], "tipos": ["tecnica"]}).json()[0]["id"]
+        r = admin.put(f"/api/evaluaciones/{eid}/comite", {"miembros": [str(self.consulta.id)]})
+        self.assertEqual(r.status_code, 400)

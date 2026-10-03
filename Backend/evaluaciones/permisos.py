@@ -27,14 +27,27 @@ def puede_gestionar(usuario: Usuario, evaluacion: Evaluacion) -> bool:
         return False
     if usuario.es_superadmin or usuario.rol == Rol.ADMIN_ENTIDAD:
         return True
-    return usuario.rol == Rol.JEFE_AREA and tiene_area(usuario, evaluacion.tipo)
+    if usuario.rol != Rol.JEFE_AREA:
+        return False
+    # Con estructura por dependencias, la gestiona el jefe de esa dependencia;
+    # sin ella (evaluaciones anteriores), el jefe del área.
+    if evaluacion.dependencia_id:
+        return evaluacion.dependencia.jefes.filter(pk=usuario.pk).exists()
+    return tiene_area(usuario, evaluacion.tipo)
 
 
 def puede_trabajar(usuario: Usuario, evaluacion: Evaluacion) -> bool:
-    """Evaluar y revisar: el responsable o quien gestiona el área."""
+    """Evaluar y revisar: los miembros del comité (el coordinador incluido) o
+    quien gestiona la evaluación."""
+    from evaluaciones.estructura import es_miembro
+
     if usuario.rol == Rol.CONSULTA or not puede_ver(usuario, evaluacion):
         return False
-    return evaluacion.responsable_id == usuario.id or puede_gestionar(usuario, evaluacion)
+    return (
+        evaluacion.responsable_id == usuario.id
+        or es_miembro(usuario, evaluacion)
+        or puede_gestionar(usuario, evaluacion)
+    )
 
 
 def puede_crear_procesos(usuario: Usuario) -> bool:
@@ -44,7 +57,7 @@ def puede_crear_procesos(usuario: Usuario) -> bool:
 
 def exigir_trabajo(usuario: Usuario, evaluacion: Evaluacion) -> None:
     if not puede_trabajar(usuario, evaluacion):
-        raise HttpError(403, "Solo el responsable o el jefe del área pueden modificar esta evaluación.")
+        raise HttpError(403, "Solo el comité evaluador o el jefe de la dependencia pueden modificar esta evaluación.")
     if evaluacion.estado == EstadoEvaluacion.APROBADA:
         raise HttpError(409, "La evaluación está aprobada. Pida al jefe del área que la reabra para modificarla.")
 
