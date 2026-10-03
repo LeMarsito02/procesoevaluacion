@@ -17,6 +17,7 @@ import Topbar from '../components/Topbar'
 import { PASOS_EVALUACION, type Paso } from '../pasos'
 import VisorDocumento, { type DecisionMuestra } from '../components/VisorDocumento'
 import ComiteEvaluador from '../components/ComiteEvaluador'
+import RevisionCruzada from '../components/RevisionCruzada'
 import { propsDatos, useDatosProceso } from '../datosProceso'
 import { claveRevision, esPendiente, estadoDe, resumenProponente, type Revisiones } from '../estado'
 import {
@@ -595,7 +596,12 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           onVolver={() => setPaso('control')}
           onRevisarPendientes={() => irSiguientePendiente(null)}
           onNuevaEvaluacion={() => navegar('/procesos/nuevo')}
-          extra={<DocumentosFinales resumen={resumen} />}
+          extra={
+            <>
+              <DocumentosFinales resumen={resumen} />
+              <RevisionCruzada procesoId={resumen.proceso_id} />
+            </>
+          }
         />
       )}
 

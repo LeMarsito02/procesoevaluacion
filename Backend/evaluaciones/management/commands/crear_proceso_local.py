@@ -157,6 +157,12 @@ class Command(BaseCommand):
                 )
                 for tipo in tipos
             ]
+            # El responsable queda como coordinador del comité (sin documento de
+            # designación: no lo designó un jefe).
+            from evaluaciones.estructura import designar_comite
+
+            for evaluacion in evaluaciones:
+                designar_comite(evaluacion, [responsable], responsable, documentar=False)
 
         if not opciones["sin_evaluar"]:
             for evaluacion in evaluaciones:

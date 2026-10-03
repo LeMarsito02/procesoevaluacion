@@ -33,6 +33,7 @@ from evaluaciones.models import (
     Evaluacion,
     MiembroComite,
     Proponente,
+    siguiente_consecutivo,
 )
 
 # Un bloqueo vence si no se renueva en este tiempo (la pantalla lo renueva
@@ -101,12 +102,6 @@ def _validar_miembros(evaluacion: Evaluacion, miembros: list[Usuario]) -> None:
             raise ErrorEstructura(f"{m.nombre_completo} tiene rol de consulta: no puede evaluar.")
 
 
-def _consecutivo(entidad_id) -> str:
-    anio = timezone.localdate().year
-    n = DesignacionComite.objects.filter(entidad_id=entidad_id, consecutivo__startswith=f"DES-{anio}-").count() + 1
-    return f"DES-{anio}-{n:04d}"
-
-
 def designar_comite(evaluacion: Evaluacion, miembros: list[Usuario], actor: Usuario, *, dependencia: Dependencia | None = None,
                     documentar: bool = True) -> DesignacionComite | None:
     """Fija el comité de la evaluación (el primero es el coordinador). Retira a
@@ -148,7 +143,7 @@ def designar_comite(evaluacion: Evaluacion, miembros: list[Usuario], actor: Usua
 
 def _documentar(evaluacion: Evaluacion, miembros: list[Usuario], actor: Usuario) -> DesignacionComite:
     version = evaluacion.designaciones.count() + 1
-    consecutivo = _consecutivo(evaluacion.entidad_id)
+    consecutivo = siguiente_consecutivo(evaluacion.entidad_id, "DES")
     contenido = documento_designacion(evaluacion, miembros, actor, consecutivo, version)
     d = DesignacionComite(
         entidad_id=evaluacion.entidad_id,

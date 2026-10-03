@@ -1152,26 +1152,39 @@ def lotes_del_proceso(proceso) -> list[tuple[int, str]]:
     return lotes or [(0, "Lote único")]
 
 
+def datos_consolidado(proceso) -> dict:
+    """Lo que junta el consolidado de las tres áreas (el informe en Excel y el
+    acta de revisión cruzada lo leen de aquí, para decir lo mismo)."""
+    evaluaciones = {e.tipo: e for e in proceso.evaluaciones.all()}
+    if not evaluaciones:
+        raise ValueError("El proceso no tiene evaluaciones.")
+    return {
+        "evaluaciones": evaluaciones,
+        "lotes": lotes_del_proceso(proceso),
+        "proponentes": [(p.hoja, p.nombre) for p in proceso.proponentes.order_by("numero_orden")],
+        "resultados": {tipo: _resultados_para_informe(e) for tipo, e in evaluaciones.items()},
+        "requisitos": {tipo: _requisitos_por_lote(e) for tipo, e in evaluaciones.items()},
+        "puntajes_adoptados": hojas_con_puntaje_adoptado(evaluaciones["tecnica"]) if "tecnica" in evaluaciones else None,
+    }
+
+
 def generar_informe_consolidado(proceso) -> tuple[bytes, str]:
     """Las tres áreas en un solo informe: habilitación por lote, el puntaje
     que asigna el programa y el orden de elegibilidad."""
     from motor.consolidado import generar_informe
 
-    evaluaciones = {e.tipo: e for e in proceso.evaluaciones.all()}
-    if not evaluaciones:
-        raise ValueError("El proceso no tiene evaluaciones.")
-    resultados = {tipo: _resultados_para_informe(e) for tipo, e in evaluaciones.items()}
-    requisitos = {tipo: _requisitos_por_lote(e) for tipo, e in evaluaciones.items()}
+    datos = datos_consolidado(proceso)
+    evaluaciones = datos["evaluaciones"]
     aprobadas = all(e.estado == EstadoEvaluacion.APROBADA for e in evaluaciones.values())
     contenido = generar_informe(
         proceso.codigo,
         proceso.objeto,
-        lotes_del_proceso(proceso),
-        [(p.hoja, p.nombre) for p in proceso.proponentes.order_by("numero_orden")],
-        resultados,
-        requisitos,
+        datos["lotes"],
+        datos["proponentes"],
+        datos["resultados"],
+        datos["requisitos"],
         borrador=not aprobadas,
-        puntajes_adoptados=hojas_con_puntaje_adoptado(evaluaciones["tecnica"]) if "tecnica" in evaluaciones else None,
+        puntajes_adoptados=datos["puntajes_adoptados"],
     )
     from evaluaciones.cumplimiento import LEYENDA_PREINFORME, constancia, rotular_excel, titulo_adoptado
 
@@ -1221,6 +1234,7 @@ def eliminar_proceso(proceso) -> dict[str, int]:
         archivos = [d.archivo for d in aportados if d.archivo] + [e.archivo for e in expedientes if e.archivo]
         # Las designaciones del comité se van con el proceso (se borran en cascada).
         archivos += [d.archivo for d in DesignacionComite.objects.filter(evaluacion__proceso=proceso) if d.archivo]
+        archivos += [a.archivo for a in proceso.actas_revision_cruzada.all() if a.archivo]
         conteo = {
             "evaluaciones": len(evaluaciones),
             "proponentes": proceso.proponentes.count(),

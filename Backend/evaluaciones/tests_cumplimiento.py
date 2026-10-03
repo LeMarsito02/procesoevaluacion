@@ -719,3 +719,69 @@ class EstructuraTests(BaseFlujo):
         eid = admin.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": MUCHOS[:1], "tipos": ["tecnica"]}).json()[0]["id"]
         r = admin.put(f"/api/evaluaciones/{eid}/comite", {"miembros": [str(self.consulta.id)]})
         self.assertEqual(r.status_code, 400)
+
+
+class RevisionCruzadaTests(BaseFlujo):
+    """Acta de revisión cruzada de los comités antes de adjudicar (plan de
+    mejoramiento del ICCU, hallazgo 3)."""
+
+    def _proceso(self):
+        admin = Cliente()
+        admin.entrar("admin@entidad.gov.co")
+        r = admin.post("/api/evaluaciones/procesos", {"documento_base": DOCUMENTO_BASE, "proponentes": MUCHOS[:2],
+                                                      "tipos": ["juridica", "tecnica", "financiera"]})
+        self.assertEqual(r.status_code, 201, r.content)
+        return admin, r.json()[0]["proceso_id"], {e["tipo"]: e["id"] for e in r.json()}
+
+    def test_el_director_genera_el_acta_y_queda_versionada(self):
+        import io as _io
+
+        from docx import Document
+
+        from evaluaciones.models import ActaRevisionCruzada
+
+        admin, pid, evs = self._proceso()
+        admin.put(f"/api/evaluaciones/{evs['juridica']}/comite", {"miembros": [str(self.evaluador.id)]})
+        jefe = Cliente()
+        jefe.entrar("jefe@entidad.gov.co")  # jefe del área jurídica (sin estructura por dependencias)
+        self.assertTrue(jefe.get(f"/api/evaluaciones/procesos/{pid}/revision-cruzada").json()["puede_generar"])
+        r = jefe.post(f"/api/evaluaciones/procesos/{pid}/revision-cruzada")
+        self.assertEqual(r.status_code, 200, r.content)
+        actas = r.json()["actas"]
+        self.assertRegex(actas[0]["consecutivo"], r"^RCR-\d{4}-0001$")
+        self.assertFalse(actas[0]["todas_aprobadas"])
+        acta = ActaRevisionCruzada.objects.get(pk=actas[0]["id"])
+        texto = "\n".join(p.text for p in Document(_io.BytesIO(acta.archivo.read())).paragraphs)
+        tablas = " ".join(c.text for t in Document(_io.BytesIO(acta.archivo.open("rb").read())).tables for row in t.rows for c in row.cells)
+        self.assertIn("Acta de revisión cruzada", texto)
+        self.assertIn("preliminar", texto)  # hay evaluaciones sin aprobar
+        self.assertIn("Abogado Uno", tablas)  # firma del comité jurídico
+        self.assertIn("inhabilidades e incompatibilidades", tablas)
+        self.assertIn("P-01", tablas)
+        # Una segunda revisión es la versión 2, con otro consecutivo; la primera se conserva.
+        actas = admin.post(f"/api/evaluaciones/procesos/{pid}/revision-cruzada").json()["actas"]
+        self.assertEqual([a["version"] for a in actas], [2, 1])
+        self.assertEqual(admin.get(f"/api/evaluaciones/procesos/{pid}/revision-cruzada/{actas[0]['id']}/documento").status_code, 200)
+        self.assertTrue(EventoAuditoria.objects.filter(accion="revision_cruzada.generada").exists())
+
+    def test_el_consecutivo_no_se_reutiliza_al_eliminar_el_proceso(self):
+        admin, pid, _ = self._proceso()
+        self.assertTrue(admin.post(f"/api/evaluaciones/procesos/{pid}/revision-cruzada").json()["actas"][0]["consecutivo"].endswith("-0001"))
+        r = admin.http.delete(f"/api/evaluaciones/procesos/{pid}", {"confirmacion": DOCUMENTO_BASE["codigo_proceso"]},
+                              content_type="application/json", headers={"X-CSRFToken": admin.csrf})
+        self.assertEqual(r.status_code, 204, r.content)
+        _, pid2, _ = self._proceso()
+        self.assertTrue(admin.post(f"/api/evaluaciones/procesos/{pid2}/revision-cruzada").json()["actas"][0]["consecutivo"].endswith("-0002"))
+
+    def test_un_evaluador_ve_las_actas_pero_no_las_genera(self):
+        admin, pid, _ = self._proceso()
+        admin.post(f"/api/evaluaciones/procesos/{pid}/revision-cruzada")
+        abogado = Cliente()
+        abogado.entrar("abogado@entidad.gov.co")
+        d = abogado.get(f"/api/evaluaciones/procesos/{pid}/revision-cruzada").json()
+        self.assertFalse(d["puede_generar"])
+        self.assertEqual(len(d["actas"]), 1)
+        self.assertEqual(abogado.post(f"/api/evaluaciones/procesos/{pid}/revision-cruzada").status_code, 403)
+        otra = Cliente()
+        otra.entrar("admin@otraentidad.gov.co")
+        self.assertEqual(otra.get(f"/api/evaluaciones/procesos/{pid}/revision-cruzada").status_code, 404)

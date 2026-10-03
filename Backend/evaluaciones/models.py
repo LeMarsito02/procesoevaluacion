@@ -710,3 +710,67 @@ class BloqueoProponente(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["evaluacion", "proponente"], name="bloqueo_unico")]
+
+
+def _ruta_acta_cruzada(instancia: "ActaRevisionCruzada", nombre: str) -> str:
+    return f"revision_cruzada/{instancia.entidad_id}/{instancia.consecutivo}.docx"
+
+
+class ActaRevisionCruzada(models.Model):
+    """Acta de la revisión cruzada de las evaluaciones del proceso entre los
+    comités jurídico, técnico y financiero, antes de adjudicar (plan de
+    mejoramiento del ICCU, hallazgo 3). La genera el jefe de una dependencia
+    del proceso o el administrador; la firman los integrantes de los comités.
+    Documento controlado: consecutivo, versión y huella; cada nueva acta
+    conserva las anteriores."""
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    proceso = models.ForeignKey(Proceso, on_delete=models.CASCADE, related_name="actas_revision_cruzada")
+    consecutivo = models.CharField(max_length=40)  # RCR-2026-0001
+    version = models.PositiveSmallIntegerField(default=1)
+    # Foto de lo revisado: estado de cada evaluación, comités y pendientes.
+    resumen = models.JSONField(default=dict)
+    generada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    generada_en = models.DateTimeField(auto_now_add=True)
+    archivo = models.FileField(upload_to=_ruta_acta_cruzada, max_length=300)
+    sha256 = models.CharField(max_length=64)
+
+    class Meta:
+        ordering = ["-generada_en"]
+        constraints = [models.UniqueConstraint(fields=["entidad", "consecutivo"], name="acta_cruzada_consecutivo_unico")]
+
+
+class Consecutivo(models.Model):
+    """Contador de documentos controlados por entidad, prefijo y año
+    (DES-2026-0001, RCR-2026-0001). Solo avanza: un número no se reutiliza
+    aunque se elimine el documento (ISO 9001, 7.5.3)."""
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    prefijo = models.CharField(max_length=10)
+    anio = models.PositiveSmallIntegerField()
+    ultimo = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["entidad", "prefijo", "anio"], name="consecutivo_unico")]
+
+
+def siguiente_consecutivo(entidad_id, prefijo: str) -> str:
+    """El siguiente número del documento, dentro de la transacción que lo
+    guarda (si esta se deshace, el número no se consume)."""
+    from django.db import transaction
+    from django.utils import timezone
+
+    anio = timezone.localdate().year
+    with transaction.atomic():
+        c, _ = Consecutivo.objects.select_for_update().get_or_create(entidad_id=entidad_id, prefijo=prefijo, anio=anio)
+        if c.ultimo == 0:
+            # Arranca después de los documentos que ya existían con ese prefijo.
+            modelo = DesignacionComite if prefijo == "DES" else ActaRevisionCruzada
+            numeros = [int(x.rsplit("-", 1)[1]) for x in modelo.objects.filter(
+                entidad_id=entidad_id, consecutivo__startswith=f"{prefijo}-{anio}-").values_list("consecutivo", flat=True)]
+            c.ultimo = max(numeros, default=0)
+        c.ultimo += 1
+        c.save(update_fields=["ultimo"])
+        return f"{prefijo}-{anio}-{c.ultimo:04d}"

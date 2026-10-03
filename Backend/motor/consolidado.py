@@ -58,41 +58,25 @@ def _puntaje(resultados: dict[tuple[str, int], ResultadoInforme], hoja: str) -> 
     return round(sum(p for p in partes if isinstance(p, (int, float))), 2)
 
 
-def generar_informe(
-    codigo: str,
-    objeto: str,
+AREAS = [("juridica", "JURÍDICA"), ("tecnica", "TÉCNICA"), ("financiera", "FINANCIERA")]
+
+
+def tabla_por_lote(
     lotes: list[tuple[int, str]],
     proponentes: list[tuple[str, str]],
     resultados: dict[str, dict[tuple[str, int], ResultadoInforme]],
     requisitos: dict[str, dict[str, list[int]]],
-    borrador: bool,
     puntajes_adoptados: set[str] | None = None,
-) -> bytes:
-    """`resultados` y `requisitos` van por área ("juridica", "tecnica",
-    "financiera"). `requisitos[area]` trae "generales" (valen para todos los
-    lotes) y "lote_0", "lote_1"… con los de cada lote.
-
-    El puntaje y el orden de elegibilidad son preliminares: el puntaje es
-    evaluación en sentido estricto y lo adopta el evaluador técnico
-    después de revisar la tabla. Con `puntajes_adoptados` (hojas cuyo puntaje ya
-    adoptó una persona), solo esos proponentes entran al orden."""
-    libro = Workbook()
-    hoja_resumen = libro.active
-    hoja_resumen.title = "Consolidado"
-    hoja_resumen.cell(row=1, column=1, value=f"CONSOLIDADO DE LA EVALUACIÓN - {codigo}" + (" (BORRADOR)" if borrador else "")).font = Font(bold=True, size=13)
-    hoja_resumen.cell(row=2, column=1, value=objeto).alignment = Alignment(wrap_text=True)
-    fila = 4
-    areas = [("juridica", "JURÍDICA"), ("tecnica", "TÉCNICA"), ("financiera", "FINANCIERA")]
+) -> list[tuple[str, list[list]]]:
+    """Por lote: [prop., nombre, jurídica, técnica, financiera, habilitado,
+    puntaje, orden]. Lo usan el Excel consolidado y el acta de revisión
+    cruzada de los comités, para que digan exactamente lo mismo."""
+    salida = []
     for indice, nombre in lotes:
-        hoja_resumen.cell(row=fila, column=1, value=nombre.upper()).font = Font(bold=True)
-        fila += 1
-        _encabezado(hoja_resumen, fila, ["PROP.", "NOMBRE DEL PROPONENTE", *(t for _, t in areas), "HABILITADO",
-                                         "PUNTAJE PRELIMINAR", "ORDEN DE ELEGIBILIDAD PRELIMINAR"])
-        fila += 1
         filas = []
         for hoja, nombre_proponente in proponentes:
             estados = []
-            for area, _ in areas:
+            for area, _ in AREAS:
                 reparto = requisitos.get(area, {})
                 estados.append(_area(resultados.get(area, {}), hoja, reparto.get("generales", []),
                                      reparto.get(f"lote_{indice}", [])))
@@ -117,13 +101,51 @@ def generar_informe(
                 puesto = i + 1
             empatados = sum(1 for otro in elegibles if otro[6] == f[6])
             orden[id(f)] = f"{puesto} (empate entre {empatados})" if empatados > 1 else puesto
+        completas = []
         for f in filas:
             sin_adoptar = (
                 puntajes_adoptados is not None and f[5] == "CUMPLE" and isinstance(f[6], (int, float))
                 and f[0] not in puntajes_adoptados
             )
             puesto = "PUNTAJE SIN ADOPTAR" if sin_adoptar else orden.get(id(f), PENDIENTE if f[5] == PENDIENTE else "")
-            _fila(hoja_resumen, fila, [*f, puesto])
+            completas.append([*f, puesto])
+        salida.append((nombre, completas))
+    return salida
+
+
+def generar_informe(
+    codigo: str,
+    objeto: str,
+    lotes: list[tuple[int, str]],
+    proponentes: list[tuple[str, str]],
+    resultados: dict[str, dict[tuple[str, int], ResultadoInforme]],
+    requisitos: dict[str, dict[str, list[int]]],
+    borrador: bool,
+    puntajes_adoptados: set[str] | None = None,
+) -> bytes:
+    """`resultados` y `requisitos` van por área ("juridica", "tecnica",
+    "financiera"). `requisitos[area]` trae "generales" (valen para todos los
+    lotes) y "lote_0", "lote_1"… con los de cada lote.
+
+    El puntaje y el orden de elegibilidad son preliminares: el puntaje es
+    evaluación en sentido estricto y lo adopta el evaluador técnico
+    después de revisar la tabla. Con `puntajes_adoptados` (hojas cuyo puntaje ya
+    adoptó una persona), solo esos proponentes entran al orden."""
+    libro = Workbook()
+    hoja_resumen = libro.active
+    hoja_resumen.title = "Consolidado"
+    hoja_resumen.cell(row=1, column=1, value=f"CONSOLIDADO DE LA EVALUACIÓN - {codigo}" + (" (BORRADOR)" if borrador else "")).font = Font(bold=True, size=13)
+    hoja_resumen.cell(row=2, column=1, value=objeto).alignment = Alignment(wrap_text=True)
+    fila = 4
+    areas = AREAS
+    for nombre, filas in tabla_por_lote(lotes, proponentes, resultados, requisitos, puntajes_adoptados):
+        hoja_resumen.cell(row=fila, column=1, value=nombre.upper()).font = Font(bold=True)
+        fila += 1
+        _encabezado(hoja_resumen, fila, ["PROP.", "NOMBRE DEL PROPONENTE", *(t for _, t in areas), "HABILITADO",
+                                         "PUNTAJE PRELIMINAR", "ORDEN DE ELEGIBILIDAD PRELIMINAR"])
+        fila += 1
+        for f in filas:
+            _fila(hoja_resumen, fila, f)
             fila += 1
         fila += 1
     hoja_resumen.cell(row=fila, column=1, value=(

@@ -470,3 +470,25 @@ export const tomarBloqueo = (id: string, proponenteId: string) =>
   )
 export const soltarBloqueo = (id: string, proponenteId: string) =>
   pedir(`/api/evaluaciones/${id}/proponentes/${proponenteId}/bloqueo`, { method: 'DELETE' }).catch(() => undefined)
+
+// --- Acta de revisión cruzada de los comités (por proceso) ---
+export interface ActaRevisionCruzada {
+  id: number
+  consecutivo: string
+  version: number
+  generada_por: string
+  generada_en: string
+  sha256: string
+  todas_aprobadas: boolean
+  pendientes: number
+}
+export interface ActasRevisionCruzada {
+  puede_generar: boolean
+  actas: ActaRevisionCruzada[]
+}
+export const verActasRevisionCruzada = (procesoId: string) =>
+  pedirJson<ActasRevisionCruzada>(`/api/evaluaciones/procesos/${procesoId}/revision-cruzada`)
+export const generarActaRevisionCruzada = (procesoId: string) =>
+  enviarJson<ActasRevisionCruzada>(`/api/evaluaciones/procesos/${procesoId}/revision-cruzada`, 'POST')
+export const urlActaRevisionCruzada = (procesoId: string, actaId: number) =>
+  `/api/evaluaciones/procesos/${procesoId}/revision-cruzada/${actaId}/documento`

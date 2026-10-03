@@ -1602,3 +1602,67 @@ def soltar_bloqueo(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUI
     proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
     estructura.soltar_bloqueo(evaluacion, proponente, usuario)
     return 204, None
+
+
+# --- Acta de revisión cruzada de los comités (por proceso) ---
+def _proceso_visible(usuario: Usuario, proceso_id: UUID) -> Proceso:
+    proceso = get_object_or_404(Proceso.objects.select_related("entidad"), pk=proceso_id)
+    if not ve_datos_de(usuario, proceso.entidad_id) or (not usuario.es_superadmin and proceso.entidad_id != usuario.entidad_id):
+        raise HttpError(404, "No encontrado.")
+    return proceso
+
+
+def _actas_out(usuario: Usuario, proceso: Proceso) -> dict:
+    from evaluaciones import revision_cruzada
+
+    return {
+        "puede_generar": revision_cruzada.puede_generar(usuario, proceso),
+        "actas": [
+            {
+                "id": a.id, "consecutivo": a.consecutivo, "version": a.version, "generada_por": a.generada_por.nombre_completo,
+                "generada_en": a.generada_en.isoformat(), "sha256": a.sha256,
+                "todas_aprobadas": all(x["aprobada"] for x in a.resumen.get("areas", [])),
+                "pendientes": sum(x["pendientes"] for x in a.resumen.get("areas", [])),
+            }
+            for a in proceso.actas_revision_cruzada.select_related("generada_por")
+        ],
+    }
+
+
+@router.get("/procesos/{proceso_id}/revision-cruzada", response=dict)
+def ver_actas_revision_cruzada(request: HttpRequest, proceso_id: UUID) -> dict:
+    usuario: Usuario = request.auth
+    return _actas_out(usuario, _proceso_visible(usuario, proceso_id))
+
+
+@router.post("/procesos/{proceso_id}/revision-cruzada", response=dict)
+def generar_acta_revision_cruzada(request: HttpRequest, proceso_id: UUID) -> dict:
+    """El jefe de una dependencia del proceso (o el administrador) genera el
+    acta para la reunión de revisión cruzada de los tres comités."""
+    from evaluaciones import revision_cruzada
+
+    usuario: Usuario = request.auth
+    proceso = _proceso_visible(usuario, proceso_id)
+    if not revision_cruzada.puede_generar(usuario, proceso):
+        raise HttpError(403, "Solo el jefe de una dependencia del proceso o el administrador generan el acta.")
+    try:
+        acta = revision_cruzada.generar(proceso, usuario)
+    except revision_cruzada.ErrorActa as exc:
+        raise HttpError(400, str(exc)) from exc
+    auditar(request, "revision_cruzada.generada", entidad_id=proceso.entidad_id, objeto=proceso, codigo=proceso.codigo,
+            consecutivo=acta.consecutivo, version=acta.version, sha256=acta.sha256)
+    return _actas_out(usuario, proceso)
+
+
+@router.get("/procesos/{proceso_id}/revision-cruzada/{acta_id}/documento")
+def documento_revision_cruzada(request: HttpRequest, proceso_id: UUID, acta_id: int):
+    from django.http import FileResponse
+
+    usuario: Usuario = request.auth
+    proceso = _proceso_visible(usuario, proceso_id)
+    acta = get_object_or_404(proceso.actas_revision_cruzada, pk=acta_id)
+    auditar(request, "revision_cruzada.descargada", entidad_id=proceso.entidad_id, objeto=proceso, consecutivo=acta.consecutivo)
+    return FileResponse(
+        acta.archivo.open("rb"), as_attachment=True, filename=f"{acta.consecutivo} revision cruzada {proceso.codigo}.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
