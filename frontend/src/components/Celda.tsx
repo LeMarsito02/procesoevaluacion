@@ -21,7 +21,7 @@ export default function Celda({ resultado, info, revisiones, onClick }: Props) {
     ) : estado === 'no_aplica' ? (
       <Icono nombre="menos" tam={14} grosor={2.4} />
     ) : estado === 'revisar' ? (
-      <strong style={{ fontSize: 14, lineHeight: 1 }}>!</strong>
+      <strong style={{ fontSize: 'calc(14px * var(--escala-texto, 1))', lineHeight: 1 }}>!</strong>
     ) : (
       <Icono nombre="x" tam={14} grosor={2.6} />
     )

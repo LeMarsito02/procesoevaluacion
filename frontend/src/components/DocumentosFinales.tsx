@@ -108,7 +108,7 @@ export default function DocumentosFinales({ resumen }: { resumen: EvaluacionResu
                   {e.estado === 'generando' && ' · generando…'}
                   {e.estado === 'error' && <span style={{ color: 'var(--bad)' }}> · no se pudo generar: {e.avisos}</span>}
                   {e.estado === 'listo' && e.avisos && <span className="muted" title={e.avisos}> · con avisos</span>}
-                  {e === vigente && e.sha256 && <div className="muted" style={{ fontSize: 11 }}>SHA-256 {e.sha256}</div>}
+                  {e === vigente && e.sha256 && <div className="muted" style={{ fontSize: 'calc(11px * var(--escala-texto, 1))' }}>SHA-256 {e.sha256}</div>}
                 </span>
                 {e.estado === 'listo' && (
                   <button

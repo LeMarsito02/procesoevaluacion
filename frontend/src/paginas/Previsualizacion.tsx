@@ -190,7 +190,7 @@ export default function Previsualizacion() {
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', padding: 28, display: 'flex', flexDirection: 'column', gap: 24 }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-        <h1 className="serif" style={{ fontSize: 26 }}>
+        <h1 className="serif" style={{ fontSize: 'calc(26px * var(--escala-texto, 1))' }}>
           Banco de pruebas visual
         </h1>
         <span className="small muted">Datos inventados · solo en desarrollo</span>
@@ -203,7 +203,7 @@ export default function Previsualizacion() {
 
       <section style={{ width: `min(${ancho}px, 100%)`, display: 'flex', flexDirection: 'column', gap: 18 }}>
         <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <h2 style={{ fontSize: 16 }}>Experiencia del lote 1 — técnico</h2>
+          <h2 style={{ fontSize: 'calc(16px * var(--escala-texto, 1))' }}>Experiencia del lote 1 — técnico</h2>
           <Motivos motivo={TECNICO.motivo} tono="warn" />
           <DetalleTecnico detalle={TECNICO.detalle as never} />
           <QueFaltaRevisar
@@ -213,7 +213,7 @@ export default function Previsualizacion() {
         </div>
 
         <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <h2 style={{ fontSize: 16 }}>Capacidad residual — financiero</h2>
+          <h2 style={{ fontSize: 'calc(16px * var(--escala-texto, 1))' }}>Capacidad residual — financiero</h2>
           <Motivos motivo={FINANCIERO.motivo} tono="warn" />
           <DetalleFinanciero detalle={FINANCIERO.detalle as never} />
           <QueFaltaRevisar
@@ -224,7 +224,7 @@ export default function Previsualizacion() {
       </section>
 
       <section style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
-        <h2 style={{ fontSize: 18 }}>Diálogos</h2>
+        <h2 style={{ fontSize: 'calc(18px * var(--escala-texto, 1))' }}>Diálogos</h2>
         <div className="acciones">
           <button
             type="button"
@@ -272,7 +272,7 @@ export default function Previsualizacion() {
       </section>
 
       <section style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
-        <h2 style={{ fontSize: 18 }}>Ver un documento y decidir</h2>
+        <h2 style={{ fontSize: 'calc(18px * var(--escala-texto, 1))' }}>Ver un documento y decidir</h2>
         <button type="button" className="btn btn-secondary btn-sm" onClick={() => setVerVisor((v) => !v)}>
           {verVisor ? 'Cerrar el visor' : 'Abrir el visor de documentos'}
         </button>
@@ -289,7 +289,7 @@ export default function Previsualizacion() {
       </section>
 
       <section>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>Crear un proceso</h2>
+        <h2 style={{ fontSize: 'calc(18px * var(--escala-texto, 1))', marginBottom: 12 }}>Crear un proceso</h2>
         <PasoNuevo
           codigoProceso="ICCU-CM-037-2026"
           fechaCierre=""
@@ -305,7 +305,7 @@ export default function Previsualizacion() {
       </section>
 
       <section>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>Pantalla de evaluación y revisión</h2>
+        <h2 style={{ fontSize: 'calc(18px * var(--escala-texto, 1))', marginBottom: 12 }}>Pantalla de evaluación y revisión</h2>
         <PasoEvaluacion
           areaNombre="Técnica"
           proponentes={PROPONENTES}
@@ -324,7 +324,7 @@ export default function Previsualizacion() {
       </section>
 
       <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <h2 style={{ fontSize: 18 }}>Panel de un proponente</h2>
+        <h2 style={{ fontSize: 'calc(18px * var(--escala-texto, 1))' }}>Panel de un proponente</h2>
         <button type="button" className="btn btn-secondary btn-sm" onClick={() => setVerPanel((v) => !v)}>
           {verPanel ? 'Cerrar el panel' : 'Abrir el panel de un proponente'}
         </button>

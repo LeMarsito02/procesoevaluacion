@@ -162,7 +162,7 @@ export default function ComiteEvaluador(p: Props) {
 
         {comite && comite.designaciones.length > 0 && (
           <div style={{ marginTop: 20 }}>
-            <h3 style={{ fontSize: 15, marginBottom: 8 }}>Designaciones</h3>
+            <h3 style={{ fontSize: 'calc(15px * var(--escala-texto, 1))', marginBottom: 8 }}>Designaciones</h3>
             <div className="tabla-wrap">
               <table className="tabla">
                 <thead>

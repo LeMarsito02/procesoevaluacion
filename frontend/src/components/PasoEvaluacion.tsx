@@ -220,7 +220,7 @@ export default function PasoEvaluacion(p: Props) {
           <div className="progreso-texto">
             {p.progreso ? (
               <>
-                <h2 style={{ fontSize: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <h2 style={{ fontSize: 'calc(18px * var(--escala-texto, 1))', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span className="pulso" />
                   {p.progreso.procesando > 0 ? 'Evaluando proponentes…' : 'En la fila, esperando turno…'}
                 </h2>
@@ -245,7 +245,7 @@ export default function PasoEvaluacion(p: Props) {
               </>
             ) : (
               <>
-                <h2 style={{ fontSize: 18 }}>Evaluación incompleta</h2>
+                <h2 style={{ fontSize: 'calc(18px * var(--escala-texto, 1))' }}>Evaluación incompleta</h2>
                 <p className="muted" style={{ marginTop: 4 }}>
                   Faltan {faltan} de {p.proponentes.length} proponentes por evaluar.
                 </p>
@@ -271,7 +271,7 @@ export default function PasoEvaluacion(p: Props) {
           <div className="kpi-label">Proponentes evaluados</div>
           <div className="kpi-value">
             {evaluados}
-            <span className="muted" style={{ fontSize: 18 }}> / {p.proponentes.length}</span>
+            <span className="muted" style={{ fontSize: 'calc(18px * var(--escala-texto, 1))' }}> / {p.proponentes.length}</span>
           </div>
           <div className="kpi-sub">{kpis.proponentesListos} sin nada pendiente</div>
         </div>

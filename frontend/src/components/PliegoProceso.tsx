@@ -86,7 +86,7 @@ export default function PliegoProceso({ evaluacionId, pliego }: { evaluacionId: 
       )}
       {pliego.aclaraciones.length > 0 && (
         <>
-          <h3 style={{ marginTop: 16, fontSize: 15 }}>Para tener en cuenta al revisar</h3>
+          <h3 style={{ marginTop: 16, fontSize: 'calc(15px * var(--escala-texto, 1))' }}>Para tener en cuenta al revisar</h3>
           <ul className="lista-simple small">
             {pliego.aclaraciones.map((h) => (
               <li key={h.id}>

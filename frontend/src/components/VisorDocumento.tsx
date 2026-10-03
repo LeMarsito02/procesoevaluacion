@@ -64,7 +64,7 @@ export default function VisorDocumento({ url, archivo, evaluacionId, proponenteI
             <div className="small muted" style={{ fontWeight: 600 }}>
               {resultado.hoja} · {resultado.nombre_proponente}
             </div>
-            <h2 className="serif" style={{ fontSize: 19, marginTop: 4 }}>
+            <h2 className="serif" style={{ fontSize: 'calc(19px * var(--escala-texto, 1))', marginTop: 4 }}>
               {info?.titulo ?? `Requisito ${resultado.requisito}`}
             </h2>
           </div>

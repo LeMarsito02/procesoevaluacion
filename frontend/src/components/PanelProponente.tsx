@@ -332,7 +332,7 @@ export default function PanelProponente(p: Props) {
                             {archivos.length > 1 || !r.archivo_evaluado ? (
                               <select
                                 className="select"
-                                style={{ height: 38, padding: '0 10px', maxWidth: 340, fontSize: 13 }}
+                                style={{ height: 38, padding: '0 10px', maxWidth: 340, fontSize: 'calc(13px * var(--escala-texto, 1))' }}
                                 value={archivo}
                                 onChange={(e) => setArchivoElegido((prev) => ({ ...prev, [info.numero]: e.target.value }))}
                                 aria-label="Documento a abrir"

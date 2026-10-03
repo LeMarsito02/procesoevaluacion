@@ -222,7 +222,7 @@ export default function PasoDatos(p: Props) {
                     {lote.numero}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14 }}>{lote.objeto}</div>
+                    <div style={{ fontSize: 'calc(14px * var(--escala-texto, 1))' }}>{lote.objeto}</div>
                     <div className="small muted" style={{ marginTop: 4 }}>
                       {lote.plazo_meses} meses{lote.lugar_ejecucion ? ` · ${lote.lugar_ejecucion}` : ''}
                     </div>

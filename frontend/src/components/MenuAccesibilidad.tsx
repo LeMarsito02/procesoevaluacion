@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { CLAVE, INICIALES, TAMANOS, aplicarAccesibilidad, leer, type Preferencias } from '../accesibilidad'
+import { CLAVE, INICIALES, TAMANOS, ZOOMS, aplicarAccesibilidad, leer, type Preferencias } from '../accesibilidad'
 import Icono from './Icono'
 
 /** Menú de accesibilidad, como la barra de accesibilidad de los sitios GOV.CO
  * (MinTIC, Res. 1519 de 2020): cada persona ajusta la interfaz a su necesidad
  * y la preferencia queda guardada en su navegador.
  *
- * - Tamaño del texto: baja visión.
+ * - Tamaño del texto (solo las letras) y ampliar la página (todo): baja visión.
  * - Alto contraste: baja visión, daltonismo, pantallas con reflejo.
  * - Resaltar enlaces y botones: baja visión, discapacidad cognitiva.
  * - Espaciado y letra fácil de leer: dislexia, discapacidad cognitiva.
@@ -62,6 +62,7 @@ export default function MenuAccesibilidad() {
 
   const cambiar = (c: Partial<Preferencias>) => setP((prev) => ({ ...prev, ...c }))
   const indice = TAMANOS.indexOf(p.texto)
+  const indiceZoom = ZOOMS.indexOf(p.zoom)
   const opciones: { clave: keyof Preferencias; nombre: string; ayuda: string }[] = [
     { clave: 'contraste', nombre: 'Alto contraste', ayuda: 'Negro sobre blanco, bordes marcados' },
     { clave: 'enlaces', nombre: 'Resaltar enlaces y botones', ayuda: 'Subraya enlaces y enmarca botones' },
@@ -113,6 +114,24 @@ export default function MenuAccesibilidad() {
                 onClick={() => cambiar({ texto: TAMANOS[indice + 1] })}
               >
                 A+
+              </button>
+            </div>
+          </div>
+
+          <div className="a11y-grupo" role="group" aria-label="Ampliar la página">
+            <span>Ampliar la página</span>
+            <div className="a11y-tamano">
+              <button type="button" aria-label="Reducir la página" disabled={indiceZoom <= 0} onClick={() => cambiar({ zoom: ZOOMS[indiceZoom - 1] })}>
+                −
+              </button>
+              <output aria-live="polite">{p.zoom} %</output>
+              <button
+                type="button"
+                aria-label="Ampliar la página"
+                disabled={indiceZoom >= ZOOMS.length - 1}
+                onClick={() => cambiar({ zoom: ZOOMS[indiceZoom + 1] })}
+              >
+                +
               </button>
             </div>
           </div>
