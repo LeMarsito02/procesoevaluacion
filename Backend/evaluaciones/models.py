@@ -680,7 +680,7 @@ class DesignacionComite(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
-    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.PROTECT, related_name="designaciones")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="designaciones")
     consecutivo = models.CharField(max_length=40)  # DES-2026-0001
     version = models.PositiveSmallIntegerField(default=1)  # del comité de esta evaluación
     dependencia = models.CharField(max_length=200, blank=True)

@@ -1201,7 +1201,7 @@ def eliminar_proceso(proceso) -> dict[str, int]:
     Los archivos se borran solo si la base de datos confirma el borrado: si
     algo falla a mitad de camino, no quedan registros apuntando a archivos
     que ya no existen."""
-    from evaluaciones.models import DocumentoAportado, EstadoEvaluacion, Expediente, Trabajo
+    from evaluaciones.models import DesignacionComite, DocumentoAportado, EstadoEvaluacion, Expediente, Trabajo
 
     if proceso.evaluaciones.filter(estado=EstadoEvaluacion.APROBADA).exists():
         raise ValueError(
@@ -1219,6 +1219,8 @@ def eliminar_proceso(proceso) -> dict[str, int]:
         aportados = DocumentoAportado.objects.filter(evaluacion__in=evaluaciones)
         expedientes = Expediente.objects.filter(evaluacion__in=evaluaciones)
         archivos = [d.archivo for d in aportados if d.archivo] + [e.archivo for e in expedientes if e.archivo]
+        # Las designaciones del comité se van con el proceso (se borran en cascada).
+        archivos += [d.archivo for d in DesignacionComite.objects.filter(evaluacion__proceso=proceso) if d.archivo]
         conteo = {
             "evaluaciones": len(evaluaciones),
             "proponentes": proceso.proponentes.count(),
