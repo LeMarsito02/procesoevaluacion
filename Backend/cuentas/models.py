@@ -23,6 +23,15 @@ class Entidad(models.Model):
     nit = models.CharField("NIT", max_length=20, unique=True)
     activa = models.BooleanField(default=True)
     creada_en = models.DateTimeField(auto_now_add=True)
+    # Inicio de sesión con Microsoft: identificador del directorio (Entra ID)
+    # de la entidad. Solo las cuentas de ese directorio entran como sus usuarios.
+    microsoft_directorio = models.CharField("directorio de Microsoft", max_length=36, blank=True)
+    # Si se exige, los usuarios de la entidad no entran con contraseña.
+    exigir_microsoft = models.BooleanField("solo acceso con Microsoft", default=False)
+    # Quien entra con una cuenta del directorio y aún no tiene usuario lo
+    # recibe al instante, con el rol de consulta (sin acceso a evaluaciones,
+    # que son reservadas al comité); el administrador le da después su rol.
+    microsoft_crear_usuarios = models.BooleanField("crear usuarios al entrar con Microsoft", default=False)
 
     class Meta:
         verbose_name = "entidad"

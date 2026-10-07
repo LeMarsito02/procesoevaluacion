@@ -2,6 +2,7 @@
 temporal y recuperación de contraseña."""
 from __future__ import annotations
 
+import secrets
 import time
 from datetime import datetime
 from uuid import UUID
@@ -12,7 +13,7 @@ from django.contrib.auth import authenticate, login, logout, update_session_auth
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponseRedirect
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
@@ -21,9 +22,9 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.utils import check_csrf
 
-from cuentas import recaptcha
+from cuentas import microsoft, recaptcha
 from cuentas.correo import enviar_recuperacion
-from cuentas.models import AccesoSoporte, Usuario
+from cuentas.models import AccesoSoporte, Entidad, Rol, Usuario
 from cuentas.seguridad import auditar, inicio_bloqueado, ip_de, registrar_intento, sesion_activa
 from evaluaciones.cumplimiento import COMPROMISO_TEXTO, COMPROMISO_VERSION
 from evaluaciones.permisos import compromiso_pendiente
@@ -68,6 +69,11 @@ class UsuarioOut(Schema):
 
 class CsrfOut(Schema):
     csrf: str
+
+
+class OpcionesOut(Schema):
+    # Formas de entrar disponibles en esta instalación, además de la contraseña.
+    microsoft: bool
 
 
 class LoginIn(Schema):
@@ -149,7 +155,8 @@ def _iniciar(request: HttpRequest, usuario: Usuario, segundo_factor: bool) -> Lo
     login(request, usuario, backend="django.contrib.auth.backends.ModelBackend")
     request.session["segundo_factor_ok"] = segundo_factor
     registrar_intento(usuario.email, ip_de(request), exitoso=True)
-    auditar(request, "sesion.inicio", usuario=usuario, segundo_factor=segundo_factor)
+    metodo = request.session.get("metodo_acceso", "clave")
+    auditar(request, "sesion.inicio", usuario=usuario, segundo_factor=segundo_factor, metodo=metodo)
     return LoginOut(estado="ok", csrf=get_token(request), usuario=usuario_out(usuario))
 
 
@@ -178,6 +185,10 @@ def _siguiente_paso(request: HttpRequest, usuario: Usuario) -> LoginOut:
     luego el segundo factor si el rol lo exige, y si no, entrar."""
     if usuario.debe_cambiar_clave:
         return _pendiente(request, usuario, "cambiar_clave")
+    return _segundo_factor(request, usuario)
+
+
+def _segundo_factor(request: HttpRequest, usuario: Usuario) -> LoginOut:
     if not usuario.requiere_2fa:
         return _iniciar(request, usuario, segundo_factor=False)
     return _pendiente(request, usuario, "verificar_2fa" if usuario.totp_activo else "configurar_2fa")
@@ -203,10 +214,107 @@ def iniciar_sesion(request: HttpRequest, datos: LoginIn) -> LoginOut:
         registrar_intento(email, ip, exitoso=False)
         raise HttpError(401, MENSAJE_CREDENCIALES)
 
+    entidad = usuario.entidad
+    if entidad is not None and entidad.exigir_microsoft and entidad.microsoft_directorio and microsoft.activo():
+        auditar(request, "sesion.clave_no_permitida", usuario=usuario, entidad_id=entidad.id)
+        raise HttpError(403, "Su entidad ingresa con la cuenta de Microsoft. Use el botón «Microsoft».")
+
     # Contraseña correcta; si falta algún paso, aún no hay sesión.
     request.session.cycle_key()
     request.session["2fa_fallos"] = 0
+    request.session["metodo_acceso"] = "clave"
     return _siguiente_paso(request, usuario)
+
+
+# --- Inicio de sesión con Microsoft (Entra ID) ---
+CLAVE_FLUJO_MICROSOFT = "microsoft_flujo"
+MENSAJE_SIN_CUENTA = "sin_cuenta"
+
+
+def _volver(resultado: str) -> HttpResponseRedirect:
+    """De vuelta a la pantalla de acceso, que muestra el paso o el aviso."""
+    destino = settings.FRONTEND_URL + "/"
+    return HttpResponseRedirect(destino if resultado == "ok" else f"{destino}?microsoft={resultado}")
+
+
+def _crear_desde_microsoft(request: HttpRequest, identidad: microsoft.Identidad) -> Usuario | None:
+    """Primer ingreso de alguien del directorio de una entidad que permite crear
+    usuarios al entrar: queda con el rol de solo consulta y sin áreas."""
+    entidades = list(Entidad.objects.filter(activa=True, microsoft_directorio=identidad.directorio, microsoft_crear_usuarios=True)[:2])
+    # Un correo que ya existe (inactivo o de otra entidad) no se toca; y si dos
+    # entidades comparten directorio, no se adivina a cuál pertenece la persona.
+    if len(entidades) != 1 or Usuario.objects.filter(email__in=identidad.correos).exists():
+        return None
+    correo = identidad.correos[0]
+    try:
+        usuario = Usuario.objects.create_user(
+            correo, None, nombre_completo=(identidad.nombre.strip() or correo.split("@")[0])[:200],
+            entidad=entidades[0], rol=Rol.CONSULTA,
+        )
+    except ValidationError:
+        return None
+    auditar(request, "usuario.creado", usuario=usuario, entidad_id=entidades[0].id, objeto=usuario,
+            email=correo, rol=Rol.CONSULTA.value, origen="microsoft")
+    return usuario
+
+
+@router.get("/opciones", response=OpcionesOut)
+def opciones_de_acceso(request: HttpRequest) -> OpcionesOut:
+    return OpcionesOut(microsoft=microsoft.activo())
+
+
+@router.get("/microsoft/iniciar")
+def microsoft_iniciar(request: HttpRequest):
+    if not microsoft.activo():
+        raise HttpError(404, "El inicio de sesión con Microsoft no está habilitado.")
+    url, flujo = microsoft.preparar()
+    request.session[CLAVE_FLUJO_MICROSOFT] = {**flujo, "desde": time.time()}
+    return HttpResponseRedirect(url)
+
+
+@router.get("/microsoft/retorno")
+def microsoft_retorno(request: HttpRequest, code: str = "", state: str = "", error: str = ""):
+    if not microsoft.activo():
+        raise HttpError(404, "El inicio de sesión con Microsoft no está habilitado.")
+    # El flujo sirve una sola vez: se retira de la sesión antes de validar.
+    flujo = request.session.pop(CLAVE_FLUJO_MICROSOFT, None) or {}
+    vigente = time.time() - flujo.get("desde", 0) <= VIGENCIA_PENDIENTE
+    if not state or not vigente or not secrets.compare_digest(state, flujo.get("estado", "")):
+        return _volver("vencido")
+    if error or not code:
+        return _volver("cancelado")
+    ip = ip_de(request)
+    try:
+        identidad = microsoft.validar(microsoft.canjear(code, flujo["verificador"]), flujo["nonce"])
+    except microsoft.ErrorMicrosoft as exc:
+        auditar(request, "sesion.microsoft_rechazado", motivo=str(exc))
+        return _volver("error")
+
+    correo = identidad.correos[0]
+    if inicio_bloqueado(correo, ip):
+        return _volver("bloqueado")
+    # El usuario debe existir y su entidad debe haber registrado justo el
+    # directorio que autenticó a la persona: el correo solo no basta.
+    usuario = (
+        Usuario.objects.filter(
+            email__in=identidad.correos, is_active=True, entidad__activa=True,
+            entidad__microsoft_directorio=identidad.directorio,
+        )
+        .select_related("entidad")
+        .first()
+    )
+    if usuario is None:
+        usuario = _crear_desde_microsoft(request, identidad)
+    if usuario is None:
+        registrar_intento(correo, ip, exitoso=False)
+        auditar(request, "sesion.microsoft_rechazado", motivo="sin cuenta en ese directorio", correo=correo, directorio=identidad.directorio)
+        return _volver(MENSAJE_SIN_CUENTA)
+
+    request.session.cycle_key()
+    request.session["2fa_fallos"] = 0
+    request.session["metodo_acceso"] = "microsoft"
+    # Microsoft reemplaza la contraseña, no el segundo factor de MiEvaluador.
+    return _volver(_segundo_factor(request, usuario).estado)
 
 
 @router.post("/2fa/configurar", response=Configurar2faOut)

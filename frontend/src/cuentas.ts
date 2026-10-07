@@ -46,6 +46,12 @@ export interface Entidad {
   activa: boolean
   usuarios: number
   creada_en: string
+  /** Identificador del directorio de Microsoft (Entra ID) de la entidad; vacío = sin acceso con Microsoft. */
+  microsoft_directorio: string
+  /** Sus usuarios solo entran con Microsoft, no con contraseña. */
+  exigir_microsoft: boolean
+  /** Quien entra por primera vez con una cuenta del directorio recibe un usuario de consulta, sin acceso a evaluaciones. */
+  microsoft_crear_usuarios: boolean
 }
 
 export interface EventoAuditoria {
@@ -70,7 +76,7 @@ export const ROLES: { id: Exclude<Rol, 'superadmin' | 'soporte'>; nombre: string
   { id: 'admin_entidad', nombre: 'Administrador de entidad', descripcion: 'Gestiona usuarios, áreas y criterios de la entidad.' },
   { id: 'jefe_area', nombre: 'Jefe de área', descripcion: 'Crea procesos y asigna evaluaciones a su equipo.' },
   { id: 'evaluador', nombre: 'Evaluador', descripcion: 'Evalúa y revisa los procesos que le asignan.' },
-  { id: 'consulta', nombre: 'Consulta', descripcion: 'Solo puede ver procesos e informes.' },
+  { id: 'consulta', nombre: 'Consulta', descripcion: 'Entra al sistema pero no ve evaluaciones: son reservadas al comité designado.' },
 ]
 
 export const AREAS: { id: TipoArea; nombre: string }[] = [
@@ -85,6 +91,9 @@ async function conCsrf(promesa: Promise<LoginOut>): Promise<LoginOut> {
   return r
 }
 
+export const opcionesDeAcceso = () => pedirJson<{ microsoft: boolean }>('/api/auth/opciones')
+/** Lleva a la página de Microsoft; al volver, la pantalla de acceso lee `?microsoft=`. */
+export const URL_MICROSOFT = '/api/auth/microsoft/iniciar'
 export const obtenerYo = () => pedirJson<Usuario>('/api/auth/yo')
 export const iniciarSesion = (email: string, password: string, recaptcha: string | null) =>
   conCsrf(enviarJson<LoginOut>('/api/auth/login', 'POST', { email, password, recaptcha }))
@@ -122,6 +131,10 @@ export const crearEntidad = (datos: {
 }) => enviarJson<{ entidad: Entidad; credenciales: Credenciales }>('/api/plataforma/entidades', 'POST', datos)
 export const cambiarEstadoEntidad = (id: string, activa: boolean) =>
   enviarJson<Entidad>(`/api/plataforma/entidades/${id}`, 'PATCH', { activa })
+export const configurarMicrosoft = (
+  id: string,
+  datos: { microsoft_directorio: string; exigir_microsoft: boolean; microsoft_crear_usuarios: boolean },
+) => enviarJson<Entidad>(`/api/plataforma/entidades/${id}`, 'PATCH', datos)
 
 // --- Soporte de LeMarTek ---
 export interface PersonaSoporte {

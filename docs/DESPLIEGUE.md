@@ -26,6 +26,19 @@
 
 Requerimientos completos del servidor (hardware, paquetes, puertos, variables): **docs/REQUERIMIENTOS_SERVIDOR.txt**.
 
+## Inicio de sesión con Microsoft (Entra ID)
+
+Opcional. Sin configurarlo, el botón aparece como «No habilitado» y todos entran con contraseña.
+
+1. En Entra ID, registrar la aplicación «MiEvaluador» con cuentas de **cualquier directorio organizativo** (multiinquilino), tipo **Web**.
+2. Dirección de retorno: `https://<dominio>/api/auth/microsoft/retorno` (en desarrollo, `http://localhost:5173/api/auth/microsoft/retorno`). Debe coincidir con `FRONTEND_URL`.
+3. Crear un secreto de cliente y poner en `Backend/.env`: `MICROSOFT_CLIENT_ID` y `MICROSOFT_CLIENT_SECRET`. Anotar su vencimiento: al vencer, nadie entra con Microsoft.
+4. Permisos: solo `openid`, `profile` y `email` (los de iniciar sesión). No pedir acceso al directorio.
+5. Por cada entidad, el superadministrador registra el **identificador del directorio** de la entidad en *Entidades → Microsoft*. El área de sistemas de la entidad debe aprobar la aplicación en su directorio.
+6. Reiniciar `api`.
+
+Entra solo quien ya tiene usuario en MiEvaluador y cuya cuenta es del directorio registrado para su entidad. El segundo factor de MiEvaluador se sigue pidiendo según el rol. Superadministrador y soporte entran siempre con contraseña y segundo factor.
+
 ## Al desplegar una versión nueva
 
 1. `manage.py migrate`

@@ -4,6 +4,7 @@ import SalariosMinimos from '../components/SalariosMinimos'
 import TarjetaCredenciales from '../components/TarjetaCredenciales'
 import { subirPlantilla } from '../configuracion'
 import {
+  configurarMicrosoft,
   cambiarEstadoEntidad,
   crearCuentaSoporte,
   crearEntidad,
@@ -22,6 +23,7 @@ export default function PaginaEntidades() {
   const [entidades, setEntidades] = useState<Entidad[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creando, setCreando] = useState(false)
+  const [microsoft, setMicrosoft] = useState<Entidad | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
 
   useEffect(() => {
@@ -104,6 +106,9 @@ export default function PaginaEntidades() {
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => navegar(`/configuracion?entidad=${e.id}`)}>
                         Configurar
                       </button>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setMicrosoft(e)}>
+                        Microsoft{e.microsoft_directorio ? (e.exigir_microsoft ? ' · obligatorio' : ' · activo') : ''}
+                      </button>
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => alternar(e)}>
                         {e.activa ? 'Suspender' : 'Reactivar'}
                       </button>
@@ -135,8 +140,118 @@ export default function PaginaEntidades() {
           }}
         />
       )}
+      {microsoft && (
+        <DialogoMicrosoft
+          entidad={microsoft}
+          onCerrar={() => setMicrosoft(null)}
+          onGuardada={(e) => {
+            setEntidades((l) => (l ?? []).map((x) => (x.id === e.id ? e : x)))
+            setMicrosoft(null)
+            setAviso(e.microsoft_directorio ? 'Acceso con Microsoft configurado.' : 'Acceso con Microsoft desactivado.')
+          }}
+        />
+      )}
       {aviso && <div className="toast">{aviso}</div>}
     </main>
+  )
+}
+
+/** Directorio de Microsoft (Entra ID) con el que entran los usuarios de la entidad. */
+function DialogoMicrosoft({ entidad, onCerrar, onGuardada }: { entidad: Entidad; onCerrar: () => void; onGuardada: (e: Entidad) => void }) {
+  const [directorio, setDirectorio] = useState(entidad.microsoft_directorio)
+  const [exigir, setExigir] = useState(entidad.exigir_microsoft)
+  const [crear, setCrear] = useState(entidad.microsoft_crear_usuarios)
+  const sinDirectorio = directorio.trim() === ''
+  const [error, setError] = useState<string | null>(null)
+  const [guardando, setGuardando] = useState(false)
+
+  async function guardar() {
+    setGuardando(true)
+    setError(null)
+    try {
+      onGuardada(
+        await configurarMicrosoft(entidad.id, {
+          microsoft_directorio: directorio.trim(),
+          exigir_microsoft: exigir && !sinDirectorio,
+          microsoft_crear_usuarios: crear && !sinDirectorio,
+        }),
+      )
+    } catch (e) {
+      setError(mensajeDe(e))
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="overlay" onClick={onCerrar} />
+      <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="titulo-microsoft">
+        <div className="card-head">
+          <div>
+            <h2 id="titulo-microsoft">Acceso con Microsoft · {entidad.nombre}</h2>
+            <p>
+              Solo las cuentas de este directorio entran como usuarios de la entidad. Cada persona debe tener ya su usuario en
+              MiEvaluador con el mismo correo; el segundo factor se sigue pidiendo cuando el rol lo exige.
+            </p>
+          </div>
+          <button className="btn btn-ghost btn-icon" type="button" onClick={onCerrar} aria-label="Cerrar">
+            <Icono nombre="x" />
+          </button>
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            void guardar()
+          }}
+        >
+          <div className="field">
+            <label htmlFor="ms-directorio">Identificador del directorio (tenant) de la entidad</label>
+            <input
+              id="ms-directorio"
+              className="input"
+              value={directorio}
+              onChange={(e) => setDirectorio(e.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <span className="small muted">Lo entrega el área de sistemas de la entidad. Déjelo vacío para desactivar el acceso con Microsoft.</span>
+          </div>
+          <label className="comite-candidato" data-elegido={exigir}>
+            <input type="checkbox" checked={exigir} disabled={sinDirectorio} onChange={(e) => setExigir(e.target.checked)} />
+            <span>
+              <strong>Exigir Microsoft</strong>
+              <span className="small muted">Los usuarios de la entidad dejan de poder entrar con contraseña.</span>
+            </span>
+          </label>
+          <label className="comite-candidato" data-elegido={crear}>
+            <input type="checkbox" checked={crear} disabled={sinDirectorio} onChange={(e) => setCrear(e.target.checked)} />
+            <span>
+              <strong>Crear usuarios al entrar</strong>
+              <span className="small muted">
+                Cualquier persona de ese directorio que entre por primera vez recibe un usuario de consulta. No ve ninguna evaluación
+                hasta que el administrador le asigne su rol y la designen en un comité.
+              </span>
+            </span>
+          </label>
+          {error && (
+            <div className="callout callout-bad" role="alert" style={{ marginTop: 12 }}>
+              <Icono nombre="alerta" />
+              <div>{error}</div>
+            </div>
+          )}
+          <div className="acciones" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+            <button className="btn btn-ghost" type="button" onClick={onCerrar}>
+              Cancelar
+            </button>
+            <button className="btn btn-primary" type="submit" disabled={guardando}>
+              {guardando ? <span className="spinner" /> : 'Guardar'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
   )
 }
 

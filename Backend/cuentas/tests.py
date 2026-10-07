@@ -508,3 +508,147 @@ class RecaptchaConfiguracionTests(BaseCuentas):
             self.assertIn("RECAPTCHA_API_KEY", recaptcha.problema_de_configuracion())
         with mock.patch.multiple(recaptcha, PROJECT_ID="mievaluador-472315", API_KEY="AIzaSyEjemplo"):
             self.assertIsNone(recaptcha.problema_de_configuracion())
+
+
+class AccesoMicrosoftTests(BaseCuentas):
+    """Inicio de sesión con Microsoft por entidad: Microsoft identifica, pero
+    solo entra quien ya tiene usuario y es del directorio de su entidad."""
+
+    DIRECTORIO = "11111111-2222-3333-4444-555555555555"
+    OTRO = "99999999-8888-7777-6666-555555555555"
+
+    def setUp(self):
+        from unittest import mock
+
+        from django.test import override_settings
+
+        ajustes = override_settings(MICROSOFT_CLIENT_ID="app-de-prueba", MICROSOFT_CLIENT_SECRET="secreto-de-prueba")
+        ajustes.enable()
+        self.addCleanup(ajustes.disable)
+        self.canjear = mock.patch("cuentas.microsoft.canjear", return_value="token").start()
+        self.validar = mock.patch("cuentas.microsoft.validar").start()
+        self.addCleanup(mock.patch.stopall)
+        self.usuario = self.evaluador
+        self.entidad = Entidad.objects.get(pk=self.entidad1.pk)
+        self.entidad.microsoft_directorio = self.DIRECTORIO
+        self.entidad.save()
+
+    def _volver_de_microsoft(self, cliente, directorio=None, correo=None, estado=None):
+        from urllib.parse import parse_qs, urlparse
+
+        from cuentas.microsoft import Identidad
+
+        ida = cliente.get("/api/auth/microsoft/iniciar")
+        self.assertEqual(ida.status_code, 302)
+        consulta = parse_qs(urlparse(ida["Location"]).query)
+        self.assertEqual(consulta["code_challenge_method"], ["S256"])
+        self.assertEqual(consulta["scope"], ["openid profile email"])
+        self.validar.return_value = Identidad(
+            directorio=directorio or self.DIRECTORIO, correos=(correo or self.usuario.email,), nombre="Persona"
+        )
+        return cliente.get(f"/api/auth/microsoft/retorno?code=abc&state={estado or consulta['state'][0]}")
+
+    def test_entra_quien_tiene_usuario_y_es_del_directorio_de_su_entidad(self):
+        c = Cliente()
+        r = self._volver_de_microsoft(c)
+        self.assertEqual(r.status_code, 302)
+        self.assertNotIn("microsoft=", r["Location"])
+        self.assertEqual(c.get("/api/auth/yo").json()["email"], self.usuario.email)
+        evento = EventoAuditoria.objects.filter(accion="sesion.inicio").latest("id")
+        self.assertEqual(evento.detalles["metodo"], "microsoft")
+
+    def test_otro_directorio_con_el_mismo_correo_no_entra(self):
+        c = Cliente()
+        r = self._volver_de_microsoft(c, directorio=self.OTRO)
+        self.assertIn("microsoft=sin_cuenta", r["Location"])
+        self.assertEqual(c.get("/api/auth/yo").status_code, 401)
+
+    def test_correo_sin_usuario_no_crea_cuenta(self):
+        c = Cliente()
+        antes = Usuario.objects.count()
+        r = self._volver_de_microsoft(c, correo="nadie@otra.gov.co")
+        self.assertIn("microsoft=sin_cuenta", r["Location"])
+        self.assertEqual(Usuario.objects.count(), antes)
+
+    def test_crea_el_usuario_solo_si_la_entidad_lo_permite_y_con_rol_de_consulta(self):
+        self.entidad.microsoft_crear_usuarios = True
+        self.entidad.save()
+        c = Cliente()
+        r = self._volver_de_microsoft(c, correo="nueva@entidad.gov.co")
+        self.assertNotIn("microsoft=", r["Location"])
+        nueva = Usuario.objects.get(email="nueva@entidad.gov.co")
+        self.assertEqual((nueva.rol, nueva.entidad_id, nueva.areas.count()), (Rol.CONSULTA, self.entidad.id, 0))
+        self.assertFalse(nueva.has_usable_password())
+        evento = EventoAuditoria.objects.filter(accion="usuario.creado").latest("id")
+        self.assertEqual(evento.detalles["origen"], "microsoft")
+        # De otro directorio no se crea nada, aunque la entidad lo permita.
+        antes = Usuario.objects.count()
+        self.assertIn("microsoft=sin_cuenta", self._volver_de_microsoft(Cliente(), directorio=self.OTRO, correo="x@otra.gov.co")["Location"])
+        self.assertEqual(Usuario.objects.count(), antes)
+
+    def test_no_reactiva_ni_mueve_un_usuario_que_ya_existe(self):
+        self.entidad.microsoft_crear_usuarios = True
+        self.entidad.save()
+        Usuario.objects.filter(pk=self.usuario.pk).update(is_active=False)
+        r = self._volver_de_microsoft(Cliente())
+        self.assertIn("microsoft=sin_cuenta", r["Location"])
+        self.assertFalse(Usuario.objects.get(pk=self.usuario.pk).is_active)
+        # Un correo de otra entidad tampoco se pasa a esta.
+        r = self._volver_de_microsoft(Cliente(), correo=self.admin_otra.email)
+        self.assertIn("microsoft=sin_cuenta", r["Location"])
+        self.assertEqual(Usuario.objects.get(pk=self.admin_otra.pk).entidad_id, self.otra.id)
+
+    def test_estado_ajeno_o_repetido_se_rechaza(self):
+        from urllib.parse import parse_qs, urlparse
+
+        c = Cliente()
+        estado = parse_qs(urlparse(c.get("/api/auth/microsoft/iniciar")["Location"]).query)["state"][0]
+        self.assertIn("microsoft=vencido", c.get("/api/auth/microsoft/retorno?code=abc&state=inventado")["Location"])
+        # El flujo es de un solo uso: tras un intento, ni el estado correcto sirve.
+        self.assertIn("microsoft=vencido", c.get(f"/api/auth/microsoft/retorno?code=abc&state={estado}")["Location"])
+        self.canjear.assert_not_called()
+
+    def test_superadministrador_no_entra_por_microsoft(self):
+        c = Cliente()
+        r = self._volver_de_microsoft(c, correo=self.superadmin.email)
+        self.assertIn("microsoft=sin_cuenta", r["Location"])
+
+    def test_microsoft_no_reemplaza_el_segundo_factor(self):
+        from django.test import override_settings
+
+        with override_settings(EXIGIR_2FA_A_TODOS=True):
+            c = Cliente()
+            r = self._volver_de_microsoft(c)
+            self.assertIn("microsoft=configurar_2fa", r["Location"])
+            self.assertEqual(c.get("/api/auth/yo").status_code, 401)
+
+    def test_entidad_que_exige_microsoft_no_acepta_contrasena(self):
+        self.entidad.exigir_microsoft = True
+        self.entidad.save()
+        r = Cliente().post("/api/auth/login", {"email": self.usuario.email, "password": CLAVE})
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("Microsoft", r.json()["detail"])
+
+    def test_sin_configurar_el_boton_no_existe(self):
+        from django.test import override_settings
+
+        with override_settings(MICROSOFT_CLIENT_ID="", MICROSOFT_CLIENT_SECRET=""):
+            c = Cliente()
+            self.assertFalse(c.get("/api/auth/opciones").json()["microsoft"])
+            self.assertEqual(c.get("/api/auth/microsoft/iniciar").status_code, 404)
+
+    def test_el_token_debe_ser_del_directorio_que_dice_y_de_este_inicio(self):
+        from cuentas import microsoft
+
+        base = {"tid": self.DIRECTORIO, "iss": f"https://login.microsoftonline.com/{self.DIRECTORIO}/v2.0",
+                "nonce": "n1", "preferred_username": "Ana@Entidad.gov.co"}
+        self.assertEqual(microsoft.identidad_de(base, "n1").correos, ("ana@entidad.gov.co",))
+        for cambio in ({"iss": f"https://login.microsoftonline.com/{self.OTRO}/v2.0"}, {"nonce": "otro"}, {"preferred_username": ""}):
+            with self.assertRaises(microsoft.ErrorMicrosoft):
+                microsoft.identidad_de({**base, **cambio}, "n1")
+
+    def test_solo_el_superadministrador_configura_el_directorio(self):
+        admin = Cliente()
+        admin.entrar(self.admin_entidad1.email)
+        r = admin.patch(f"/api/plataforma/entidades/{self.entidad.id}", {"microsoft_directorio": self.OTRO})
+        self.assertEqual(r.status_code, 403)

@@ -1,7 +1,16 @@
 import QRCode from 'qrcode'
 import { useEffect, useState } from 'react'
 import Icono from '../components/Icono'
-import { configurar2fa, fijarClaveInicial, iniciarSesion, solicitarRecuperacion, verificar2fa, type Usuario } from '../cuentas'
+import {
+  configurar2fa,
+  fijarClaveInicial,
+  iniciarSesion,
+  opcionesDeAcceso,
+  solicitarRecuperacion,
+  URL_MICROSOFT,
+  verificar2fa,
+  type Usuario,
+} from '../cuentas'
 import CampoClave, { ReglasClave } from './CampoClave'
 import MarcoAcceso from './MarcoAcceso'
 import { mensajeDe } from '../http'
@@ -9,10 +18,33 @@ import { cargarRecaptcha, tokenRecaptcha } from '../recaptcha'
 
 type Etapa = 'credenciales' | 'cambiar_clave' | 'verificar_2fa' | 'configurar_2fa' | 'recuperar' | 'recuperar_enviado'
 
-const PROVEEDORES = ['Microsoft', 'Google', 'Empleados LeMarTek']
+const PROXIMAMENTE = ['Google', 'Empleados LeMarTek']
+
+// Resultado con el que el servidor devuelve a esta pantalla tras pasar por Microsoft.
+const AVISOS_MICROSOFT: Record<string, string> = {
+  sin_cuenta:
+    'Esa cuenta de Microsoft no tiene acceso a MiEvaluador. Debe ser la cuenta de su entidad; si lo es, pida al administrador que cree su usuario con ese mismo correo.',
+  cancelado: 'No se completó el inicio de sesión con Microsoft.',
+  vencido: 'El inicio de sesión con Microsoft venció. Inténtelo de nuevo.',
+  bloqueado: 'Demasiados intentos fallidos. Espere 15 minutos e inténtelo de nuevo.',
+  error: 'Microsoft no pudo confirmar su identidad. Inténtelo de nuevo.',
+}
+
+function resultadoMicrosoft(): string | null {
+  const consulta = new URLSearchParams(window.location.search)
+  const valor = consulta.get('microsoft')
+  if (valor === null) return null
+  // Se quita de la dirección: al recargar no debe repetirse el aviso.
+  consulta.delete('microsoft')
+  const resto = consulta.toString()
+  window.history.replaceState(null, '', window.location.pathname + (resto ? `?${resto}` : ''))
+  return valor
+}
 
 export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => void }) {
-  const [etapa, setEtapa] = useState<Etapa>('credenciales')
+  const [vuelta] = useState(resultadoMicrosoft)
+  const [etapa, setEtapa] = useState<Etapa>(vuelta === 'verificar_2fa' || vuelta === 'configurar_2fa' ? vuelta : 'credenciales')
+  const [conMicrosoft, setConMicrosoft] = useState(false)
   const [email, setEmail] = useState('')
   const [clave, setClave] = useState('')
   const [codigo, setCodigo] = useState('')
@@ -21,7 +53,13 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
   const [qr, setQr] = useState<string | null>(null)
   const [secreto, setSecreto] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(vuelta ? (AVISOS_MICROSOFT[vuelta] ?? null) : null)
+
+  useEffect(() => {
+    opcionesDeAcceso()
+      .then((o) => setConMicrosoft(o.microsoft))
+      .catch(() => setConMicrosoft(false))
+  }, [])
 
   useEffect(() => {
     if (etapa !== 'configurar_2fa' || secreto) return
@@ -269,7 +307,18 @@ export default function PaginaEntrar({ onEntrar }: { onEntrar: (u: Usuario) => v
         <span>o continúe con</span>
       </div>
       <div className="proveedores">
-        {PROVEEDORES.map((p) => (
+        {conMicrosoft ? (
+          <a className="btn btn-secondary btn-bloque proveedor" href={URL_MICROSOFT}>
+            Microsoft
+            <span className="small muted">Cuenta de su entidad</span>
+          </a>
+        ) : (
+          <button type="button" className="btn btn-secondary btn-bloque proveedor" disabled title="No está habilitado en esta instalación">
+            Microsoft
+            <span className="tag">No habilitado</span>
+          </button>
+        )}
+        {PROXIMAMENTE.map((p) => (
           <button key={p} type="button" className="btn btn-secondary btn-bloque proveedor" disabled title="Disponible próximamente">
             {p}
             <span className="tag">Próximamente</span>

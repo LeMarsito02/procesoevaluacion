@@ -20,6 +20,8 @@ load_dotenv(BASE_DIR / ".env")
 if sys.argv[1:2] == ["test"]:
     os.environ["RECAPTCHA_PROJECT_ID"] = ""
     os.environ["RECAPTCHA_API_KEY"] = ""
+    os.environ["MICROSOFT_CLIENT_ID"] = ""
+    os.environ["MICROSOFT_CLIENT_SECRET"] = ""
 
 
 def _lista(variable: str, defecto: str = "") -> list[str]:
@@ -250,6 +252,30 @@ MAILERS = {"default": {"BACKEND": _CORREO_BACKEND, "OPTIONS": _CORREO_OPCIONES}}
 DEFAULT_FROM_EMAIL = os.environ.get("CORREO_REMITENTE", "MiEvaluador <no-responder@lemartek.com>")
 # Enlaces de los correos (avisos de cuenta, recuperación de contraseña).
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+# Asistente de consulta (chat con la IA local sobre las evaluaciones propias).
+ASISTENTE_HABILITADO = os.environ.get("ASISTENTE_HABILITADO", "1") == "1"
+# La respuesta se transmite desde un hilo aparte; las pruebas la generan en el
+# mismo hilo para ver los datos de su transacción.
+ASISTENTE_EN_HILO = sys.argv[1:2] != ["test"]
+# Respuestas del asistente que se generan a la vez (por proceso del servidor).
+# Las demás esperan turno, como mucho ASISTENTE_ESPERA_MAX segundos: varias
+# personas preguntando al tiempo no deben saturar la IA ni frenar la evaluación.
+# Dejar que el modelo pida datos por su cuenta (llamadas a herramientas). Con
+# modelos pequeños falla a menudo: por defecto los datos los reúne el servidor
+# según la pregunta y el modelo solo redacta. Actívese con un modelo grande.
+ASISTENTE_HERRAMIENTAS = os.environ.get("ASISTENTE_HERRAMIENTAS", "0") == "1"
+ASISTENTE_SIMULTANEOS = int(os.environ.get("ASISTENTE_SIMULTANEOS", "2"))
+ASISTENTE_ESPERA_MAX = float(os.environ.get("ASISTENTE_ESPERA_MAX", "90"))
+
+# Inicio de sesión con Microsoft (Entra ID). Aplicación registrada por LeMarTek;
+# cada entidad indica su directorio en la pantalla de entidades. Sin estos dos
+# valores el botón no aparece. Dirección de retorno a registrar en Entra ID:
+# <FRONTEND_URL>/api/auth/microsoft/retorno
+MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "")
+MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "")
+# "organizations": cuentas de trabajo de cualquier directorio (el de cada
+# entidad se exige después). Un identificador fijo limita a un solo directorio.
+MICROSOFT_DIRECTORIO = os.environ.get("MICROSOFT_DIRECTORIO", "organizations")
 # Tiempo de validez del enlace de recuperación de contraseña (segundos).
 PASSWORD_RESET_TIMEOUT = 60 * 60 * 2
 # El panel de Django no pide segundo factor: en producción solo se publica

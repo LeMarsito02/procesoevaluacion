@@ -26,6 +26,7 @@ from evaluaciones import servicios
 from evaluaciones.models import PlantillaEvaluacion, PlantillaInforme
 from motor import criterios
 from cuentas.correo import enviar_acceso_soporte, enviar_clave_reiniciada, enviar_cuenta_creada
+from cuentas import microsoft
 from cuentas.models import AccesoSoporte, Area, Entidad, EventoAuditoria, Rol, TipoArea, Usuario
 from cuentas.seguridad import auditar, clave_temporal, de_mi_entidad, requiere_rol, sesion_activa
 
@@ -85,6 +86,9 @@ class EntidadOut(Schema):
     activa: bool
     usuarios: int
     creada_en: datetime
+    microsoft_directorio: str = ""
+    exigir_microsoft: bool = False
+    microsoft_crear_usuarios: bool = False
 
 
 class EntidadCreadaOut(Schema):
@@ -93,7 +97,13 @@ class EntidadCreadaOut(Schema):
 
 
 class ActualizarEntidadIn(Schema):
-    activa: bool
+    activa: bool | None = None
+    # Identificador del directorio de Microsoft (Entra ID) de la entidad; vacío
+    # desactiva el acceso con Microsoft para sus usuarios.
+    microsoft_directorio: str | None = None
+    exigir_microsoft: bool | None = None
+    # Crear con rol de consulta a quien entra por primera vez con una cuenta del directorio.
+    microsoft_crear_usuarios: bool | None = None
 
 
 class EventoOut(Schema):
@@ -244,7 +254,11 @@ def _solo_superadmin(request: HttpRequest) -> None:
 
 
 def _entidad_out(e: Entidad) -> EntidadOut:
-    return EntidadOut(id=e.id, nombre=e.nombre, nit=e.nit, activa=e.activa, usuarios=e.usuarios.count(), creada_en=e.creada_en)
+    return EntidadOut(
+        id=e.id, nombre=e.nombre, nit=e.nit, activa=e.activa, usuarios=e.usuarios.count(), creada_en=e.creada_en,
+        microsoft_directorio=e.microsoft_directorio, exigir_microsoft=e.exigir_microsoft,
+        microsoft_crear_usuarios=e.microsoft_crear_usuarios,
+    )
 
 
 @plataforma.get("/entidades", response=list[EntidadOut])
@@ -308,10 +322,23 @@ def _plantillas_iniciales(request: HttpRequest, entidad: Entidad, datos: Entidad
 def actualizar_entidad(request: HttpRequest, entidad_id: UUID, datos: ActualizarEntidadIn) -> EntidadOut:
     _solo_superadmin(request)
     entidad = get_object_or_404(Entidad, pk=entidad_id)
-    if entidad.activa != datos.activa:
+    if datos.activa is not None and entidad.activa != datos.activa:
         entidad.activa = datos.activa
         entidad.save(update_fields=["activa"])
         auditar(request, "entidad.activada" if datos.activa else "entidad.suspendida", entidad_id=entidad.id, objeto=entidad)
+    if datos.microsoft_directorio is not None or datos.exigir_microsoft is not None or datos.microsoft_crear_usuarios is not None:
+        directorio = entidad.microsoft_directorio if datos.microsoft_directorio is None else datos.microsoft_directorio.strip().lower()
+        exigir = entidad.exigir_microsoft if datos.exigir_microsoft is None else datos.exigir_microsoft
+        if directorio and not microsoft.directorio_valido(directorio):
+            raise HttpError(400, "El identificador del directorio debe tener el formato 00000000-0000-0000-0000-000000000000.")
+        crear = entidad.microsoft_crear_usuarios if datos.microsoft_crear_usuarios is None else datos.microsoft_crear_usuarios
+        if (exigir or crear) and not directorio:
+            raise HttpError(400, "Indique primero el directorio de Microsoft de la entidad.")
+        if (directorio, exigir, crear) != (entidad.microsoft_directorio, entidad.exigir_microsoft, entidad.microsoft_crear_usuarios):
+            entidad.microsoft_directorio, entidad.exigir_microsoft, entidad.microsoft_crear_usuarios = directorio, exigir, crear
+            entidad.save(update_fields=["microsoft_directorio", "exigir_microsoft", "microsoft_crear_usuarios"])
+            auditar(request, "entidad.acceso_microsoft", entidad_id=entidad.id, objeto=entidad,
+                    directorio=directorio, exigir=exigir, crear_usuarios=crear)
     return _entidad_out(entidad)
 
 
