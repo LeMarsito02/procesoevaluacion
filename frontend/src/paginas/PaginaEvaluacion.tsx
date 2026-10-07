@@ -16,6 +16,7 @@ import PasoInforme from '../components/PasoInforme'
 import Topbar from '../components/Topbar'
 import { PASOS_EVALUACION, type Paso } from '../pasos'
 import VisorDocumento, { type DecisionMuestra } from '../components/VisorDocumento'
+import BotonAsistente from '../components/BotonAsistente'
 import ComiteEvaluador from '../components/ComiteEvaluador'
 import RevisionCruzada from '../components/RevisionCruzada'
 import { propsDatos, useDatosProceso } from '../datosProceso'
@@ -697,6 +698,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
         />
       )}
 
+      <BotonAsistente evaluacionId={id} etiqueta={`${resumen.proceso_codigo} · ${resumen.tipo_nombre}`} />
       {aviso && (
         <div className="toast" role="status">
           {aviso}

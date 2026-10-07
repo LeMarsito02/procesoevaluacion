@@ -774,3 +774,38 @@ def siguiente_consecutivo(entidad_id, prefijo: str) -> str:
         c.ultimo += 1
         c.save(update_fields=["ultimo"])
         return f"{prefijo}-{anio}-{c.ultimo:04d}"
+
+
+class ConversacionAsistente(models.Model):
+    """Conversación de una persona con el asistente de consulta. Queda
+    guardada: es parte del registro de uso de la IA (ISO/IEC 42001)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Sin entidad: el superadministrador de la plataforma.
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="conversaciones_asistente")
+    titulo = models.CharField(max_length=120, blank=True)
+    # Evaluación sobre la que se conversa (elegida en el chat, o la que estaba
+    # abierta); sin ella, la conversación es sobre todas las de la persona.
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    creada_en = models.DateTimeField(auto_now_add=True)
+    actualizada_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-actualizada_en"]
+
+
+class MensajeAsistente(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    conversacion = models.ForeignKey(ConversacionAsistente, on_delete=models.CASCADE, related_name="mensajes")
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    rol = models.CharField(max_length=10, choices=[("usuario", "Usuario"), ("asistente", "Asistente")])
+    contenido = models.TextField()
+    # Solo en las respuestas: qué consultó la IA, de dónde sacó los datos y con qué modelo.
+    consultas = models.JSONField(default=list, blank=True)
+    fuentes = models.JSONField(default=list, blank=True)
+    modelo = models.CharField(max_length=80, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]

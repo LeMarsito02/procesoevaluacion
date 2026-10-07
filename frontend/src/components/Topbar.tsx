@@ -72,35 +72,81 @@ export default function Topbar({ codigoProceso = null, pasos }: Props) {
 function Navegacion() {
   const sesion = useSesion()
   const ruta = useRuta()
+  const [abierto, setAbierto] = useState(false)
+  const caja = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!abierto) return
+    const cerrar = (e: MouseEvent) => {
+      if (!caja.current?.contains(e.target as Node)) setAbierto(false)
+    }
+    const escape = (e: KeyboardEvent) => e.key === 'Escape' && setAbierto(false)
+    document.addEventListener('mousedown', cerrar)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('mousedown', cerrar)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [abierto])
   if (!sesion) return null
   const u = sesion.usuario
   const enlaces = [
-    { ruta: '/', nombre: 'Mis evaluaciones', visible: true },
-    { ruta: '/procesos', nombre: 'Procesos', visible: true },
-    { ruta: '/fila', nombre: 'Fila', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad' },
-    { ruta: '/equipo', nombre: 'Equipo', visible: puedeGestionarEquipo(u) },
-    { ruta: '/metricas', nombre: 'Métricas', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad' },
-    { ruta: '/entidades', nombre: 'Entidades', visible: u.rol === 'superadmin' },
-    { ruta: '/rendimiento', nombre: 'Rendimiento', visible: u.rol === 'superadmin' },
-    { ruta: '/mejoras', nombre: 'Qué falta automatizar', visible: u.rol === 'superadmin' || u.rol === 'soporte' },
-  ]
+    { ruta: '/', nombre: 'Mis evaluaciones', visible: true, principal: true },
+    { ruta: '/procesos', nombre: 'Procesos', visible: true, principal: true },
+    { ruta: '/asistente', nombre: 'Asistente', visible: true, principal: true },
+    { ruta: '/fila', nombre: 'Fila', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad', principal: false },
+    { ruta: '/equipo', nombre: 'Equipo', visible: puedeGestionarEquipo(u), principal: false },
+    { ruta: '/metricas', nombre: 'Métricas', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad', principal: false },
+    { ruta: '/entidades', nombre: 'Entidades', visible: u.rol === 'superadmin', principal: false },
+    { ruta: '/rendimiento', nombre: 'Rendimiento', visible: u.rol === 'superadmin', principal: false },
+    { ruta: '/mejoras', nombre: 'Qué falta automatizar', visible: u.rol === 'superadmin' || u.rol === 'soporte', principal: false },
+  ].filter((e) => e.visible)
+  // Con muchas secciones (administradores) la barra no alcanza: las de
+  // gestión pasan a un menú «Más» y quedan a la vista las de uso diario.
+  const agrupar = enlaces.length > 5
+  const visibles = agrupar ? enlaces.filter((e) => e.principal) : enlaces
+  const resto = agrupar ? enlaces.filter((e) => !e.principal) : []
+  const activa = (r: string) => ruta === r || (r === '/procesos' && ruta.startsWith('/procesos'))
+  const enResto = resto.find((e) => activa(e.ruta))
   return (
     <nav className="nav-principal" aria-label="Secciones">
-      {enlaces
-        .filter((e) => e.visible)
-        .map((e) => (
-          <a
-            key={e.ruta}
-            href={e.ruta}
-            aria-current={ruta === e.ruta || (e.ruta === '/procesos' && ruta.startsWith('/procesos')) ? 'page' : undefined}
-            onClick={(ev) => {
-              ev.preventDefault()
-              navegar(e.ruta)
-            }}
-          >
-            {e.nombre}
-          </a>
-        ))}
+      {visibles.map((e) => (
+        <a
+          key={e.ruta}
+          href={e.ruta}
+          aria-current={activa(e.ruta) ? 'page' : undefined}
+          onClick={(ev) => {
+            ev.preventDefault()
+            navegar(e.ruta)
+          }}
+        >
+          {e.nombre}
+        </a>
+      ))}
+      {resto.length > 0 && (
+        <div className="nav-mas" ref={caja}>
+          <button type="button" className="nav-mas-boton" data-activa={!!enResto} aria-expanded={abierto} aria-haspopup="menu" onClick={() => setAbierto((a) => !a)}>
+            {enResto?.nombre ?? 'Más'} <span aria-hidden="true">▾</span>
+          </button>
+          {abierto && (
+            <div className="menu-lista" role="menu">
+              {resto.map((e) => (
+                <button
+                  key={e.ruta}
+                  type="button"
+                  role="menuitem"
+                  aria-current={activa(e.ruta) ? 'page' : undefined}
+                  onClick={() => {
+                    setAbierto(false)
+                    navegar(e.ruta)
+                  }}
+                >
+                  {e.nombre}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </nav>
   )
 }

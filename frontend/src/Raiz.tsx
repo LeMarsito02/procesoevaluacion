@@ -4,6 +4,7 @@ import Topbar from './components/Topbar'
 import { cerrarSesion, obtenerYo, salirDeEntidad, type Usuario } from './cuentas'
 import { ErrorApi, MENSAJE_SISTEMA } from './http'
 import PaginaCuenta from './paginas/PaginaCuenta'
+import PaginaAsistente from './paginas/PaginaAsistente'
 import PaginaEntrar from './paginas/PaginaEntrar'
 import PaginaEvaluacion from './paginas/PaginaEvaluacion'
 import PaginaInicio from './paginas/PaginaInicio'
@@ -167,6 +168,7 @@ export default function Raiz() {
   else if (ruta === '/metricas' && (usuario.rol === 'superadmin' || usuario.rol === 'admin_entidad')) pagina = <PaginaMetricas />
   // El registro junta información de varias entidades: solo nosotros.
   else if (ruta === '/mejoras' && (usuario.rol === 'superadmin' || usuario.rol === 'soporte')) pagina = <PaginaMejoras />
+  else if (ruta === '/asistente') pagina = <PaginaAsistente />
   else if (ruta === '/cuenta') pagina = <PaginaCuenta />
   else if (ruta === '/acerca') pagina = <PaginaAcerca />
   else pagina = <PaginaInicio />
