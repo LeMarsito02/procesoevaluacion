@@ -1,6 +1,7 @@
 """Quién puede ver, trabajar, asignar y aprobar cada evaluación."""
 from __future__ import annotations
 
+from django.db.models import Q
 from ninja.errors import HttpError
 
 from cuentas.models import Rol, Usuario
@@ -11,9 +12,9 @@ def tiene_area(usuario: Usuario, tipo: str) -> bool:
     return any(a.tipo == tipo for a in usuario.areas.all())
 
 
-def puede_ver(usuario: Usuario, evaluacion: Evaluacion) -> bool:
-    # Todos los de la entidad consultan (solo lectura); el superadmin, las
-    # entidades que le dieron un permiso temporal (LEG-004, 4.5).
+def de_su_entidad(usuario: Usuario, evaluacion: Evaluacion) -> bool:
+    # El superadmin, solo las entidades que le dieron un permiso temporal
+    # (LEG-004, 4.5).
     from cuentas.seguridad import ve_datos_de
 
     if usuario.es_superadmin:
@@ -21,9 +22,44 @@ def puede_ver(usuario: Usuario, evaluacion: Evaluacion) -> bool:
     return evaluacion.entidad_id == usuario.entidad_id
 
 
+def ve_toda_la_entidad(usuario: Usuario) -> bool:
+    """Administrador de la entidad, y LeMarTek con el permiso temporal que ese
+    administrador otorga (superadministrador y soporte, solo lectura)."""
+    return usuario.es_superadmin or usuario.rol in (Rol.ADMIN_ENTIDAD, Rol.SOPORTE)
+
+
+def puede_ver(usuario: Usuario, evaluacion: Evaluacion) -> bool:
+    """Una evaluación es reservada: la ve su comité evaluador designado (y su
+    coordinador), quien la gestiona (jefe de la dependencia o del área) y el
+    administrador. Pertenecer a la entidad no basta."""
+    from evaluaciones.estructura import es_miembro
+
+    if not de_su_entidad(usuario, evaluacion):
+        return False
+    return (
+        ve_toda_la_entidad(usuario)
+        or evaluacion.responsable_id == usuario.id
+        or es_miembro(usuario, evaluacion)
+        or puede_gestionar(usuario, evaluacion)
+    )
+
+
+def filtro_visibles(usuario: Usuario) -> Q | None:
+    """Lo mismo que `puede_ver`, como filtro de consulta (None = sin filtro,
+    ya limitado a su entidad). Úsese con `.distinct()`."""
+    if ve_toda_la_entidad(usuario):
+        return None
+    filtro = Q(responsable=usuario) | Q(comite__usuario=usuario, comite__retirado_en__isnull=True)
+    if usuario.rol != Rol.CONSULTA:
+        filtro |= Q(dependencia__jefes=usuario)
+    if usuario.rol == Rol.JEFE_AREA:
+        filtro |= Q(dependencia__isnull=True, tipo__in=[a.tipo for a in usuario.areas.all()])
+    return filtro
+
+
 def puede_gestionar(usuario: Usuario, evaluacion: Evaluacion) -> bool:
     """Asignar, aprobar y reabrir: administrador, o jefe del área de la evaluación."""
-    if not puede_ver(usuario, evaluacion):
+    if not de_su_entidad(usuario, evaluacion):
         return False
     if usuario.es_superadmin or usuario.rol == Rol.ADMIN_ENTIDAD:
         return True
@@ -40,7 +76,7 @@ def puede_trabajar(usuario: Usuario, evaluacion: Evaluacion) -> bool:
     quien gestiona la evaluación."""
     from evaluaciones.estructura import es_miembro
 
-    if usuario.rol == Rol.CONSULTA or not puede_ver(usuario, evaluacion):
+    if usuario.rol in (Rol.CONSULTA, Rol.SOPORTE) or not de_su_entidad(usuario, evaluacion):
         return False
     return (
         evaluacion.responsable_id == usuario.id

@@ -235,7 +235,8 @@ class CrearYAsignarTests(BaseEvaluaciones):
             c = Cliente()
             c.entrar(email)
             r = c.post(f"/api/evaluaciones/{ev['id']}/asignar", {"responsable_id": str(self.evaluador.id)})
-            self.assertEqual(r.status_code, 403, email)
+            # No son del comité ni la gestionan: para ellos la evaluación no existe.
+            self.assertEqual(r.status_code, 404, email)
 
     def test_consulta_no_crea_procesos(self):
         c = Cliente()
@@ -291,10 +292,10 @@ class CrearYAsignarTests(BaseEvaluaciones):
         # Quien creó el proceso es responsable de las tres: desde cualquiera ve las otras dos.
         otras = c.get(f"/api/evaluaciones/{por_tipo['juridica']}").json()["otras_por_evaluar"]
         self.assertEqual([o["id"] for o in otras], [por_tipo["tecnica"], por_tipo["financiera"]])
-        # Otro abogado sin responsabilidad en el proceso no las ve.
+        # Otro abogado sin responsabilidad en el proceso no ve ni la evaluación.
         a2 = Cliente()
         a2.entrar("abogado2@entidad.gov.co")
-        self.assertEqual(a2.get(f"/api/evaluaciones/{por_tipo['juridica']}").json()["otras_por_evaluar"], [])
+        self.assertEqual(a2.get(f"/api/evaluaciones/{por_tipo['juridica']}").status_code, 404)
         # Evaluada la técnica, ya no aparece.
         self.evaluar_todo(c, por_tipo["tecnica"])
         otras = c.get(f"/api/evaluaciones/{por_tipo['juridica']}").json()["otras_por_evaluar"]
@@ -372,10 +373,12 @@ class TrabajoTests(BaseEvaluaciones):
         for email in ("abogado2@entidad.gov.co", "control@entidad.gov.co"):
             c = Cliente()
             c.entrar(email)
-            # Pueden consultar…
-            self.assertEqual(c.get(f"/api/evaluaciones/{eid}").status_code, 200)
-            # …pero no evaluar.
-            self.assertEqual(c.post(f"/api/evaluaciones/{eid}/evaluar", {"proponente_ids": [prop]}).status_code, 403, email)
+            # La evaluación es reservada al comité designado: ni la consultan…
+            self.assertEqual(c.get(f"/api/evaluaciones/{eid}").status_code, 404, email)
+            self.assertEqual(c.get(f"/api/evaluaciones/{eid}/informe").status_code, 404, email)
+            self.assertNotIn(eid, [e["id"] for p in c.get("/api/evaluaciones/procesos").json() for e in p["evaluaciones"]])
+            # …ni la evalúan.
+            self.assertEqual(c.post(f"/api/evaluaciones/{eid}/evaluar", {"proponente_ids": [prop]}).status_code, 404, email)
 
     def test_proponente_de_otro_proceso_rechazado(self):
         _, otro = self.crear(codigo="OTRO-001")
@@ -719,8 +722,8 @@ class FilaTests(BaseEvaluaciones):
     def test_consulta_no_encola_ni_pausa(self):
         c = Cliente()
         c.entrar("control@entidad.gov.co")
-        self.assertEqual(c.post(f"/api/evaluaciones/{self.eid}/evaluar", {}).status_code, 403)
-        self.assertEqual(c.post(f"/api/evaluaciones/{self.eid}/pausar").status_code, 403)
+        self.assertEqual(c.post(f"/api/evaluaciones/{self.eid}/evaluar", {}).status_code, 404)
+        self.assertEqual(c.post(f"/api/evaluaciones/{self.eid}/pausar").status_code, 404)
 
     def test_otra_entidad_no_ve_novedades(self):
         c = Cliente()
@@ -1165,7 +1168,7 @@ class HistoricoTests(BaseHistorico):
         self.assertEqual(self.abogado.delete(f"/api/evaluaciones/{self.ev['id']}/personas/{empresa['id']}").status_code, 409)
         consulta = Cliente()
         consulta.entrar("control@entidad.gov.co")
-        self.assertEqual(self.aportar(consulta, self.p1, 2).status_code, 403)
+        self.assertEqual(self.aportar(consulta, self.p1, 2).status_code, 404)
         otra = Cliente()
         otra.entrar("admin@otraentidad.gov.co")
         self.assertEqual(otra.get(f"/api/evaluaciones/{self.ev['id']}/aportados/{r.json()['id']}/archivo").status_code, 404)

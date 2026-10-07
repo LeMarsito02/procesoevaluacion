@@ -65,7 +65,7 @@ export default function PaginaProcesos() {
         <div>
           <div className="eyebrow">{usuario.entidad?.nombre ?? 'Todas las entidades'}</div>
           <h1>Procesos</h1>
-          <p>Todos los procesos de la entidad con el avance de cada evaluación.</p>
+          <p>Los procesos a los que usted tiene acceso, con el avance de cada evaluación. Cada evaluación la ve solo su comité designado.</p>
           <button type="button" className="enlace small" onClick={() => setArchivados((v) => !v)}>
             {archivados ? 'Ver los procesos activos' : 'Ver los procesos archivados'}
           </button>

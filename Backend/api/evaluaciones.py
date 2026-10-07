@@ -47,6 +47,7 @@ from evaluaciones.permisos import (
     puede_eliminar_proceso,
     puede_gestionar,
     puede_trabajar,
+    filtro_visibles,
     puede_ver,
     tiene_area,
 )
@@ -287,6 +288,11 @@ def _evaluaciones_qs(usuario: Usuario):
     visibles = entidades_con_datos(usuario)
     if visibles is not None:
         qs = qs.filter(entidad_id__in=visibles)
+    # Dentro de la entidad, solo las que le corresponden: comité designado,
+    # quien la gestiona o el administrador.
+    reservadas = filtro_visibles(usuario)
+    if reservadas is not None:
+        qs = qs.filter(pk__in=Evaluacion.objects.filter(reservadas).values("pk"))
     return qs
 
 
@@ -328,14 +334,18 @@ def tipos_de_evaluacion(request: HttpRequest) -> list[TipoOut]:
 # --- Procesos ---
 @router.get("/procesos", response=list[ProcesoResumenOut])
 def listar_procesos(request: HttpRequest, archivados: bool = False) -> list[ProcesoResumenOut]:
-    """Todos los procesos de la entidad (consulta para cualquier rol). Los
-    archivados solo con `archivados=true`."""
+    """Los procesos en los que la persona tiene alguna evaluación a la vista
+    (comité designado, quien la gestiona o el administrador) y los que ella
+    misma creó. Los archivados solo con `archivados=true`."""
     usuario: Usuario = request.auth
     procesos = Proceso.objects.select_related("creado_por").annotate(n=Count("proponentes"))
     visibles = entidades_con_datos(usuario)
     if visibles is not None:
         procesos = procesos.filter(entidad_id__in=visibles)
-    procesos = list(procesos.filter(archivado_en__isnull=not archivados))
+    procesos = procesos.filter(archivado_en__isnull=not archivados)
+    if filtro_visibles(usuario) is not None:
+        procesos = procesos.filter(Q(creado_por=usuario) | Q(pk__in=_evaluaciones_qs(usuario).values("proceso_id")))
+    procesos = list(procesos)
     evaluaciones = list(_evaluaciones_qs(usuario).filter(proceso__in=procesos).order_by("tipo"))
     por_proceso: dict[UUID, list[EvaluacionResumenOut]] = {}
     aprobados = {e.proceso_id: True for e in evaluaciones if e.estado == EstadoEvaluacion.APROBADA}
@@ -1608,6 +1618,9 @@ def soltar_bloqueo(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUI
 def _proceso_visible(usuario: Usuario, proceso_id: UUID) -> Proceso:
     proceso = get_object_or_404(Proceso.objects.select_related("entidad"), pk=proceso_id)
     if not ve_datos_de(usuario, proceso.entidad_id) or (not usuario.es_superadmin and proceso.entidad_id != usuario.entidad_id):
+        raise HttpError(404, "No encontrado.")
+    # El acta reúne las tres áreas: la ve quien tiene a la vista alguna de sus evaluaciones.
+    if not _evaluaciones_qs(usuario).filter(proceso=proceso).exists():
         raise HttpError(404, "No encontrado.")
     return proceso
 

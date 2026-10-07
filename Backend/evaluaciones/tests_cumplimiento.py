@@ -659,8 +659,8 @@ class EstructuraTests(BaseFlujo):
         jefe.entrar("jefe@entidad.gov.co")
         jefe2.entrar("jefe2@entidad.gov.co")
         cuerpo = {"miembros": [str(self.tecnico.id), str(self.evaluador.id)]}
-        # Solo el jefe de ESA dependencia (o el administrador) designa.
-        self.assertEqual(jefe2.put(f"/api/evaluaciones/{eid}/comite", cuerpo).status_code, 403)
+        # Solo el jefe de ESA dependencia (o el administrador) designa; el de otra ni la ve.
+        self.assertEqual(jefe2.put(f"/api/evaluaciones/{eid}/comite", cuerpo).status_code, 404)
         r = jefe.put(f"/api/evaluaciones/{eid}/comite", cuerpo)
         self.assertEqual(r.status_code, 200, r.content)
         comite = r.json()
@@ -694,7 +694,7 @@ class EstructuraTests(BaseFlujo):
         r = jefe.put(f"/api/evaluaciones/{eid}/comite", {"miembros": [str(self.tecnico.id)]})
         self.assertEqual(len(r.json()["designaciones"]), 2)
         self.assertEqual(DesignacionComite.objects.filter(evaluacion_id=eid).order_by("-version").first().version, 2)
-        self.assertFalse(abogado.get(f"/api/evaluaciones/{eid}").json()["evaluacion"]["puede_trabajar"])
+        self.assertEqual(abogado.get(f"/api/evaluaciones/{eid}").status_code, 404)
 
     def test_un_evaluador_puede_ser_jefe_de_su_dependencia(self):
         admin = Cliente()
@@ -774,10 +774,14 @@ class RevisionCruzadaTests(BaseFlujo):
         self.assertTrue(admin.post(f"/api/evaluaciones/procesos/{pid2}/revision-cruzada").json()["actas"][0]["consecutivo"].endswith("-0002"))
 
     def test_un_evaluador_ve_las_actas_pero_no_las_genera(self):
-        admin, pid, _ = self._proceso()
+        admin, pid, por_tipo = self._proceso()
         admin.post(f"/api/evaluaciones/procesos/{pid}/revision-cruzada")
         abogado = Cliente()
         abogado.entrar("abogado@entidad.gov.co")
+        # Sin estar en ningún comité del proceso, no ve sus actas.
+        self.assertEqual(abogado.get(f"/api/evaluaciones/procesos/{pid}/revision-cruzada").status_code, 404)
+        r = admin.put(f"/api/evaluaciones/{por_tipo['juridica']}/comite", {"miembros": [str(self.evaluador.id)]})
+        self.assertEqual(r.status_code, 200, r.content)
         d = abogado.get(f"/api/evaluaciones/procesos/{pid}/revision-cruzada").json()
         self.assertFalse(d["puede_generar"])
         self.assertEqual(len(d["actas"]), 1)
