@@ -396,3 +396,6 @@ api.add_router("/estructura", estructura_router)
 from api.asistente import router as asistente_router  # noqa: E402
 
 api.add_router("/asistente", asistente_router)
+from api.ops import router as ops_router  # noqa: E402
+
+api.add_router("/ops", ops_router)

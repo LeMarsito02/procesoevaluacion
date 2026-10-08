@@ -170,9 +170,22 @@ async def trabajar(capacidad: int, una_vez: bool = False) -> None:
             except TimeoutError:
                 pass
 
+    async def prestaciones():
+        # Contrataciones de prestación de servicios: leer los documentos de
+        # una toma segundos o un par de minutos si vienen escaneados.
+        from evaluaciones.ops import atender_pendientes as atender_ops
+
+        while not detener.is_set():
+            await sync_to_async(atender_ops, thread_sensitive=False)()
+            try:
+                await asyncio.wait_for(detener.wait(), 3)
+            except TimeoutError:
+                pass
+
     tarea_latidos = asyncio.create_task(latidos())
     tarea_expedientes = asyncio.create_task(expedientes()) if not una_vez else None
     tarea_pliegos = asyncio.create_task(pliegos()) if not una_vez else None
+    tarea_ops = asyncio.create_task(prestaciones()) if not una_vez else None
     try:
         await asyncio.gather(*(cupo() for _ in range(capacidad)))
     finally:
@@ -182,6 +195,8 @@ async def trabajar(capacidad: int, una_vez: bool = False) -> None:
             await tarea_expedientes
         if tarea_pliegos is not None:
             await tarea_pliegos
+        if tarea_ops is not None:
+            await tarea_ops
         await sync_to_async(_retirar)(trabajador_id)
         detener_pool()
         log.info("Trabajador %s detenido", trabajador_id)

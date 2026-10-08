@@ -52,6 +52,8 @@ export interface Entidad {
   exigir_microsoft: boolean
   /** Quien entra por primera vez con una cuenta del directorio recibe un usuario de consulta, sin acceso a evaluaciones. */
   microsoft_crear_usuarios: boolean
+  /** Tiene la licencia del módulo de prestación de servicios (OPS). */
+  modulo_ops: boolean
 }
 
 export interface EventoAuditoria {
@@ -131,6 +133,8 @@ export const crearEntidad = (datos: {
 }) => enviarJson<{ entidad: Entidad; credenciales: Credenciales }>('/api/plataforma/entidades', 'POST', datos)
 export const cambiarEstadoEntidad = (id: string, activa: boolean) =>
   enviarJson<Entidad>(`/api/plataforma/entidades/${id}`, 'PATCH', { activa })
+export const cambiarModuloOps = (id: string, modulo_ops: boolean) =>
+  enviarJson<Entidad>(`/api/plataforma/entidades/${id}`, 'PATCH', { modulo_ops })
 export const configurarMicrosoft = (
   id: string,
   datos: { microsoft_directorio: string; exigir_microsoft: boolean; microsoft_crear_usuarios: boolean },

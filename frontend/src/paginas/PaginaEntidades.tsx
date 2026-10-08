@@ -6,6 +6,7 @@ import { subirPlantilla } from '../configuracion'
 import {
   configurarMicrosoft,
   cambiarEstadoEntidad,
+  cambiarModuloOps,
   crearCuentaSoporte,
   crearEntidad,
   listarEntidades,
@@ -52,6 +53,26 @@ export default function PaginaEntidades() {
       setEntidades((l) => l?.map((x) => (x.id === e.id ? nueva : x)) ?? null)
     } catch (err) {
       setError(mensajeDe(err, 'No se pudo cambiar el estado.'))
+    }
+  }
+
+  async function alternarOps(e: Entidad) {
+    setError(null)
+    if (
+      !(await confirmar({
+        titulo: e.modulo_ops ? `¿Quitar el módulo de OPS a ${e.nombre}?` : `¿Activar el módulo de OPS para ${e.nombre}?`,
+        mensaje: e.modulo_ops
+          ? 'La opción quedará con candado. Las contrataciones que ya tiene se conservan, pero no podrá modificarlas.'
+          : 'Es un módulo con licencia aparte. Sus usuarios podrán crear prestaciones de servicios.',
+        aceptar: e.modulo_ops ? 'Quitar' : 'Activar',
+      }))
+    )
+      return
+    try {
+      const nueva = await cambiarModuloOps(e.id, !e.modulo_ops)
+      setEntidades((l) => l?.map((x) => (x.id === e.id ? nueva : x)) ?? null)
+    } catch (err) {
+      setError(mensajeDe(err, 'No se pudo cambiar la licencia.'))
     }
   }
 
@@ -108,6 +129,14 @@ export default function PaginaEntidades() {
                       </button>
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => setMicrosoft(e)}>
                         Microsoft{e.microsoft_directorio ? (e.exigir_microsoft ? ' · obligatorio' : ' · activo') : ''}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        title="Licencia del módulo de prestación de servicios (OPS)"
+                        onClick={() => void alternarOps(e)}
+                      >
+                        OPS{e.modulo_ops ? ' · activo' : ' · sin licencia'}
                       </button>
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => alternar(e)}>
                         {e.activa ? 'Suspender' : 'Reactivar'}

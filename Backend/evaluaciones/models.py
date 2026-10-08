@@ -809,3 +809,96 @@ class MensajeAsistente(models.Model):
 
     class Meta:
         ordering = ["id"]
+
+
+class EstadoOps(models.TextChoices):
+    PENDIENTE = "pendiente", "Pendiente"
+    ANALIZANDO = "analizando", "Analizando"
+    LISTA = "lista", "Lista para revisar"
+    CONFIRMADA = "confirmada", "Confirmada"
+    ERROR = "error", "Error"
+
+
+class ContratacionOps(models.Model):
+    """Contratación directa de prestación de servicios (OPS): una persona
+    frente al perfil del estudio previo. No hay ofertas que comparar: se
+    verifican sus documentos y se pone en línea su experiencia para el
+    certificado de idoneidad."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    # Cómo la identifica la entidad (número del proceso o del contrato); opcional.
+    referencia = models.CharField(max_length=80, blank=True)
+    contratista_nombre = models.CharField(max_length=200)
+    contratista_cedula = models.CharField(max_length=20)
+    # Hombre menor de 50 años: se le exige libreta militar. None = no se indicó.
+    exige_libreta = models.BooleanField(null=True, blank=True)
+    # Fecha contra la que se mide la vigencia de los documentos (la del estudio previo).
+    fecha_referencia = models.DateField()
+    estado = models.CharField(max_length=20, choices=EstadoOps.choices, default=EstadoOps.PENDIENTE, db_index=True)
+    error = models.TextField(blank=True)
+    # Lo que leyó el motor (evaluaciones.ops.analizar): estudio previo, CDP,
+    # títulos, periodos y lista de verificación. Lo que decidió la persona va
+    # aparte, en `decisiones`, y nunca lo pisa un análisis nuevo.
+    resultado = models.JSONField(null=True, blank=True)
+    decisiones = models.JSONField(default=dict, blank=True)
+    analisis_iniciado = models.DateTimeField(null=True, blank=True)
+    analizada_en = models.DateTimeField(null=True, blank=True)
+    # Cuánto tardó el análisis, para medir el módulo con casos reales.
+    segundos = models.FloatField(null=True, blank=True)
+    version_sistema = models.CharField(max_length=40, blank=True)
+    confirmada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    confirmada_en = models.DateTimeField(null=True, blank=True)
+    creada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    creada_en = models.DateTimeField(auto_now_add=True)
+    actualizada_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-creada_en"]
+
+    def __str__(self) -> str:
+        return self.referencia or self.contratista_nombre
+
+
+class OrigenDocumentoOps(models.TextChoices):
+    ENTIDAD = "entidad", "De la entidad"
+    CONTRATISTA = "contratista", "Del contratista"
+
+
+def _ruta_documento_ops(instancia: "DocumentoOps", nombre: str) -> str:
+    return f"entidades/{instancia.entidad_id}/ops/{instancia.contratacion_id}/{instancia.origen}/{uuid.uuid4().hex}.pdf"
+
+
+class DocumentoOps(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    contratacion = models.ForeignKey(ContratacionOps, on_delete=models.CASCADE, related_name="documentos")
+    origen = models.CharField(max_length=20, choices=OrigenDocumentoOps.choices)
+    nombre_original = models.CharField(max_length=255)
+    archivo = models.FileField(upload_to=_ruta_documento_ops, max_length=300)
+    tamano = models.BigIntegerField(default=0)
+    subido_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    subido_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["origen", "nombre_original"]
+
+
+class TablaHonorariosOps(models.Model):
+    """Tabla de honorarios máximos de una entidad para una vigencia (la
+    resolución que expide cada año). Los valores los registra la entidad."""
+
+    id = models.BigAutoField(primary_key=True)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    vigencia = models.PositiveSmallIntegerField()
+    norma = models.CharField(max_length=200, blank=True)
+    # [{desde, hasta, sin_especializacion, con_especializacion, con_maestria}]
+    profesional = models.JSONField(default=list)
+    # Reconocimiento por experiencia específica: [{desde, hasta, valor}]
+    reconocimiento = models.JSONField(default=list, blank=True)
+    actualizada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    actualizada_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-vigencia"]
+        constraints = [models.UniqueConstraint(fields=["entidad", "vigencia"], name="tabla_honorarios_unica_por_vigencia")]

@@ -89,6 +89,7 @@ class EntidadOut(Schema):
     microsoft_directorio: str = ""
     exigir_microsoft: bool = False
     microsoft_crear_usuarios: bool = False
+    modulo_ops: bool = False
 
 
 class EntidadCreadaOut(Schema):
@@ -104,6 +105,8 @@ class ActualizarEntidadIn(Schema):
     exigir_microsoft: bool | None = None
     # Crear con rol de consulta a quien entra por primera vez con una cuenta del directorio.
     microsoft_crear_usuarios: bool | None = None
+    # Licencia del módulo de prestación de servicios (OPS).
+    modulo_ops: bool | None = None
 
 
 class EventoOut(Schema):
@@ -257,7 +260,7 @@ def _entidad_out(e: Entidad) -> EntidadOut:
     return EntidadOut(
         id=e.id, nombre=e.nombre, nit=e.nit, activa=e.activa, usuarios=e.usuarios.count(), creada_en=e.creada_en,
         microsoft_directorio=e.microsoft_directorio, exigir_microsoft=e.exigir_microsoft,
-        microsoft_crear_usuarios=e.microsoft_crear_usuarios,
+        microsoft_crear_usuarios=e.microsoft_crear_usuarios, modulo_ops=e.modulo_ops,
     )
 
 
@@ -339,6 +342,10 @@ def actualizar_entidad(request: HttpRequest, entidad_id: UUID, datos: Actualizar
             entidad.save(update_fields=["microsoft_directorio", "exigir_microsoft", "microsoft_crear_usuarios"])
             auditar(request, "entidad.acceso_microsoft", entidad_id=entidad.id, objeto=entidad,
                     directorio=directorio, exigir=exigir, crear_usuarios=crear)
+    if datos.modulo_ops is not None and entidad.modulo_ops != datos.modulo_ops:
+        entidad.modulo_ops = datos.modulo_ops
+        entidad.save(update_fields=["modulo_ops"])
+        auditar(request, "entidad.modulo_ops", entidad_id=entidad.id, objeto=entidad, activo=datos.modulo_ops)
     return _entidad_out(entidad)
 
 

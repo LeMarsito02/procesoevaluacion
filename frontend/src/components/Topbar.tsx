@@ -92,6 +92,7 @@ function Navegacion() {
   const enlaces = [
     { ruta: '/', nombre: 'Mis evaluaciones', visible: true, principal: true },
     { ruta: '/procesos', nombre: 'Procesos', visible: true, principal: true },
+    { ruta: '/ops', nombre: 'OPS', visible: u.rol !== 'consulta', principal: true },
     { ruta: '/asistente', nombre: 'Asistente', visible: true, principal: true },
     { ruta: '/fila', nombre: 'Fila', visible: u.rol === 'superadmin' || u.rol === 'admin_entidad', principal: false },
     { ruta: '/equipo', nombre: 'Equipo', visible: puedeGestionarEquipo(u), principal: false },
@@ -105,7 +106,7 @@ function Navegacion() {
   const agrupar = enlaces.length > 5
   const visibles = agrupar ? enlaces.filter((e) => e.principal) : enlaces
   const resto = agrupar ? enlaces.filter((e) => !e.principal) : []
-  const activa = (r: string) => ruta === r || (r === '/procesos' && ruta.startsWith('/procesos'))
+  const activa = (r: string) => ruta === r || ((r === '/procesos' || r === '/ops') && ruta.startsWith(r))
   const enResto = resto.find((e) => activa(e.ruta))
   return (
     <nav className="nav-principal" aria-label="Secciones">

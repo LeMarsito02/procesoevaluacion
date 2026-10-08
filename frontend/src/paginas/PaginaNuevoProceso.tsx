@@ -198,7 +198,7 @@ export default function PaginaNuevoProceso() {
             if (c.archivo !== undefined) setArchivo(c.archivo)
           }}
           onAnalizar={analizar}
-          onCancelar={() => navegar('/')}
+          onCancelar={() => navegar('/procesos/nuevo')}
         />
       ) : paso === 'pliego' ? (
         <>

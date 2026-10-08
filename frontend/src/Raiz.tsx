@@ -5,6 +5,7 @@ import { cerrarSesion, obtenerYo, salirDeEntidad, type Usuario } from './cuentas
 import { ErrorApi, MENSAJE_SISTEMA } from './http'
 import PaginaCuenta from './paginas/PaginaCuenta'
 import PaginaAsistente from './paginas/PaginaAsistente'
+import PaginaElegirProceso from './paginas/PaginaElegirProceso'
 import PaginaEntrar from './paginas/PaginaEntrar'
 import PaginaEvaluacion from './paginas/PaginaEvaluacion'
 import PaginaInicio from './paginas/PaginaInicio'
@@ -13,6 +14,9 @@ import PaginaProcesos from './paginas/PaginaProcesos'
 const PaginaConfiguracion = lazy(() => import('./paginas/PaginaConfiguracion'))
 const PaginaEntidades = lazy(() => import('./paginas/PaginaEntidades'))
 const PaginaEquipo = lazy(() => import('./paginas/PaginaEquipo'))
+const PaginaListaOps = lazy(() => import('./paginas/PaginaListaOps'))
+const PaginaNuevaOps = lazy(() => import('./paginas/PaginaNuevaOps'))
+const PaginaOps = lazy(() => import('./paginas/PaginaOps'))
 const PaginaFila = lazy(() => import('./paginas/PaginaFila'))
 const PaginaMejoras = lazy(() => import('./paginas/PaginaMejoras'))
 const PaginaRendimiento = lazy(() => import('./paginas/PaginaRendimiento'))
@@ -151,15 +155,20 @@ export default function Raiz() {
   }
 
   const evaluacion = encajar('/evaluaciones/:id', ruta)
+  const contratacion = ruta === '/ops/nueva' ? null : encajar('/ops/:id', ruta)
   let pagina: React.ReactNode
   let conTopbar = true
   if (evaluacion) {
     pagina = <PaginaEvaluacion key={evaluacion.id} id={evaluacion.id} />
     conTopbar = false
-  } else if (ruta === '/procesos/nuevo' && puedeCrearProcesos(usuario)) {
+  } else if (ruta === '/procesos/nuevo/evaluacion' && puedeCrearProcesos(usuario)) {
     pagina = <PaginaNuevoProceso />
     conTopbar = false
-  } else if (ruta === '/procesos') pagina = <PaginaProcesos />
+  } else if (ruta === '/procesos/nuevo' && puedeCrearProcesos(usuario)) pagina = <PaginaElegirProceso />
+  else if (ruta === '/ops/nueva' && puedeCrearProcesos(usuario)) pagina = <PaginaNuevaOps />
+  else if (ruta === '/ops') pagina = <PaginaListaOps />
+  else if (contratacion) pagina = <PaginaOps key={contratacion.id} id={contratacion.id} />
+  else if (ruta === '/procesos') pagina = <PaginaProcesos />
   else if (ruta === '/configuracion' && (usuario.rol === 'superadmin' || usuario.rol === 'admin_entidad')) pagina = <PaginaConfiguracion />
   else if (ruta === '/fila' && (usuario.rol === 'superadmin' || usuario.rol === 'admin_entidad')) pagina = <PaginaFila />
   else if (ruta === '/equipo' && puedeGestionarEquipo(usuario)) pagina = <PaginaEquipo />

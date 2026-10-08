@@ -32,6 +32,9 @@ class Entidad(models.Model):
     # recibe al instante, con el rol de consulta (sin acceso a evaluaciones,
     # que son reservadas al comité); el administrador le da después su rol.
     microsoft_crear_usuarios = models.BooleanField("crear usuarios al entrar con Microsoft", default=False)
+    # Módulo de prestación de servicios (OPS): licencia aparte. Sin ella, la
+    # opción aparece con candado.
+    modulo_ops = models.BooleanField("módulo de prestación de servicios", default=False)
 
     class Meta:
         verbose_name = "entidad"
