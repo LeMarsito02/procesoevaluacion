@@ -1,4 +1,5 @@
 import type { Proponente, ResultadoRequisito } from '../api'
+import type { FormatoInforme } from '../evaluaciones'
 import { resumenProponente, type Revisiones } from '../estado'
 import Icono from './Icono'
 import { useDialogos } from '../dialogos'
@@ -14,9 +15,9 @@ interface Props {
   revisiones: Revisiones
   generando: boolean
   error: string | null
-  onGenerar: () => void
+  onGenerar: (formato?: FormatoInforme) => void
   /** Informe con las tres áreas del proceso. */
-  onGenerarConsolidado?: () => void
+  onGenerarConsolidado?: (formato?: 'xlsx' | 'pdf') => void
   generandoConsolidado?: boolean
   /** Reporte Word y expediente permanente. */
   extra?: React.ReactNode
@@ -39,8 +40,9 @@ export default function PasoInforme(p: Props) {
    * pero sí se confirma: en el Excel esas verificaciones salen como NO CUMPLE,
    * y eso en el informe oficial es rechazar a un proponente por algo que nadie
    * llegó a mirar. */
-  async function descargar() {
-    if (pendientes > 0) {
+  async function descargar(formato: FormatoInforme = 'xlsx') {
+    // El CSV no marca NO CUMPLE lo pendiente: lo deja «Pendiente de revisión».
+    if (pendientes > 0 && formato !== 'csv') {
       const seguir = await confirmar({
         titulo: '¿Descargar el informe con verificaciones sin revisar?',
         mensaje: (
@@ -55,7 +57,7 @@ export default function PasoInforme(p: Props) {
       })
       if (!seguir) return
     }
-    p.onGenerar()
+    p.onGenerar(formato)
   }
 
   return (
@@ -138,7 +140,7 @@ export default function PasoInforme(p: Props) {
         <button
           className={pendientes > 0 ? 'btn btn-secondary btn-lg' : 'btn btn-primary btn-lg'}
           type="button"
-          onClick={descargar}
+          onClick={() => void descargar()}
           disabled={p.generando || evaluados.length === 0}
         >
           {p.generando ? (
@@ -151,6 +153,14 @@ export default function PasoInforme(p: Props) {
             </>
           )}
         </button>
+        <div className="informe-formatos">
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => void descargar('pdf')} disabled={p.generando || evaluados.length === 0}>
+            PDF
+          </button>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => void descargar('csv')} disabled={p.generando || evaluados.length === 0} title="Resultados por proponente y requisito, con la decisión final">
+            CSV
+          </button>
+        </div>
       </section>
 
       {p.onGenerarConsolidado && (
@@ -164,8 +174,11 @@ export default function PasoInforme(p: Props) {
               Jurídica, técnica y financiera por lote, con el puntaje que asigna el programa y el orden de elegibilidad.
             </div>
           </div>
-          <button className="btn btn-secondary" type="button" onClick={p.onGenerarConsolidado} disabled={p.generandoConsolidado}>
+          <button className="btn btn-secondary" type="button" onClick={() => p.onGenerarConsolidado?.('xlsx')} disabled={p.generandoConsolidado}>
             {p.generandoConsolidado ? <span className="spinner oscuro" /> : <Icono nombre="descargar" />} Descargar consolidado
+          </button>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => p.onGenerarConsolidado?.('pdf')} disabled={p.generandoConsolidado}>
+            PDF
           </button>
         </section>
       )}

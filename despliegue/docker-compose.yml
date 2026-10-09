@@ -13,6 +13,12 @@ x-backend: &backend
     DB_PUERTO: "5432"
     GOOGLE_SERVICE_ACCOUNT_FILE: /run/secrets/google_drive
     LLM_URL: ${LLM_URL:-http://ollama:11434}
+    # Sin clave de cifrado no arranca, y sin RESPALDO_DESTINATARIO_AGE el respaldo falla en vez de quedar en claro (RF-21).
+    CIFRADO_OBLIGATORIO: "1"
+    CLAVE_CIFRADO_ARCHIVOS: ${CLAVE_CIFRADO_ARCHIVOS:?Falta CLAVE_CIFRADO_ARCHIVOS}
+    # OCR con PaddleOCR en el servicio «ocr» (OCR_MOTOR=tesseract para no usarlo).
+    OCR_MOTOR: ${OCR_MOTOR:-paddle}
+    OCR_SERVICIO_URL: http://ocr:8866
   secrets: [google_drive]
   volumes:
     - cache:/app/cache
@@ -41,9 +47,20 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # Las migraciones las corre el rol de mantenimiento (dueño de las tablas); la
+  # aplicación usa un rol que no puede alterar la auditoría (RF-20).
   migraciones:
     <<: *backend
-    command: ["python", "manage.py", "migrate", "--noinput"]
+    environment:
+      DB_HOST: db
+      DB_PUERTO: "5432"
+      DB_USUARIO: ${DB_ADMIN_USUARIO:-mievaluador}
+      DB_CLAVE: ${DB_ADMIN_CLAVE:?Falta DB_ADMIN_CLAVE}
+      GOOGLE_SERVICE_ACCOUNT_FILE: /run/secrets/google_drive
+      CIFRADO_OBLIGATORIO: "1"
+      CLAVE_CIFRADO_ARCHIVOS: ${CLAVE_CIFRADO_ARCHIVOS:?Falta CLAVE_CIFRADO_ARCHIVOS}
+    # Al actualizar, cifra lo que haya quedado en claro de versiones anteriores.
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py asegurar_permisos_bd --rol-app ${DB_USUARIO:-mievaluador_app} && python manage.py cifrar_archivos"]
     restart: "no"
 
   api:
@@ -60,7 +77,8 @@ services:
       migraciones:
         condition: service_completed_successfully
 
-  # Tareas diarias: retención de documentos (30 días) y copia de seguridad.
+  # Tareas diarias: retención de documentos (30 días) y copia de seguridad,
+  # cifrada con age y copiada fuera del servidor (RESPALDO_REMOTO).
   tareas:
     <<: *backend
     command: ["sh", "-c", "while true; do python manage.py aplicar_retencion; RESPALDO_DIR=/respaldos DB_HOST=db DB_PUERTO=5432 bash scripts/respaldo.sh; sleep 86400; done"]
@@ -71,6 +89,23 @@ services:
     depends_on:
       migraciones:
         condition: service_completed_successfully
+
+  # OCR de las páginas escaneadas con PaddleOCR en la GPU. Sin puertos
+  # publicados: solo lo alcanzan los servicios de esta red.
+  ocr:
+    build:
+      context: ..
+      dockerfile: despliegue/Dockerfile.ocr
+    volumes:
+      - modelos_ocr:/modelos
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
 
   web:
     build:
@@ -86,6 +121,7 @@ secrets:
     file: ../Backend/credentials/service_account.json
 
 volumes:
+  modelos_ocr:
   datos:
   cache:
   almacenamiento:

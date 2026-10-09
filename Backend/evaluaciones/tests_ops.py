@@ -2,7 +2,8 @@
 inventados: ninguna persona, entidad ni contrato es real."""
 from __future__ import annotations
 
-from datetime import date
+import random
+from datetime import date, timedelta
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -10,7 +11,7 @@ from django.test import SimpleTestCase
 from motor.ops import documentos
 from motor.ops.certificaciones import leer_periodos
 from motor.ops.estudio_previo import leer_estudio_previo, problema_con_el_cdp, valor_del_cdp
-from motor.ops.hoja_de_vida import estudios_declarados
+from motor.ops.hoja_de_vida import EN_SIGEP, ILEGIBLE, NO_ESTA, SIN_HOJA, en_el_sigep, estudios_declarados, experiencia_declarada, misma_entidad
 from motor.ops.matricula import leer_matricula
 from motor.ops.experiencia import Periodo, ajustar_a_franja, poner_en_linea
 from motor.ops.honorarios import ESPECIALIZACION, MAESTRIA, SIN_POSGRADO, FranjaProfesional, FranjaReconocimiento, TablaHonorarios
@@ -200,8 +201,8 @@ class CertificacionesTests(SimpleTestCase):
     def test_laboral_en_prosa_con_dos_periodos(self):
         lectura = leer_periodos([LABORAL])
         self.assertEqual([(p.inicio, p.fin, p.referencia) for p in lectura.periodos], [
-            (date(2012, 2, 14), date(2019, 12, 31), ""),
-            (date(2020, 2, 3), date(2021, 6, 30), ""),
+            (date(2012, 2, 14), date(2019, 12, 31), "Vinculación laboral"),
+            (date(2020, 2, 3), date(2021, 6, 30), "Vinculación laboral"),
         ])
 
     def test_en_ejecucion_se_cuenta_hasta_la_expedicion(self):
@@ -470,7 +471,7 @@ class FormasRealesTests(SimpleTestCase):
             (date(2025, 2, 25), date(2026, 1, 22), "2025001", True),
         ])
         self.assertEqual([p.nota for p in lectura.periodos], [
-            "No trae fecha de inicio: se tomó la de suscripción del contrato.", "Terminó antes de lo pactado (terminación anticipada).",
+            "No trae fecha de inicio: se tomó la de suscripción del contrato.", "Se contó hasta la terminación anticipada: vale el tiempo trabajado.",
             "Termina después del 22/01/2026: se contó hasta esa fecha.",
         ])
 
@@ -493,6 +494,58 @@ class FormasRealesTests(SimpleTestCase):
             "desde el día 02 de Mayo del 2025 hasta el día 30 de junio de 2025, desempeñándose en el cargo de RESIDENTE OBRA."
         ]).periodos
         self.assertEqual((p.entidad, p.referencia), ("GRUPO MONTAÑA CONSTRUCTORES S.A.S", "Residente Obra"))
+
+    def test_cada_periodo_con_su_contrato_aunque_compartan_pagina_y_el_ocr_dane_una_palabra(self):
+        lectura = leer_periodos([
+            "prestó sus servicios del 04 de Abril de 2016 hasta el 05 de Agosto de 2016 mediante Contrato de Prestacuón de\n"
+            "Servicios Profesionales No. 116 de 2016.\nDel 26 de Agosto de 2016 hasta el 25 de Diciembre de 2016 mediante Contrato de Prestación de\n"
+            "Servicios Profesionales No. 210 de 2016."
+        ])
+        self.assertEqual([p.referencia[-15:] for p in lectura.periodos], ["No. 116 de 2016", "No. 210 de 2016"])
+        # Sin el número del primero, no se le pone el de su vecino: queda la clase de vínculo.
+        lectura = leer_periodos([
+            "prestó sus servicios del 04 de Abril de 2016 hasta el 05 de Agosto de 2016 mediante un primer contrato.\n"
+            "Del 26 de Agosto de 2016 hasta el 25 de Diciembre de 2016 mediante Contrato de Prestación de Servicios Profesionales No. 210 de 2016."
+        ])
+        self.assertEqual([p.referencia for p in lectura.periodos], ["Prestación de servicios profesionales", "Contrato de Prestación de Servicios Profesionales No. 210 de 2016"])
+
+    def test_sin_contrato_ni_cargo_queda_la_clase_de_vinculo_o_el_cargo_dicho_de_paso(self):
+        def referencia(pagina):
+            (p,) = leer_periodos([pagina]).periodos
+            return p.referencia
+
+        self.assertEqual(referencia("ha prestado sus servicios profesionales en la empresa desde el día 1 de septiembre de 2024 hasta el 31 de diciembre de 2024."),
+                         "Prestación de servicios profesionales")
+        self.assertEqual(referencia("suscribió Contrato de Trabajo con el arquitecto, como REPRESENTANTE LEGAL de la corporación a partir del dieciocho\n"
+                                    "(18) de febrero de 2003, del cual laboró hasta el veinte (20) de Enero de 2004."), "Representante Legal")
+        self.assertEqual(referencia("laboró mediante:\nNombramiento según Resolución N.10022 SECRETARIA\nGENERAL Y DE GOBIERNO, Código 020, grado 04\n"
+                                    "desde el 01 de Julio de 2014 hasta el 11 de Enero de 2016"), "Secretaria General y de Gobierno")
+        self.assertEqual(referencia("Certifico que estuvo aquí desde el 1 de marzo de 2020 hasta el 30 de junio de 2020."), "")
+
+    def test_entidad_y_cargo_escritos_de_otras_formas(self):
+        def leido(pagina):
+            (p,) = leer_periodos([pagina]).periodos
+            return p.entidad, p.referencia
+
+        # Membrete en minúsculas y el cargo partido en dos renglones.
+        self.assertEqual(leido(
+            "Pérez Inventado é Cia. Ltda..\nCra. 28 78-32\nA QUIEN CORRESPONDA:\nlaboró con nosotros desempeñándose como Arquitecto\n"
+            "Residente en la obra, desde el día 05 de enero de 1991 hasta el día 18 de febrero de 1993."
+        ), ("Pérez Inventado é Cia. Ltda", "Arquitecto Residente"))
+        # La sociedad nombrada en el texto.
+        self.assertEqual(leido(
+            "CERTIFICACIÓN\nEn mi calidad de Gerente General de la Compañía Muros Inventados\nLtda., identificada con Nit 800.000.000-1, certifico que laboró "
+            "para nosotros desde el 1 de noviembre de 2002 al 15 de febrero de 2003 desempeñando el cargo\nde Residente de Obra Civil e Instalaciones, demostrando"
+        ), ("Muros Inventados Ltda", "Residente de Obra Civil e Instalaciones"))
+        # En el membrete, el municipio y no el departamento que lo encabeza; el nombre que sigue en otro renglón.
+        self.assertEqual(leido(
+            "REPUBLICA DE COLOMBIA\nDEPARTAMENTO DE VALLE INVENTADO\nALCALDIA MUNICIPAL DE PUEBLO NUEVO\nCERTIFICA:\nfue nombrado como Jefe de\n"
+            "Planeación, cargo que desempeñó desde el 1 de febrero de 2004 hasta el 31 de agosto de 2006"
+        ), ("ALCALDIA MUNICIPAL DE PUEBLO NUEVO", "Jefe de Planeación"))
+        self.assertEqual(leido(
+            "INSTITUTO DE OBRAS Y\nCONSTRUCCIONES DE VILLA FICTICIA\nCERTIFICA\nNo. CONTRATO: IOVF-9-2025\nFECHA DE INICIO: 22 DE OCTUBRE DE 2025\n"
+            "FECHA DE TERMINACIÓN: 24 DE DICIEMBRE DE 2025"
+        ), ("INSTITUTO DE OBRAS Y CONSTRUCCIONES DE VILLA FICTICIA", "IOVF-9-2025"))
 
     def test_estudio_previo_con_perfil_en_minusculas_especifica_y_tabla_partida(self):
         e = leer_estudio_previo(
@@ -594,7 +647,7 @@ class LibretaTests(SimpleTestCase):
         cedula = {"7. cedula.pdf": "REPUBLICA DE COLOMBIA CEDULA DE CIUDADANIA FECHA DE NACIMIENTO. 20-SEP.1977"}
         self.assertEqual(libreta_exigible("80000001", cedula, ref), (True, ""))
         mayor = {"7. cedula.pdf": "FECHA DE NACIMIENTO 10-JUN-1967"}
-        self.assertEqual(libreta_exigible("79000002", mayor, ref), (False, "Tiene 58 años según su cédula: solo se exige a menores de 50."))
+        self.assertEqual(libreta_exigible("79000002", mayor, ref), (False, "Tiene 58 años según su cédula y solo se exige a menores de 50. Confírmelo: si es así, márquela «No aplica»."))
         # Sin fecha de nacimiento legible, o con una cédula de diez dígitos, no se sabe.
         self.assertEqual(libreta_exigible("79000002", {}, ref), (None, ""))
         self.assertEqual(libreta_exigible("1007651426", cedula, ref), (None, ""))
@@ -602,3 +655,123 @@ class LibretaTests(SimpleTestCase):
         self.assertEqual(libreta_exigible("1007651426", hoja, ref)[0], False)
         hombre = {"12. hv.pdf": "NO 1007651427 F M X NB COL. X", **cedula}
         self.assertEqual(libreta_exigible("1007651427", hombre, ref), (True, ""))
+
+
+class InvariantesTests(SimpleTestCase):
+    """Propiedades que deben cumplirse con cualquier dato: aquí se prueban con
+    miles de casos al azar (con semilla fija, para que un fallo se pueda repetir).
+    Lo que protegen: que nunca se cuente dos veces el mismo tiempo."""
+
+    def _fecha(self, r):
+        return date(2000, 1, 1) + timedelta(days=r.randrange(0, 9000))
+
+    def test_contratos_seguidos_suman_lo_mismo_que_uno_solo_con_esas_fechas(self):
+        r = random.Random(20261007)
+        for _ in range(4000):
+            a = self._fecha(r)
+            c = a + timedelta(days=r.randrange(0, 1500))
+            b = a + timedelta(days=r.randrange(0, (c - a).days + 1))
+            partido = [Periodo(a, b), Periodo(b + timedelta(days=1), c)] if b < c else [Periodo(a, c)]
+            self.assertEqual(poner_en_linea(partido).dias, dias_comerciales(a, c), (a, b, c))
+        # El caso que encontró esta prueba: partir en un día 31 regalaba un día.
+        partes = [Periodo(date(2017, 10, 31), date(2018, 3, 30)), Periodo(date(2018, 3, 31), date(2018, 8, 16))]
+        self.assertEqual(poner_en_linea(partes).dias, dias_comerciales(date(2017, 10, 31), date(2018, 8, 16)))
+
+    def test_la_experiencia_en_linea_cubre_exactamente_los_dias_trabajados_una_sola_vez(self):
+        r = random.Random(7)
+        for _ in range(600):
+            periodos = []
+            for _ in range(r.randrange(1, 9)):
+                inicio = self._fecha(r)
+                periodos.append(Periodo(inicio, inicio + timedelta(days=r.randrange(0, 900))))
+            desde = self._fecha(r) if r.random() < 0.5 else None
+            lineal = poner_en_linea(periodos, desde)
+
+            def dias_de(inicio, fin):
+                return {inicio + timedelta(days=i) for i in range((fin - inicio).days + 1)}
+
+            trabajados = set().union(*(dias_de(p.inicio, p.fin) for p in periodos))
+            if desde:
+                trabajados = {d for d in trabajados if d >= desde}
+            contados = [dias_de(t.inicio, t.fin) for t in lineal.tramos]
+            # Ningún día se cuenta dos veces y no se cuenta ninguno que no se trabajó.
+            self.assertEqual(sum(len(c) for c in contados), len(set().union(*contados)) if contados else 0)
+            self.assertEqual(set().union(*contados) if contados else set(), trabajados)
+            # El total es el de cada bloque continuo de días trabajados, contado de principio a fin.
+            bloques, dia = [], None
+            for d in sorted(trabajados):
+                if dia is None or d != dia + timedelta(days=1):
+                    bloques.append([d, d])
+                bloques[-1][1] = dia = d
+            self.assertEqual(lineal.dias, sum(dias_comerciales(a, b) for a, b in bloques))
+            # Repetir certificaciones o cambiarles el orden no cambia nada.
+            revuelto = periodos + [Periodo(p.inicio, p.fin) for p in periodos]
+            r.shuffle(revuelto)
+            self.assertEqual(poner_en_linea(revuelto, desde).dias, lineal.dias)
+            # Quitar una certificación nunca aumenta la experiencia.
+            self.assertLessEqual(poner_en_linea(periodos[1:], desde).dias, lineal.dias)
+
+    def test_retirar_lo_que_sobra_nunca_deja_por_debajo_del_minimo(self):
+        r = random.Random(11)
+        for _ in range(600):
+            periodos = [Periodo(i, i + timedelta(days=r.randrange(30, 1500)), relacionada=r.random() < 0.3)
+                        for i in (self._fecha(r) for _ in range(r.randrange(1, 8)))]
+            lineal = poner_en_linea(periodos)
+            minimo = r.choice([0, 1, 2, 5, 10])
+            maximo = minimo + r.choice([1, 3, 5])
+            sobran = ajustar_a_franja(lineal, minimo, maximo)
+            queda = lineal.dias - sum(t.dias for t in sobran)
+            if lineal.dias >= minimo * 360:
+                self.assertGreaterEqual(queda, minimo * 360)
+            else:
+                self.assertEqual(sobran, [])
+
+    def test_la_franja_de_honorarios_nunca_baja_con_mas_experiencia(self):
+        topes = [TABLA.franja(dias).tope(ESPECIALIZACION) for dias in range(0, 40 * 360, 45)]
+        self.assertEqual(topes, sorted(topes))
+
+
+class SigepTests(SimpleTestCase):
+    HOJA = (
+        "EXPERIENCIA LABORAL\nEMPLEO O CONTRATO ANTERIOR\nEMPRESA O ENTIDAD PÚBLICA PRIVADA PAÍS\nINSTITUTO DE OBRAS DE VILLA FICTICIA X COLOMBIA\n"
+        "TELÉFONOS FECHA DE INGRESO FECHA DE RETIRO\n7000000 Día 20 Mes 02 Año 2025 Día Mes Año\nCARGO O CONTRATO ACTUAL DEPENDENCIA DIRECCIÓN\nCONTRATISTA PLANEACION CALLE 1\n"
+        "EMPLEO O CONTRATO ANTERIOR\nEMPRESA O ENTIDAD PÚBLICA PRIVADA PAÍS\nGOBERNACION DE VALLE INVENTADO X COLOMBIA\n"
+        "TELÉFONOS FECHA DE INGRESO FECHA DE RETIRO\nDía 03 Mes 10 Año 2022 Día 31 Mes 12 Año 2023\nCARGO O CONTRATO ACTUAL DEPENDENCIA DIRECCIÓN\nSECRETARIO DESPACHO CALLE 2\n"
+        "EMPLEO O CONTRATO ANTERIOR\nEMPRESA O ENTIDAD PÚBLICA PRIVADA PAÍS\nGOBERNACION DE VALLE INVENTADO X COLOMBIA\n"
+        "TELÉFONOS FECHA DE INGRESO FECHA DE RETIRO\nDía 03 Mes 02 Año 2020 Día 02 Mes 10 Año 2022\nCARGO O CONTRATO ACTUAL DEPENDENCIA DIRECCIÓN\nGERENTE AREA TECNICA CALLE 2\n"
+        "TELÉFONOS FECHA DE INGRESO FECHA DE RETIRO\nDía: Mes: Año: Día: Mes: Año:\nTIEMPO TOTAL DE EXPERIENCIA\nSERVIDOR PÚBLICO 3 10\n"
+    )
+
+    def test_lee_los_empleos_con_sus_fechas_y_el_actual_queda_abierto(self):
+        d = experiencia_declarada(self.HOJA)
+        self.assertEqual((d.bloques, d.confiable), (3, True))
+        self.assertEqual([(x.entidad, x.inicio, x.fin, x.cargo[:11]) for x in d.experiencias], [
+            ("INSTITUTO DE OBRAS DE VILLA FICTICIA", date(2025, 2, 20), None, "CONTRATISTA"),
+            ("GOBERNACION DE VALLE INVENTADO", date(2022, 10, 3), date(2023, 12, 31), "SECRETARIO "),
+            ("GOBERNACION DE VALLE INVENTADO", date(2020, 2, 3), date(2022, 10, 2), "GERENTE ARE"),
+        ])
+
+    def test_un_periodo_esta_si_lo_relacionado_lo_cubre_aunque_venga_partido(self):
+        d, ref = experiencia_declarada(self.HOJA), date(2026, 1, 22)
+        # Una sola certificación 2020-2023 que el SIGEP trae en dos renglones.
+        self.assertEqual(en_el_sigep(date(2020, 2, 3), date(2023, 12, 31), d, ref)[0], EN_SIGEP)
+        # El empleo actual cubre hasta la fecha de referencia.
+        self.assertEqual(en_el_sigep(date(2025, 2, 20), date(2025, 12, 24), d, ref)[0], EN_SIGEP)
+        # Un contrato de 2019 no está relacionado; tampoco uno que solo se cruza un mes.
+        self.assertEqual(en_el_sigep(date(2019, 1, 1), date(2019, 6, 30), d, ref)[0], NO_ESTA)
+        self.assertEqual(en_el_sigep(date(2019, 9, 1), date(2020, 3, 1), d, ref)[0], NO_ESTA)
+        self.assertEqual(en_el_sigep(date(2019, 1, 1), date(2019, 6, 30), None, ref)[0], SIN_HOJA)
+
+    def test_si_la_hoja_no_se_leyo_completa_no_se_da_por_ausente(self):
+        rota = self.HOJA.replace("Día 03 Mes 02 Año 2020 Día 02 Mes 10 Año 2022", "D1a o3 M3s")
+        d = experiencia_declarada(rota)
+        self.assertEqual((d.bloques, len(d.experiencias), d.confiable), (3, 2, False))
+        self.assertEqual(en_el_sigep(date(2020, 2, 3), date(2022, 10, 2), d, date(2026, 1, 22))[0], ILEGIBLE)
+        self.assertEqual(en_el_sigep(date(2022, 10, 3), date(2023, 12, 31), d, date(2026, 1, 22))[0], EN_SIGEP)
+
+    def test_la_entidad_de_la_certificacion_debe_ser_la_del_sigep(self):
+        d = experiencia_declarada(self.HOJA)
+        _, cubren = en_el_sigep(date(2022, 11, 1), date(2023, 6, 30), d, None)
+        self.assertIs(misma_entidad("Departamento de Valle Inventado", cubren), True)
+        self.assertIs(misma_entidad("Constructora Otra Cosa S.A.S", cubren), False)
+        self.assertIsNone(misma_entidad("", cubren))

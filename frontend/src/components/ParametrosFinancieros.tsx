@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { parametrosFinancieros, registrarUmbrales, type ParametrosFinancieros as Parametros } from '../evaluaciones'
+import { useEffect, useRef, useState } from 'react'
+import { parametrosFinancieros, registrarUmbrales, subirMatriz2, type ParametrosFinancieros as Parametros } from '../evaluaciones'
 import { mensajeDe } from '../http'
 import Icono from './Icono'
 
@@ -40,6 +40,31 @@ export default function ParametrosFinancieros({ evaluacionId, soloLectura }: { e
       .catch((e) => setError(mensajeDe(e, 'No se pudieron leer los parámetros financieros.')))
   }, [evaluacionId])
 
+  // La Matriz 2 es un anexo aparte del pliego: se sube aquí y de ella se leen los umbrales.
+  const selector = useRef<HTMLInputElement>(null)
+  const [subiendo, setSubiendo] = useState(false)
+  async function subir(archivo: File | undefined) {
+    if (!archivo) return
+    setSubiendo(true)
+    setError(null)
+    setAviso(null)
+    try {
+      const r = await subirMatriz2(evaluacionId, archivo)
+      cargar(await parametrosFinancieros(evaluacionId))
+      setEditando(false)
+      setAviso(
+        `Matriz 2 cargada (${archivo.name}).` +
+          (r.reevaluados ? ` ${r.reevaluados} proponentes ya evaluados volvieron a la fila.` : '') +
+          (r.avisos.length ? ` Revise: ${r.avisos.join('; ')}` : ''),
+      )
+    } catch (e) {
+      setError(mensajeDe(e, 'No se pudo cargar la Matriz 2.'))
+    } finally {
+      setSubiendo(false)
+      if (selector.current) selector.current.value = ''
+    }
+  }
+
   async function guardar() {
     const numeros: Record<string, number> = {}
     for (const c of CAMPOS) {
@@ -73,9 +98,21 @@ export default function ParametrosFinancieros({ evaluacionId, soloLectura }: { e
           <p>Del pliego: presupuesto, plazo y anticipo de cada lote; umbrales de los indicadores (Matriz 2).</p>
         </div>
         {datos && !soloLectura && !editando && (
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditando(true)}>
-            <Icono nombre="lapiz" tam={15} /> {datos.umbrales_completos ? 'Cambiar umbrales' : 'Registrar umbrales'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              ref={selector}
+              type="file"
+              accept=".pdf,.doc,.docx,.xls,.xlsx"
+              style={{ display: 'none' }}
+              onChange={(e) => void subir(e.target.files?.[0])}
+            />
+            <button type="button" className="btn btn-primary btn-sm" disabled={subiendo} onClick={() => selector.current?.click()}>
+              {subiendo ? <span className="spinner" /> : <Icono nombre="subir" tam={15} />} Subir la Matriz 2
+            </button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditando(true)}>
+              <Icono nombre="lapiz" tam={15} /> {datos.umbrales_completos ? 'Cambiar umbrales' : 'Escribir los umbrales'}
+            </button>
+          </div>
         )}
       </div>
       {error && <div className="callout callout-bad" style={{ marginBottom: 12 }}>{error}</div>}
@@ -113,7 +150,8 @@ export default function ParametrosFinancieros({ evaluacionId, soloLectura }: { e
               <Icono nombre="alerta" />
               <div>
                 El pliego no trae los umbrales de la Matriz 2. Los indicadores se calculan, pero la capacidad financiera y la
-                organizacional quedan en revisión hasta que alguien registre los umbrales del proceso.
+                organizacional quedan en revisión hasta que se suba la Matriz 2 del proceso (un anexo aparte, publicado en el
+                SECOP junto al pliego) o alguien escriba sus umbrales. Se hace una sola vez para todos los proponentes.
               </div>
             </div>
           )}

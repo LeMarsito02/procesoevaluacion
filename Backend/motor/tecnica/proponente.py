@@ -337,7 +337,14 @@ def evaluar_proponente_tecnico(
     )
     # Concursos de méritos: el formato con que el proponente acepta el personal
     # clave. Es habilitante, así que va aparte del puntaje.
-    resultado.personal_clave = aceptacion_personal_clave(pdfs, codigo_proceso)
+    if "personal_clave" in parametros.puntajes and parametros.puntajes["personal_clave"] is None:
+        # El pliego no nombra al personal clave: no se le pide a nadie.
+        resultado.personal_clave = Factor(
+            "personal_clave", "Aceptación y cumplimiento del Personal Clave Evaluable", 0, puntaje=1, no_aplica=True,
+            motivos=["N.A. — el pliego no exige personal clave (no lo menciona)"],
+        )
+    else:
+        resultado.personal_clave = aceptacion_personal_clave(pdfs, codigo_proceso)
     resultado.puntaje = aplicar_puntajes_del_pliego([
         *factor_calidad(pdfs, codigo_proceso),
         personal_clave_adicional(pdfs, codigo_proceso),

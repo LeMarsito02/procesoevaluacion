@@ -654,8 +654,52 @@ class PuntajesDelPliegoTests(SimpleTestCase):
             "gerencia_proyectos": 10, "maquinaria": None, "criterios_ambientales": 15, "mujeres": 0.25,
             # Los que el pliego no nombra no hacen parte del proceso.
             "plan_calidad": None, "industria_nacional": None, "discapacidad": None, "mipyme": None,
+            # El personal clave es de los concursos de méritos: este pliego no lo nombra.
+            "personal_clave": None, "personal_clave_adicional": None,
         })
         self.assertEqual(nombrados, {"gerencia_proyectos", "maquinaria", "criterios_ambientales", "mujeres"})
+
+    def test_el_puntaje_se_lee_en_cifras_y_en_letras(self):
+        """«CERO PUNTO VEINTICINCO (O.25) PUNTOS»: el OCR leyó la O por el cero y el
+        factor de mujeres de ICCU-LP-014-2026 quedaba «sin leer». La cifra y las
+        letras son dos lecturas del mismo dato: basta una, y si no coinciden, a revisión."""
+        from motor.tecnica.parametros import _puntajes, puntos_en_letras
+
+        self.assertEqual(puntos_en_letras("LA ENTIDAD ASIGNARA UN PUNTAJE DE CERO PUNTO VEINTICINCO (O.25) PUNTOS"), 0.25)
+        self.assertEqual(puntos_en_letras("LA ENTIDAD ASIGNARA UN (1) PUNTO AL PROPONENTE"), 1)
+        self.assertEqual(puntos_en_letras("OTORGARA HASTA VEINTE (20) PUNTOS"), 20)
+        self.assertIsNone(puntos_en_letras("LA ENTIDAD ASIGNARA EL PUNTAJE SEGUN LA TABLA"))
+        base = "\n4.6 EMPRENDIMIENTOS Y EMPRESAS DE MUJERES\nLA ENTIDAD ASIGNARA UN PUNTAJE DE CERO PUNTO VEINTICINCO {} PUNTOS AL PROPONENTE"
+        # La cifra ilegible no impide leerlo: quedan las letras.
+        self.assertEqual(_puntajes(base.format("(O.Z5)"))[0]["mujeres"], 0.25)
+        self.assertEqual(_puntajes(base.format("(0.25)"))[0]["mujeres"], 0.25)
+        # Cifra y letras que no coinciden: no se adivina.
+        self.assertNotIn("mujeres", _puntajes(base.format("(2.5)"))[0])
+
+    def test_la_lista_de_requisitos_sale_del_pliego(self):
+        """Lo que el pliego no pide no es un requisito del proceso; si el pliego
+        no se pudo leer, no se quita nada."""
+        from evaluaciones.servicios import requisitos_fuera_del_pliego
+
+        leido = {"puntajes": {"gerencia_proyectos": 5.0, "maquinaria": None, "personal_clave": None,
+                              "personal_clave_adicional": None, "industria_nacional": 20.0}}
+        self.assertEqual(requisitos_fuera_del_pliego("tecnica", leido), {111, 128, 129})
+        self.assertEqual(requisitos_fuera_del_pliego("tecnica", {"puntajes": {}}), set())
+        self.assertEqual(requisitos_fuera_del_pliego("tecnica", {}), set())
+        self.assertEqual(requisitos_fuera_del_pliego("financiera", {"patrimonio_aplica": False, "residual_aplica": True}), {204})
+        # None = no se pudo establecer: el requisito se queda.
+        self.assertEqual(requisitos_fuera_del_pliego("financiera", {"patrimonio_aplica": None, "residual_aplica": None}), set())
+
+    def test_el_personal_clave_solo_se_exige_si_el_pliego_lo_nombra(self):
+        from motor.tecnica.parametros import _puntajes
+
+        base = "\n4.2.4 CRITERIOS AMBIENTALES Y SOCIALES\nLA ENTIDAD ASIGNARA QUINCE (15) PUNTOS AL PROPONENTE"
+        con_personal, _ = _puntajes(base + "\nEL PROPONENTE DEBE ACEPTAR EL PERSONAL CLAVE EVALUABLE CON EL FORMATO 8")
+        self.assertNotIn("personal_clave", con_personal)
+        sin_personal, _ = _puntajes(base)
+        self.assertIsNone(sin_personal["personal_clave"])
+        # Un pliego que no se pudo leer no dice nada: no se concluye que no lo exija.
+        self.assertEqual(_puntajes("TEXTO ILEGIBLE")[0], {})
 
     def test_el_pliego_escribe_no_aplica_como_na(self):
         """El documento tipo pone "N/A." pegado al título, que además parte de

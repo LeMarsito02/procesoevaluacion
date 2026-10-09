@@ -119,7 +119,7 @@ export default function PaginaNuevaOps() {
               <Icono nombre="calendario" tam={16} />
               <input id="ops-fecha" className="input" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} required />
             </div>
-            <span className="hint">Contra esta fecha se mide la vigencia de los antecedentes.</span>
+            <span className="hint">La experiencia se cuenta hasta esta fecha.</span>
           </div>
         </div>
         <div className="field" style={{ marginBottom: 24 }}>
@@ -146,7 +146,7 @@ export default function PaginaNuevaOps() {
             onCambiar={setDeContratista}
           />
         </div>
-        <p className="hint" style={{ marginBottom: 20 }}>
+        <p className="small muted" style={{ marginBottom: 20 }}>
           No hace falta ordenarlos ni nombrarlos: cada documento se reconoce por lo que dice.
         </p>
 

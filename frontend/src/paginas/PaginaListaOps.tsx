@@ -5,6 +5,7 @@ import { mensajeDe } from '../http'
 import {
   guardarHonorarios,
   listarOps,
+  fechaLocal,
   NOMBRE_ESTADO,
   verHonorarios,
   type FranjaProfesional,
@@ -81,7 +82,7 @@ export default function PaginaListaOps() {
         <div className="vacio">{!error && <span className="spinner oscuro" />}</div>
       ) : (
         <div className="tabla-wrap">
-          <table className="tabla">
+          <table className="tabla tabla-apilable">
             <thead>
               <tr>
                 <th>Contratista</th>
@@ -93,8 +94,9 @@ export default function PaginaListaOps() {
             <tbody>
               {visibles.map((c) => (
                 <tr key={c.id} className="fila-clic" onClick={() => navegar(`/ops/${c.id}`)}>
-                  <td>
-                    <button type="button" className="enlace" onClick={() => navegar(`/ops/${c.id}`)}>
+                  <td data-label="Contratista">
+                    {/* El clic (o Enter) sube a la fila, que es la que abre la contratación. */}
+                    <button type="button" className="enlace">
                       <strong>{c.contratista_nombre || 'Contratista por identificar'}</strong>
                     </button>
                     <div className="small muted">
@@ -102,17 +104,17 @@ export default function PaginaListaOps() {
                       {c.referencia && ` · ${c.referencia}`}
                     </div>
                   </td>
-                  <td style={{ maxWidth: 420 }}>
+                  <td data-label="Objeto" style={{ maxWidth: 420 }}>
                     <div className="small recortar">{c.objeto || '—'}</div>
                     {!usuario.entidad && <div className="small muted">{c.entidad}</div>}
                   </td>
-                  <td>
+                  <td data-label="Estado">
                     <span className="pill" data-estado-ops={c.estado}>
                       {NOMBRE_ESTADO[c.estado]}
                     </span>
                   </td>
-                  <td className="small muted nowrap">
-                    {formatFechaCorta(c.creada_en.slice(0, 10))}
+                  <td data-label="Creada" className="small muted nowrap">
+                    {formatFechaCorta(fechaLocal(c.creada_en))}
                     <div>{c.creada_por}</div>
                   </td>
                 </tr>

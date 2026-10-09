@@ -5,6 +5,8 @@ import TarjetaCredenciales from '../components/TarjetaCredenciales'
 import { subirPlantilla } from '../configuracion'
 import {
   configurarMicrosoft,
+  enlaceAutorizacionOneDrive,
+  probarOneDrive,
   cambiarEstadoEntidad,
   cambiarModuloOps,
   crearCuentaSoporte,
@@ -18,6 +20,7 @@ import {
 import { navegar } from '../rutas'
 import { mensajeDe } from '../http'
 import { useDialogos } from '../dialogos'
+import { copiarAlPortapapeles } from '../format'
 
 export default function PaginaEntidades() {
   const { confirmar } = useDialogos()
@@ -279,8 +282,93 @@ function DialogoMicrosoft({ entidad, onCerrar, onGuardada }: { entidad: Entidad;
             </button>
           </div>
         </form>
+        {entidad.microsoft_directorio && <OneDriveEntidad entidad={entidad} />}
       </div>
     </>
+  )
+}
+
+/** Lectura de las carpetas de ofertas que la entidad comparte por enlace desde
+ * su OneDrive o SharePoint (Microsoft 365). Lo aprueba una vez su administrador. */
+function OneDriveEntidad({ entidad }: { entidad: Entidad }) {
+  const [autorizado, setAutorizado] = useState(entidad.onedrive_autorizado_en)
+  const [enlace, setEnlace] = useState<{ url: string; redirect_uri: string } | null>(null)
+  const [mensaje, setMensaje] = useState<{ tono: 'ok' | 'bad'; texto: string } | null>(null)
+  const [ocupado, setOcupado] = useState(false)
+
+  async function hacer(accion: () => Promise<void>) {
+    setOcupado(true)
+    setMensaje(null)
+    try {
+      await accion()
+    } catch (e) {
+      setMensaje({ tono: 'bad', texto: mensajeDe(e) })
+    } finally {
+      setOcupado(false)
+    }
+  }
+
+  return (
+    <section style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+      <div className="card-head" style={{ marginBottom: 8 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>OneDrive de la entidad</h3>
+          <p className="small muted" style={{ margin: '4px 0 0' }}>
+            Para leer las ofertas que comparten con un enlace de OneDrive o SharePoint, el administrador de Microsoft 365 de la entidad
+            aprueba una vez el permiso de solo lectura de archivos. Se siguen pegando los enlaces como siempre, y solo se leen los de su
+            propio directorio.
+          </p>
+        </div>
+        <span className="pill" data-estado={autorizado ? 'cumple' : 'revisar'}>
+          {autorizado ? `Autorizado · ${new Date(autorizado).toLocaleDateString('es-CO')}` : 'Sin autorizar'}
+        </span>
+      </div>
+      <div className="acciones" style={{ flexWrap: 'wrap' }}>
+        <button
+          className="btn btn-secondary btn-sm"
+          type="button"
+          disabled={ocupado}
+          onClick={() => void hacer(async () => setEnlace(await enlaceAutorizacionOneDrive(entidad.id)))}
+        >
+          Enlace para el administrador
+        </button>
+        <button
+          className="btn btn-secondary btn-sm"
+          type="button"
+          disabled={ocupado}
+          onClick={() =>
+            void hacer(async () => {
+              const e = await probarOneDrive(entidad.id)
+              setAutorizado(e.onedrive_autorizado_en)
+              setMensaje({ tono: 'ok', texto: 'Microsoft confirma el permiso de lectura: ya se pueden usar sus enlaces de OneDrive.' })
+            })
+          }
+        >
+          {ocupado ? <span className="spinner oscuro" /> : 'Probar'}
+        </button>
+      </div>
+      {enlace && (
+        <div className="field" style={{ marginTop: 10 }}>
+          <label htmlFor="od-enlace">Envíele este enlace al administrador global de Microsoft 365 de la entidad</label>
+          <div className="tramite-fila">
+            <input id="od-enlace" className="input" readOnly value={enlace.url} onFocus={(e) => e.target.select()} />
+            <button className="btn btn-sm btn-ghost" type="button" onClick={() => void copiarAlPortapapeles(enlace.url)}>
+              Copiar
+            </button>
+          </div>
+          <span className="small muted">
+            Cuando lo apruebe, pulse «Probar». En la aplicación de Microsoft de MiEvaluador debe estar registrada la dirección de
+            retorno {enlace.redirect_uri} y el permiso de aplicación Files.Read.All.
+          </span>
+        </div>
+      )}
+      {mensaje && (
+        <div className={`callout callout-${mensaje.tono}`} role="status" style={{ marginTop: 10 }}>
+          <Icono nombre={mensaje.tono === 'ok' ? 'check' : 'alerta'} />
+          <div>{mensaje.texto}</div>
+        </div>
+      )}
+    </section>
   )
 }
 

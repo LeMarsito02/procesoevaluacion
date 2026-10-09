@@ -11,10 +11,7 @@ puede quedarse con lo que coincida entre ellas en vez de fiarse de una sola.
 """
 from __future__ import annotations
 
-import io
 import re
-import subprocess
-import os
 
 from motor.procesamiento.pdf_utils import OCR_CACHE_DIR, OCR_HABILITADO, OCR_TIMEOUT_SEGUNDOS
 
@@ -93,14 +90,9 @@ def _archivo_de_cache(page, etiqueta: re.Pattern[str]):
 
 
 def _leer(imagen) -> str:
-    buffer = io.BytesIO()
-    imagen.save(buffer, format="PNG")
+    from motor.procesamiento import ocr_motor
+
     try:
-        salida = subprocess.run(
-            ["tesseract", "stdin", "stdout", "-l", "spa", "--psm", "6"],
-            input=buffer.getvalue(), capture_output=True, timeout=OCR_TIMEOUT_SEGUNDOS,
-            env={**os.environ, "OMP_THREAD_LIMIT": "2"},
-        )
-        return salida.stdout.decode("utf-8", errors="ignore")
+        return ocr_motor.leer(imagen, psm="6", timeout=OCR_TIMEOUT_SEGUNDOS)
     except Exception:  # noqa: BLE001
         return ""

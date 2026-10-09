@@ -21,6 +21,9 @@ persona, y nunca se inventa una fecha:
   diciembre de 1994») y se avisa (`nota`);
 - una terminación posterior a la fecha de referencia se recorta a esa fecha.
 
+La certificación acredita el tiempo trabajado: si el contrato terminó antes de
+lo pactado, cuenta hasta la terminación anticipada.
+
 Las certificaciones repetidas no hacen daño: al poner la experiencia en línea
 el tiempo se cuenta una sola vez.
 """
@@ -67,16 +70,40 @@ _ABIERTO_RE = re.compile(
 )
 _REFERENCIA_RE = re.compile(
     r"(?:NO\.?\s*(?:DE\s+)?CONTRATO|CONTRATO(?:\s+(?:NO|NUMERO)\.?)?)\s*:?\s*((?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]{2,})"
-    r"|((?:CONTRATO|ORDEN)\s+DE\s+(?:PRESTACION\s+DE\s+)?SERVICIOS(?:\s+PROFESIONALES)?\s+(?:NO\.?\s*)?\d+\s+DE\s+\d{4})"
+    r"|((?:CONTRATO|ORDEN)\s+DE\s+(?:PRESTA[A-Z]{3,6}\s+DE\s+)?SERVICIOS(?:\s+PROFESIONALES)?\s+(?:NO\.?\s*)?\d+\s+DE\s+\d{4})"
 )
-_CARGO_RE = re.compile(r"\bCARGO\s+(?:DE|COMO)\s+([A-Z][A-Z ]{3,60}?)(?=\s*[,.;\n]|\s+CODIGO|\s+GRADO|\s+EN\s+|\s+DE\s+LA\b|\s+DEL\b|$)")
+# «en el cargo de…», «desempeñándose como…», «fue nombrado como…»; el cargo puede seguir en el renglón de abajo.
+_CARGO_RE = re.compile(
+    r"\b(?:CARGO\s+(?:DE|COMO)|DESEMPENANDOSE\s+COMO|SE\s+DESEMPENO\s+COMO|NOMBRAD[OA]\s+COMO|EN\s+CALIDAD\s+DE|EN\s+EL\s+EJERCICIO\s+DE)\s+"
+    r"([A-Z][A-Z]+(?:\s+[A-Z]+){0,7}?)"
+    r"(?=\s*[,.;(]|\s+CODIGO|\s+GRADO|\s+EN\s+(?:LA|EL|ESTE)\b|\s+PARA\b|\s+DESDE\b|\s+HASTA\b|\s+LABOR\b|\s+CARGO\b|\s+DEMOSTRANDO|\s+IDENTIFICAD|\s+Y\s+QUE\b|\s*/|\s*\Z)"
+)
+# «…como REPRESENTANTE LEGAL de la corporación»: el cargo en mayúsculas dentro de una frase.
+_COMO_RE = re.compile(r"\bCOMO\s+([A-Z]{4,}(?:\s+[A-Z]{2,}){0,4})\s+(?:DE|DEL|EN|PARA)\b")
+# «Nombramiento según Resolución N.º … SECRETARIA GENERAL Y DE GOBIERNO, Código 020»
+_NOMBRAMIENTO_RE = re.compile(r"NOMBRAMIENTO[^\n]{0,40}?RESOLUCION\s+\S+\s+([A-Z][A-Z \n]{4,70}?)\s*,\s*CODIGO")
+# Cuando la certificación no trae contrato ni cargo, al menos qué clase de vínculo fue.
+_VINCULOS = (
+    (re.compile(r"PRESTA[A-Z]*\s+(?:DE\s+|SUS\s+)?SERVICIOS\s+(?:DE\s+)?PROFESIONALES|LABORES\s+PROFESIONALES"), "Prestación de servicios profesionales"),
+    (re.compile(r"PRESTA[A-Z]*\s+(?:DE\s+|SUS\s+)?SERVICIOS|ORDEN\s+DE\s+SERVICIOS"), "Prestación de servicios"),
+    (re.compile(r"CONTRATO\s+DE\s+TRABAJO"), "Contrato de trabajo"),
+    (re.compile(r"NOMBRAD[OA]|NOMBRAMIENTO|POSESION|VINCULAD[OA]|HISTORIA\s+LABORAL|\bLABORO\b|\bLABORA\b"), "Vinculación laboral"),
+)
+# «de la compañía Muros & Techos Ltda.», «en la empresa ABCN Global Business S.L.»
+_SOCIEDAD_EN_TEXTO_RE = re.compile(
+    r"\b(?:COMPANIA|EMPRESA|FIRMA|SOCIEDAD|CONSTRUCTORA)\s+([A-Z][^\n,;:]{2,60}?(?:\s*\n\s*)?(?:LTDA|S\.?\s?A\.?\s?S|S\.\s?A|S\.\s?L|E\.S\.P)\b\.?)"
+)
+# En el membrete, el municipio o la alcaldía valen más que el departamento o la república que lo encabezan.
+_GENERICA_RE = re.compile(r"DEPARTAMENTO|REPUBLICA|GOBERNACION")
+_PRECISA_RE = re.compile(r"MUNICIPIO|ALCALDIA")
+_LINEAS_DE_MEMBRETE = 6
 _ENTIDAD_RE = re.compile(
     r"\b(?:INSTITUTO|CORPORACION|DEPARTAMENTO|GOBERNACION|MUNICIPIO|ALCALDIA|MINISTERIO|UNIVERSIDAD|EMPRESAS?|FUNDACION|AGENCIA|"
-    r"UNIDAD\s+(?:DE|ADMINISTRATIVA)|CONSORCIO|UNION\s+TEMPORAL|COOPERATIVA|HOSPITAL|CONSTRUCTORA|GRUPO)\s[^\n]{3,90}"
+    r"UNIDAD\s+(?:DE|ADMINISTRATIVA)|CONSORCIO|UNION\s+TEMPORAL|COOPERATIVA|HOSPITAL|CONSTRUCTORA)\s[^\n]{3,90}"
 )
-_SOCIEDAD_RE = re.compile(r"^[^\n:]{3,70}\b(?:S\.?A\.?S|LTDA|S\.A|E\.S\.P|& ?CIA)\b\.?[ \t]*$", re.M)
+_SOCIEDAD_RE = re.compile(r"^[^\n:]{3,70}\b(?:S\.?A\.?S|LTDA|S\.A|S\.L|E\.S\.P|& ?CIA)\b\.*[ \t]*$", re.M)
 # Donde deja de ser el nombre de la entidad.
-_FIN_ENTIDAD_RE = re.compile(r"[,;(:]|\.\s|\s-\s|\s(?:DESDE|HASTA|MEDIANTE|IDENTIFICAD|CON\s+NIT|NIT\b|EN\s+EL\s+CARGO|SUSCRIB|CERTIFICA|HACE\s+CONSTAR|Y\s+EL\s+SE)")
+_FIN_ENTIDAD_RE = re.compile(r"[,;(:]|\.\s|\s-\s|\s(?:DESDE|HASTA|MEDIANTE|IDENTIFICAD|CON\s+NIT|NIT\b|EN\s+EL\s+CARGO|SUSCRIB|CERTIFICA|HACE\s+CONSTAR|Y\s+EL\s+SE|BRINDANDO|PRESTANDO|PRESTO|LABORO|DESEMPEN|COMO\s|A\s+PARTIR)")
 # Cuánto texto antes del inicio se mira para saber si la certificación es abierta.
 _VENTANA_ABIERTO = 1500
 # Una terminación sin inicio busca la fecha anterior hasta esta distancia.
@@ -100,6 +127,15 @@ class _Pendiente:
     fines: list[date] = field(default_factory=list)
     anticipadas: list[date] = field(default_factory=list)
     suspensiones: list[tuple[date, date]] = field(default_factory=list)
+
+
+_MINUSCULAS = {"De", "Del", "La", "Las", "El", "Los", "Y", "E", "En", "Para", "A"}
+
+
+def _como_cargo(texto: str) -> str:
+    """«RESIDENTE DE OBRA CIVIL» → «Residente de Obra Civil»."""
+    palabras = texto.title().split()
+    return " ".join(w.lower() if i and w in _MINUSCULAS else w for i, w in enumerate(palabras))
 
 
 def _fecha(dia: str, mes: str, anio: str | int) -> date | None:
@@ -129,6 +165,7 @@ def leer_periodos(paginas: list[str], archivo: str = "", hasta: date | None = No
         pos += len(t) + 1
     texto, original = "\n".join(textos), "\n".join(originales)
     lectura = Lectura()
+    pendientes_de_referencia: list[tuple[Periodo, int]] = []
 
     def pagina_de(posicion: int) -> int:
         return max(bisect_right(comienzos, posicion) - 1, 0)
@@ -136,37 +173,76 @@ def leer_periodos(paginas: list[str], archivo: str = "", hasta: date | None = No
     def donde(posicion: int) -> str:
         return f"página {pagina_de(posicion) + 1}" + (f" de {archivo}" if archivo else "")
 
-    def referencia_de(posicion: int) -> str:
+    # Dónde empieza cada periodo leído: un contrato nombrado al otro lado de
+    # otro periodo es de ese otro, no de este.
+    inicios: list[tuple[int, date]] = []
+
+    def referencia_de(posicion: int, inicio: date | None = None) -> str:
         """El contrato nombrado en la misma página o, en una certificación
         laboral, el cargo; si no, el contrato de la página anterior (más atrás
-        no: con páginas en desorden sería de otro contrato)."""
+        no: con páginas en desorden sería de otro contrato); y si nada de eso
+        está escrito, la clase de vínculo."""
         p = pagina_de(posicion)
+        en_pagina = posicion - comienzos[p]
+
+        def ajeno(a: int, b: int) -> bool:
+            """Entre el contrato nombrado y este periodo empieza otro distinto."""
+            a, b = sorted((a + comienzos[p], b + comienzos[p]))
+            return any(a < q < b and f != inicio for q, f in inicios)
 
         def contrato(pagina: int, ultimo: bool) -> str:
             halladas = list(_REFERENCIA_RE.finditer(textos[pagina]))
+            if not ultimo:
+                halladas = [h for h in halladas if not ajeno(h.start(), en_pagina)]
             if not halladas:
                 return ""
-            m = halladas[-1] if ultimo else halladas[0]
+            # En la página del periodo, el contrato nombrado más cerca de sus fechas.
+            m = halladas[-1] if ultimo else min(halladas, key=lambda h: abs(h.start() - en_pagina))
             grupo = 1 if m.group(1) else 2
             return en_una_linea(originales[pagina][m.start(grupo):m.end(grupo)])
 
         if ref := contrato(p, False):
             return ref
-        if m := _CARGO_RE.search(textos[p]):
-            return en_una_linea(originales[p][m.start(1):m.end(1)]).title()
-        return contrato(p - 1, True) if p > 0 else ""
+        t, o = textos[p], originales[p]
+        # El cargo nombrado más cerca de las fechas del periodo.
+        cargos = [m for patron in (_CARGO_RE, _NOMBRAMIENTO_RE) for m in patron.finditer(t)]
+        cargos += [m for m in _COMO_RE.finditer(t) if o[m.start(1):m.end(1)].isupper() and not o[m.end(1):m.end(1) + 4].isupper()]
+        cargos = [m for m in cargos if not ajeno(m.start(), en_pagina)]
+        if cargos:
+            m = min(cargos, key=lambda c: abs(c.start() - en_pagina))
+            return _como_cargo(en_una_linea(o[m.start(1):m.end(1)]))
+        if p > 0 and (ref := contrato(p - 1, True)):
+            return ref
+        return next((nombre for patron, nombre in _VINCULOS if patron.search(t)), "")
 
     def entidad_de(posicion: int) -> str:
-        """Quien certifica: la primera entidad nombrada en la página con
-        mayúscula inicial (un «instituto» en medio de una frase no lo es)."""
+        """Quien certifica. Se busca, en este orden: la sociedad que el texto
+        nombra («la compañía… Ltda.»), una razón social en el membrete, y la
+        primera entidad escrita con mayúscula inicial (un «instituto» en medio
+        de una frase no lo es)."""
         p = pagina_de(posicion)
         t, o = textos[p], originales[p]
-        candidatas = [(m.start(), m.end()) for m in _ENTIDAD_RE.finditer(t) if o[m.start()].isupper()]
-        candidatas += [(m.start(), m.end()) for m in _SOCIEDAD_RE.finditer(t) if sum(c.isupper() for c in o[m.start():m.end()]) > 5]
+        if m := _SOCIEDAD_EN_TEXTO_RE.search(t):
+            return en_una_linea(o[m.start(1):m.end(1)]).strip(" .-_|")
+        membrete = len("\n".join(t.split("\n")[:_LINEAS_DE_MEMBRETE]))
+        sociedades = [m for m in _SOCIEDAD_RE.finditer(t) if m.start() < membrete or sum(c.isupper() for c in o[m.start():m.end()]) > 5]
+        if sociedades and sociedades[0].start() < membrete:
+            return en_una_linea(o[sociedades[0].start():sociedades[0].end()]).strip(" .-_|/")
+        entidades = [m for m in _ENTIDAD_RE.finditer(t) if o[m.start()].isupper()]
+        candidatas = [(m.start(), m.end()) for m in entidades] + [(m.start(), m.end()) for m in sociedades]
         if not candidatas:
             return ""
         inicio, fin = min(candidatas)
+        if _GENERICA_RE.match(t, inicio):
+            precisa = next(((m.start(), m.end()) for m in entidades if _PRECISA_RE.match(t, m.start())), None)
+            inicio, fin = precisa or (inicio, fin)
         corte = _FIN_ENTIDAD_RE.search(t, inicio + 6, fin)
+        if corte is None:
+            # El nombre sigue en el renglón de abajo («INSTITUTO DE CAMINOS Y / CONSTRUCCIONES DE CUNDINAMARCA»).
+            siguiente = re.match(r"[ \t]*\n[ \t]*([^\n]{3,60})", t[fin:])
+            if siguiente and (re.search(r"\s(?:Y|DE|DEL|LA|E)$", t[inicio:fin].rstrip()) or re.match(r"(?:Y|DE|DEL)\s", siguiente.group(1))):
+                fin += siguiente.end()
+                corte = _FIN_ENTIDAD_RE.search(t, inicio + 6, fin)
         return en_una_linea(o[inicio:corte.start() if corte else fin]).strip(" .-_|")
 
     def agregar(inicio: date, fin: date, posicion: int, **datos) -> None:
@@ -177,10 +253,13 @@ def leer_periodos(paginas: list[str], archivo: str = "", hasta: date | None = No
             fin, datos["abierto"] = hasta, True
             nota = (nota + " " if nota else "") + f"Termina después del {hasta:%d/%m/%Y}: se contó hasta esa fecha."
         p = pagina_de(posicion)
-        lectura.periodos.append(Periodo(
-            inicio, fin, entidad=entidad_de(posicion), referencia=datos.pop("referencia", None) or referencia_de(posicion),
-            archivo=archivo, pagina=p + 1, texto="\n".join(textos[p:p + 2]), nota=nota, **datos,
-        ))
+        periodo = Periodo(
+            inicio, fin, entidad=entidad_de(posicion), archivo=archivo, pagina=p + 1, texto="\n".join(textos[p:p + 2]),
+            contexto="\n".join(textos[max(0, p - 1):p + 2]), nota=nota, **datos,
+        )
+        lectura.periodos.append(periodo)
+        inicios.append((posicion, inicio))
+        pendientes_de_referencia.append((periodo, posicion))
 
     # Lo que no sigue la forma general se lee aparte y sus fechas ya no se vuelven a mirar.
     ocupado: list[tuple[int, int]] = []
@@ -222,7 +301,7 @@ def leer_periodos(paginas: list[str], archivo: str = "", hasta: date | None = No
         if p.anticipadas or p.fines:
             fin = min(p.anticipadas) if p.anticipadas else max(p.fines)
             if fin >= p.inicio:
-                nota = "Terminó antes de lo pactado (terminación anticipada)." if p.anticipadas and p.fines and fin < max(p.fines) else ""
+                nota = "Se contó hasta la terminación anticipada: vale el tiempo trabajado." if p.anticipadas and p.fines and fin < max(p.fines) else ""
                 agregar(p.inicio, fin, p.pos, suspensiones=propias, nota=nota)
             else:
                 lectura.avisos.append(
@@ -292,6 +371,8 @@ def leer_periodos(paginas: list[str], archivo: str = "", hasta: date | None = No
         else:
             lectura.avisos.append(f"Una certificación ({donde(ini)}) termina el {fecha:%d/%m/%Y} y no se leyó la fecha de inicio.")
     cerrar(len(texto))
+    for periodo, posicion in pendientes_de_referencia:
+        periodo.referencia = referencia_de(posicion, periodo.inicio)
 
     lectura.periodos = _sin_repetidos(lectura.periodos)
     # Un inicio sin terminación ya no es problema si el mismo periodo se leyó completo en otra parte.

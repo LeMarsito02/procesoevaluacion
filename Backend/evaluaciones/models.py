@@ -847,6 +847,9 @@ class ContratacionOps(models.Model):
     # Cuánto tardó el análisis, para medir el módulo con casos reales.
     segundos = models.FloatField(null=True, blank=True)
     version_sistema = models.CharField(max_length=40, blank=True)
+    # Retención: fecha en que se borraron las copias de los documentos (se
+    # conservan lo leído, lo decidido y la constancia de quién confirmó).
+    documentos_eliminados_en = models.DateTimeField(null=True, blank=True)
     confirmada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     confirmada_en = models.DateTimeField(null=True, blank=True)
     creada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
@@ -902,3 +905,160 @@ class TablaHonorariosOps(models.Model):
     class Meta:
         ordering = ["-vigencia"]
         constraints = [models.UniqueConstraint(fields=["entidad", "vigencia"], name="tabla_honorarios_unica_por_vigencia")]
+
+
+class Traslado(models.Model):
+    """Término de traslado del informe de evaluación: cuándo se publicó y
+    hasta cuándo se reciben observaciones y subsanaciones (la Ley 1882 de 2018
+    permite subsanar hasta el término de traslado del informe)."""
+
+    evaluacion = models.OneToOneField(Evaluacion, on_delete=models.CASCADE, primary_key=True, related_name="traslado")
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    publicado_en = models.DateField()
+    dias_habiles = models.PositiveSmallIntegerField()
+    vence_en = models.DateField()
+    actualizado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+
+class DecisionObservacion(models.TextChoices):
+    PENDIENTE = "pendiente", "Pendiente de respuesta"
+    ACOGE = "acoge", "Se acoge"
+    ACOGE_PARCIAL = "acoge_parcial", "Se acoge parcialmente"
+    NO_ACOGE = "no_acoge", "No se acoge"
+
+
+class ObservacionInforme(models.Model):
+    """Observación al informe de evaluación y su respuesta (matriz de observaciones)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    evaluacion = models.ForeignKey(Evaluacion, on_delete=models.CASCADE, related_name="observaciones")
+    consecutivo = models.PositiveIntegerField()
+    observante = models.CharField(max_length=300)
+    # Sobre qué proponente y requisito (si aplica).
+    proponente = models.ForeignKey(Proponente, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    requisito = models.PositiveSmallIntegerField(null=True, blank=True)
+    recibida_en = models.DateField()
+    texto = models.TextField()
+    respuesta = models.TextField(blank=True)
+    decision = models.CharField(max_length=20, choices=DecisionObservacion.choices, default=DecisionObservacion.PENDIENTE)
+    # Si la respuesta cambia el resultado de la evaluación.
+    modifica_resultado = models.BooleanField(default=False)
+    respondida_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    respondida_en = models.DateTimeField(null=True, blank=True)
+    registrada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    registrada_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["consecutivo"]
+        constraints = [models.UniqueConstraint(fields=["evaluacion", "consecutivo"], name="observacion_consecutivo_unico")]
+
+
+class FactorEconomico(models.Model):
+    """Factor económico de un lote del proceso (RF-11): parámetros del pliego,
+    la TRM que escoge el método y la calificación que confirma una persona."""
+
+    VIGENTES, ANTERIORES = "vigentes", "anteriores"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    proceso = models.ForeignKey(Proceso, on_delete=models.CASCADE, related_name="factores_economicos")
+    lote = models.CharField(max_length=60, blank=True)
+    # Orden de adjudicación del lote: el primero toma el método de la TRM y los siguientes, el siguiente de la tabla.
+    orden = models.PositiveSmallIntegerField(default=1)
+    puntaje_maximo = models.DecimalField(max_digits=8, decimal_places=4, null=True, blank=True)
+    presupuesto_oficial = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    # Costo estimado del estudio del sector, para la alerta de ofertas bajas con menos de 5 ofertas.
+    costo_estimado = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    # Tabla de métodos del pliego: la de los Documentos Tipo vigentes o la anterior.
+    tabla_metodos = models.CharField(max_length=12, default=VIGENTES)
+    trm = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    fecha_trm = models.DateField(null=True, blank=True)
+    calificacion = models.JSONField(null=True, blank=True)
+    confirmada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    confirmada_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["orden", "lote"]
+        constraints = [models.UniqueConstraint(fields=["proceso", "lote"], name="factor_economico_lote_unico")]
+
+
+def _ruta_oferta_economica(instancia: "OfertaEconomica", nombre: str) -> str:
+    extension = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else "bin"
+    return f"entidades/{instancia.entidad_id}/economica/{instancia.factor_id}/{uuid.uuid4().hex}.{extension}"
+
+
+class OfertaEconomica(models.Model):
+    VALIDA, RECHAZADA = "valida", "rechazada"
+    SIN_SOLICITAR, SOLICITADA, ACEPTADA, NO_ACEPTADA = "", "solicitada", "aceptada", "no_aceptada"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    factor = models.ForeignKey(FactorEconomico, on_delete=models.CASCADE, related_name="ofertas")
+    proponente = models.ForeignKey(Proponente, on_delete=models.CASCADE, related_name="ofertas_economicas")
+    valor_ofertado = models.DecimalField(max_digits=18, decimal_places=2)
+    archivo = models.FileField(upload_to=_ruta_oferta_economica, max_length=300, blank=True)
+    nombre_archivo = models.CharField(max_length=255, blank=True)
+    # Lo que encontró la verificación aritmética (diferencias y lo que no se pudo verificar).
+    revision = models.JSONField(default=dict, blank=True)
+    # Valor total corregido que confirmó una persona: es el que se califica.
+    valor_corregido = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    corregido_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    estado = models.CharField(max_length=12, default=VALIDA)
+    motivo_rechazo = models.TextField(blank=True)
+    # Justificación de precio artificialmente bajo.
+    justificacion = models.CharField(max_length=12, blank=True, default=SIN_SOLICITAR)
+    nota = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["factor", "proponente"], name="oferta_economica_unica")]
+
+
+class AnalisisCoincidencias(models.Model):
+    """Coincidencias entre las ofertas de un proceso (RF-14), con lo que decidió el comité de cada una."""
+
+    proceso = models.OneToOneField(Proceso, on_delete=models.CASCADE, primary_key=True, related_name="coincidencias")
+    entidad = models.ForeignKey(Entidad, on_delete=models.PROTECT, related_name="+")
+    resultado = models.JSONField(default=dict)
+    # clave de la coincidencia → {"revisada": bool, "nota": str, "por": nombre, "en": iso}
+    revisiones = models.JSONField(default=dict, blank=True)
+    calculado_en = models.DateTimeField(auto_now=True)
+    calculado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+
+
+def _ruta_preparacion(instancia: "PreparacionProceso", nombre: str) -> str:
+    return f"entidades/{instancia.entidad_id}/preparaciones/{instancia.id}/documento_base.pdf"
+
+
+class PreparacionProceso(models.Model):
+    """Un proceso a medio crear: el Documento Base, la carpeta o las ofertas
+    subidas, y su lectura, que hace el trabajador en segundo plano. Queda en el
+    servidor para que recargar la página no la pierda; se borra al crear el
+    proceso, cuando la persona la descarta o, sin uso, a los pocos días."""
+
+    PENDIENTE, LEYENDO, LISTA, ERROR = "pendiente", "leyendo", "lista", "error"
+    ESTADOS = [(PENDIENTE, "En fila"), (LEYENDO, "Leyendo"), (LISTA, "Lista"), (ERROR, "Con error")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entidad = models.ForeignKey(Entidad, on_delete=models.CASCADE, related_name="+")
+    creada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    codigo = models.CharField(max_length=120)
+    fecha_cierre = models.DateField()
+    carpeta_drive = models.CharField(max_length=1000, blank=True)
+    archivo = models.FileField(upload_to=_ruta_preparacion, max_length=300)
+    nombre_archivo = models.CharField(max_length=300)
+    # Ofertas subidas a mano: ya guardadas en la caché de ofertas al crearla.
+    ofertas_subidas = models.JSONField(null=True, blank=True)
+    estado = models.CharField(max_length=10, choices=ESTADOS, default=PENDIENTE)
+    etapa = models.CharField(max_length=200, blank=True)
+    progreso = models.PositiveSmallIntegerField(default=0)
+    error = models.TextField(blank=True)
+    # Lo mismo que devolvía /procesos/analizar: documento base, proponentes y pliego.
+    resultado = models.JSONField(null=True, blank=True)
+    creada_en = models.DateTimeField(auto_now_add=True)
+    iniciada_en = models.DateTimeField(null=True, blank=True)
+    terminada_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-creada_en"]

@@ -102,7 +102,8 @@ def capacidad_financiera(ind: Indicadores | None, umbrales: Umbrales, avisos: li
     if not umbrales.completos:
         return Revision(False, [
             f"liquidez {_f(ind.liquidez)}, endeudamiento {_f(ind.endeudamiento)}, cobertura {_f(ind.cobertura, 2)}: "
-            "falta registrar los umbrales de la Matriz 2 del proceso para decidir"
+            "falta registrar los umbrales de la Matriz 2 del proceso para decidir (una sola vez para todos: en "
+            "«Parámetros financieros», arriba de esta evaluación, escríbelos o sube la Matriz 2)"
         ], detalle)
     faltas = []
     if ind.liquidez is not None and ind.liquidez < umbrales.liquidez_min:
@@ -131,7 +132,7 @@ def capacidad_organizacional(ind: Indicadores | None, umbrales: Umbrales, avisos
     detalle = {"roa": ind.roa, "roe": ind.roe}
     if not umbrales.completos:
         return Revision(False, [
-            f"rentabilidad del activo {_f(ind.roa)}, del patrimonio {_f(ind.roe)}: falta registrar los umbrales de la Matriz 2"
+            f"rentabilidad del activo {_f(ind.roa)}, del patrimonio {_f(ind.roe)}: falta registrar los umbrales de la Matriz 2 (una sola vez para todos: en «Parámetros financieros», arriba de esta evaluación)"
         ], detalle)
     faltas = []
     if ind.roa is None or ind.roa < umbrales.roa_min:

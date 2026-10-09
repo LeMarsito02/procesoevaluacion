@@ -5,6 +5,7 @@ import { formatDuracion } from '../format'
 import { GRUPOS, ORDEN_GRUPOS, REQUISITOS, requisitosOrdenados } from '../requisitos'
 import Celda from './Celda'
 import Icono from './Icono'
+import { nitConDv } from '../format'
 
 type Filtro = 'todos' | 'pendientes' | 'listos'
 
@@ -222,7 +223,11 @@ export default function PasoEvaluacion(p: Props) {
               <>
                 <h2 style={{ fontSize: 'calc(18px * var(--escala-texto, 1))', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span className="pulso" />
-                  {p.progreso.procesando > 0 ? 'Evaluando proponentes…' : 'En la fila, esperando turno…'}
+                  {p.progreso.enFila === 0 && p.progreso.procesando > 0 && faltan > p.progreso.procesando
+                    ? 'Pausada: se está terminando el proponente en curso'
+                    : p.progreso.procesando > 0
+                      ? 'Evaluando proponentes…'
+                      : 'En la fila, esperando turno…'}
                 </h2>
                 <p className="muted" style={{ marginTop: 4 }}>
                   {evaluados} de {p.proponentes.length} evaluados · {p.progreso.procesando} en proceso · {p.progreso.enFila} en fila
@@ -253,10 +258,18 @@ export default function PasoEvaluacion(p: Props) {
             )}
           </div>
           {!p.puedeEvaluar ? null : evaluando ? (
-            p.progreso!.enFila > 0 && (
+            p.progreso!.enFila > 0 ? (
               <button className="btn btn-secondary" type="button" onClick={p.onDetener} disabled={p.ocupado}>
                 {p.ocupado ? <span className="spinner oscuro" /> : <Icono nombre="pausa" tam={15} />} Pausar
               </button>
+            ) : (
+              // Pausada, con el último proponente terminando: se puede reanudar ya
+              // (no se duplica el que está en curso).
+              faltan > p.progreso!.procesando && (
+                <button className="btn btn-primary" type="button" onClick={p.onContinuar} disabled={p.ocupado}>
+                  {p.ocupado ? <span className="spinner" /> : null} Reanudar <Icono nombre="flecha" tam={16} />
+                </button>
+              )
             )
           ) : (
             <button className="btn btn-primary" type="button" onClick={p.onContinuar} disabled={p.ocupado}>
@@ -444,7 +457,7 @@ export default function PasoEvaluacion(p: Props) {
                   personas.map((per) => (
                     <tr key={`${pr.hoja}-${per.clave}`} className="fila-persona">
                       <td className="col-prop">
-                        <span className="persona-nombre" title={per.documento ? `${per.tipo === 'juridica' ? 'NIT' : 'C.C.'} ${per.documento}` : undefined}>
+                        <span className="persona-nombre" title={per.documento ? (per.tipo === 'juridica' ? `NIT ${nitConDv(per.documento)}` : `C.C. ${per.documento}`) : undefined}>
                           {per.nombre}
                         </span>
                         <span className="prop-meta">{ROL[per.rol]}{per.tipo === 'juridica' ? ' · persona jurídica' : ''}</span>

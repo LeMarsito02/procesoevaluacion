@@ -27,6 +27,7 @@ import re
 from collections.abc import Callable
 
 import requests
+from motor.gpu_turno import turno_ia
 from pydantic import BaseModel, Field
 
 from motor.pliego.lectura import Seccion
@@ -192,6 +193,11 @@ def trozos(secciones: list[Seccion], ambitos: dict[str, str], largo: int = TROZO
 
 
 def _preguntar(instruccion: str, texto: str, modelo: str = MODELO) -> dict:
+    with turno_ia():
+        return _preguntar_en_turno(instruccion, texto, modelo)
+
+
+def _preguntar_en_turno(instruccion: str, texto: str, modelo: str) -> dict:
     r = requests.post(
         f"{URL}/api/chat",
         timeout=TIEMPO_MAXIMO,

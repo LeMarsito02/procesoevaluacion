@@ -3,9 +3,11 @@ FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
-# OCR en español (tesseract), .rar (7-Zip) y cliente de PostgreSQL para respaldos.
+# OCR en español (tesseract), .rar (7-Zip), cliente de PostgreSQL para respaldos,
+# age para cifrarlos y rclone para copiarlos fuera del servidor (RF-21), y
+# LibreOffice sin interfaz para entregar los informes en PDF (RF-22).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa 7zip postgresql-client tini \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa 7zip postgresql-client tini age rclone ca-certificates libreoffice-calc-nogui libreoffice-writer-nogui fonts-dejavu \
  && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 10001 mievaluador

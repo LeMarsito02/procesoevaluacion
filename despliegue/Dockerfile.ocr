@@ -1,0 +1,16 @@
+# Servicio de OCR de MiEvaluador: PaddleOCR (PP-OCRv5, español) en la GPU.
+# Solo se expone dentro de la red de Docker: el backend le envía las páginas
+# escaneadas y los documentos no salen del servidor.
+FROM paddlepaddle/paddle:3.2.0-gpu-cuda12.6-cudnn9.5
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    OCR_HOST=0.0.0.0 OCR_PUERTO=8866 OCR_DISPOSITIVO=gpu \
+    PADDLE_PDX_CACHE_HOME=/modelos
+
+RUN pip install paddleocr==3.7.0 && useradd --create-home --uid 10002 ocr && mkdir -p /modelos && chown ocr /modelos
+COPY --chown=ocr:ocr Backend/ocr_servicio/servidor.py /app/servidor.py
+USER ocr
+WORKDIR /app
+EXPOSE 8866
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8866/salud')"
+CMD ["python", "servidor.py"]

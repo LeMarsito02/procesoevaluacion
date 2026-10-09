@@ -316,6 +316,14 @@ button.kpi:hover { box-shadow: var(--shadow); }
 .visor-doc { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); }
 .visor-doc-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .visor-doc-head span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: calc(14px * var(--escala-texto, 1)); }
+.visor-buscar { display: flex; flex-direction: column; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+.visor-buscar form { display: flex; align-items: center; gap: 8px; }
+.visor-buscar input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; background: var(--surface, #fff); color: inherit; }
+.visor-fragmento { color: var(--ink-2); max-height: 3.2em; overflow: auto; }
+.visor-paginas { display: flex; flex-direction: column; flex: 1; min-height: 0; background: #525659; }
+.visor-paginas-barra { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.visor-paginas-hoja { flex: 1; min-height: 0; overflow: auto; padding: 12px; text-align: center; -webkit-overflow-scrolling: touch; }
+.visor-paginas-hoja img { max-width: none; height: auto; background: #fff; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35); }
 .visor iframe { border: 0; width: 100%; flex: 1; background: #525659; }
 .visor-lado { padding: 20px; overflow: auto; background: var(--paper); display: flex; flex-direction: column; gap: 14px; }
 @media (max-width: 1000px) { .visor { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .visor-lado { max-height: 40vh; } }
@@ -410,7 +418,7 @@ kbd { font-family: var(--sans); font-size: calc(11.5px * var(--escala-texto, 1))
 .menu-lista button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; background: none; border-radius: 9px; font-size: calc(14px * var(--escala-texto, 1)); color: var(--ink-2); cursor: pointer; text-align: left; }
 .menu-lista button:hover { background: var(--surface-2); color: var(--ink); }
 .menu-lista .menu-salir { color: var(--bad); border-top: 1px solid var(--line); border-radius: 0 0 9px 9px; margin-top: 6px; }
-@media (max-width: 760px) { .menu-nombre { display: none; } .nav-principal { display: none; } }
+@media (max-width: 760px) { .menu-nombre { display: none; } }
 
 /* ---------- Tablas y diálogos de gestión ---------- */
 .tabla-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow-x: auto; }
@@ -552,6 +560,10 @@ button.chip:hover { border-color: var(--brand); color: var(--ink); }
 .persona-ant-cedula { margin-left: 0; }
 .aportado { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); }
 .aportado .enlace { font-size: calc(12px * var(--escala-texto, 1)); }
+.ventana-fondo { position: fixed; inset: 0; z-index: 80; background: rgba(15, 23, 42, 0.45); display: grid; place-items: center; padding: 16px; animation: aparecer 0.15s ease; }
+.formulario-inline.ventana { margin: 0; width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--surface); border-color: var(--line); box-shadow: var(--shadow-lg); padding: 20px; }
+.formulario-inline.ventana .grid-persona { display: flex; flex-direction: column; gap: 12px; }
+.formulario-inline.ventana input[type='file'] { max-width: 100%; }
 .formulario-inline { margin-top: 10px; padding: 12px; border: 1px solid var(--brand); border-radius: 12px; background: var(--brand-soft); display: flex; flex-direction: column; gap: 10px; }
 .grid-persona { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: end; }
 .lista-expedientes { display: flex; flex-direction: column; gap: 8px; }
@@ -1077,7 +1089,7 @@ html.a11y-contraste .a11y-opcion[aria-pressed='true'] { border-width: 3px; }
 .elegir-cabecera p { color: var(--ink-3); font-size: calc(16px * var(--escala-texto, 1)); }
 .elegir-tarjetas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .elegir-tarjeta { --tono: var(--brand); --tono-suave: var(--brand-soft); position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 30px 30px 26px; min-height: 420px; cursor: pointer; box-shadow: var(--shadow); overflow: hidden; transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
-.elegir-tarjeta::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 132px; background: linear-gradient(135deg, var(--tono-suave), transparent 72%); pointer-events: none; }
+.elegir-tarjeta::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 190px; background: radial-gradient(120% 100% at 0% 0%, var(--tono-suave), transparent 70%); pointer-events: none; }
 .elegir-tarjeta[data-tono='ops'] { --tono: var(--ai); --tono-suave: var(--ai-soft); }
 .elegir-tarjeta > * { position: relative; }
 .elegir-tarjeta:hover, .elegir-tarjeta:focus-visible { transform: translateY(-4px); border-color: var(--tono); box-shadow: 0 2px 4px rgba(0, 20, 60, 0.06), 0 22px 48px rgba(0, 40, 120, 0.14); outline: none; }
@@ -1146,7 +1158,10 @@ html.a11y-contraste .a11y-opcion[aria-pressed='true'] { border-width: 3px; }
 .ops-pie { margin: 8px 0 24px; }
 .ops-cita { margin: 0 0 16px; padding: 10px 14px; border-left: 3px solid var(--brand); background: var(--surface-2); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--ink-2); font-size: calc(14px * var(--escala-texto, 1)); }
 .ops-ayuda { margin: -6px 0 12px; padding: 8px 12px; background: var(--ai-soft); color: var(--ai); border-radius: var(--radius-sm); }
-.ops-acciones .enlace + .enlace { margin-left: 12px; }
+.ops-acciones .enlace { display: block; }
+.ops-acciones .enlace + .enlace { margin-top: 4px; }
+.ops-quien { min-width: 230px; max-width: 380px; }
+.ops a.btn, .ops-tarjeta a.btn { text-decoration: none; }
 .ops-form-periodo { padding: 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); margin-top: 14px; }
 td > .ops-form-periodo { margin-top: 0; }
 .tabla-honorarios td { padding: 4px 6px; }
@@ -1164,3 +1179,94 @@ td > .ops-form-periodo { margin-top: 0; }
   .elegir-tarjeta, .elegir-accion svg { transition: none; }
   .elegir-tarjeta:hover, .elegir-tarjeta:focus-visible { transform: none; }
 }
+
+/* --- Traslado del informe --- */
+.tramite-fila { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.tramite-fila .field { min-width: 200px; }
+.economica-lote + .economica-lote { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.economica-parametros { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; align-items: end; margin-bottom: 10px; }
+.informe-formatos { display: flex; gap: 6px; }
+
+/* Lo que falta para continuar al crear un proceso: legible, no una nota gris. */
+.requisitos-continuar { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface-2); }
+.requisitos-continuar[data-listo="true"] { border-color: var(--ok); }
+.requisitos-continuar strong { display: block; margin-bottom: 6px; font-size: 0.95rem; color: var(--ink); }
+.requisitos-continuar ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 16px; }
+.requisitos-continuar li { display: flex; align-items: center; gap: 8px; font-size: 0.92rem; color: var(--ink); }
+.requisitos-continuar li[data-hecho="true"] { color: var(--ink-2); }
+.requisitos-continuar li[data-falta="true"] { color: var(--bad); font-weight: 600; }
+.requisito-marca { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--ink-3); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.requisitos-continuar li[data-hecho="true"] .requisito-marca { background: var(--ok); border-color: var(--ok); color: #fff; }
+.requisitos-continuar li[data-falta="true"] .requisito-marca { border-color: var(--bad); }
+.dropzone[data-falta="true"], .btn[data-falta="true"], .input[aria-invalid="true"] { border-color: var(--bad) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 18%, transparent); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.fact-input { margin-top: 4px; font-size: 1.05rem; font-weight: 600; padding: 6px 8px; max-width: 100%; }
+/* Proceso que espera en la fila o lee el servidor */
+.leyendo-cabeza { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 10px; flex-wrap: wrap; }
+.barra-progreso { height: 12px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+.barra-progreso > span { display: block; height: 100%; background: var(--brand); border-radius: 999px; transition: width 0.5s ease; }
+.leyendo-etapas { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 10px; }
+.leyendo-etapas li { display: flex; align-items: center; gap: 10px; color: var(--ink-3); }
+.leyendo-etapas li[data-estado="actual"] { color: var(--ink); font-weight: 600; }
+.leyendo-etapas li[data-estado="hecha"] { color: var(--ink-2); }
+.leyendo-marca { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line-strong); display: inline-flex; align-items: center; justify-content: center; flex: none; font-size: 0.8rem; }
+.leyendo-marca .spinner { width: 14px; height: 14px; }
+.leyendo-etapas li[data-estado="hecha"] .leyendo-marca { background: var(--ok); border-color: var(--ok); color: #fff; }
+.leyendo-etapas li[data-estado="actual"] .leyendo-marca { border-color: var(--brand); }
+.leyendo-datos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 20px; margin: 20px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.leyendo-datos dt { color: var(--ink-3); }
+.leyendo-datos dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.a-medio-crear > strong { display: block; margin-bottom: 8px; }
+.a-medio-crear ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.a-medio-crear li { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--line); }
+
+/* Navegación compacta: por debajo de 1100 px las secciones van en un menú
+   (en tableta los enlaces, el «Más» y el usuario ya no cabían y se montaban). */
+.nav-compacta { display: none; position: relative; }
+.nav-compacta-boton { display: inline-flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-weight: 600; font-size: calc(14.5px * var(--escala-texto, 1)); cursor: pointer; min-height: 44px; }
+.nav-compacta-boton:hover { background: var(--surface-2); }
+.nav-hamburguesa { display: inline-grid; gap: 3px; width: 18px; }
+.nav-hamburguesa span { display: block; height: 2px; border-radius: 2px; background: currentColor; }
+.nav-compacta-lista { left: 0; right: auto; min-width: 220px; }
+.nav-compacta-lista button[aria-current='page'] { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+@media (max-width: 1100px) {
+  .nav-compacta { display: block; }
+  .nav-principal > .nav-enlace, .nav-principal > .nav-mas { display: none; }
+  .menu-nombre { display: none; }
+}
+@media (max-width: 760px) {
+  .a11y-boton { width: 44px; height: 44px; left: 12px; bottom: 12px; }
+  .a11y-panel { left: 12px; bottom: 64px; }
+}
+/* En celular el asistente flotante queda solo con su ícono: no tapa las tarjetas. */
+@media (max-width: 760px) {
+  .chat-flotante { width: 52px; height: 52px; padding: 0; border-radius: 50%; justify-content: center; right: 12px; bottom: 12px; }
+  .chat-flotante-texto { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+
+/* Tablas que en celular pasan a tarjetas: cada fila es un bloque y cada dato
+   lleva el nombre de su columna (data-label), en vez de cortar columnas. */
+@media (max-width: 760px) {
+  .tabla-apilable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .tabla-apilable, .tabla-apilable tbody, .tabla-apilable tr, .tabla-apilable td { display: block; width: 100%; }
+  .tabla-apilable tr { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .tabla-apilable td { border: 0 !important; padding: 3px 0 !important; max-width: none !important; white-space: normal !important; text-align: left !important; }
+  .tabla-apilable td[data-label]::before { content: attr(data-label); display: block; font-size: 0.75rem; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.03em; }
+  .tabla-apilable td[data-label]:first-child::before { display: none; }
+  .tabla-apilable td.vacio { text-align: center !important; }
+}
+.subida { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface-2); display: grid; gap: 8px; }
+
+/* Elegir más integrantes del comité al crear el proceso. */
+.comite-elegir { border: 0; padding: 0; margin: 10px 0 0 30px; min-width: 0; }
+.comite-elegir legend { font-weight: 600; font-size: 0.9rem; margin-bottom: 2px; padding: 0; }
+.comite-opciones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.comite-opcion { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); cursor: pointer; min-height: 40px; }
+.comite-opcion[data-marcado="true"] { border-color: var(--brand); background: var(--brand-soft); }
+@media (max-width: 560px) { .comite-elegir { margin-left: 0; } .comite-opcion { width: 100%; border-radius: 10px; } }
+
+/* Ofertas elegidas y las que ya están guardadas en el servidor. */
+.ofertas-elegidas { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.ofertas-elegidas li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 0.9rem; padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.oferta-en-servidor { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; color: var(--ok); font-weight: 600; font-size: 0.88rem; }
+.oferta-en-servidor .enlace { color: var(--bad); }

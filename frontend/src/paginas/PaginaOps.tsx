@@ -14,11 +14,13 @@ import {
   reabrirOps,
   reanalizarOps,
   urlCertificado,
+  urlListaVerificacion,
   urlDocumento,
   verOps,
   type DecisionesOps,
   type DetalleOps,
   corregirDatosOps,
+  fechaLocal,
   type DocumentoOps,
   type EstadoDocumento,
   type PeriodoNuevo,
@@ -41,6 +43,7 @@ const ESTADO_PERIODO: Record<PeriodoOps['estado'], { nombre: string; pill: strin
   sobra: { nombre: 'Sobra', pill: 'revisar' },
   descartado: { nombre: 'No suma', pill: 'no_aplica' },
   retirado: { nombre: 'Retirado', pill: 'no_aplica' },
+  sin_sigep: { nombre: 'No está en SIGEP', pill: 'error' },
 }
 
 /** Una prestación de servicios: lo que leyó el sistema, lo que decide la
@@ -143,7 +146,13 @@ export default function PaginaOps({ id }: { id: string }) {
             </a>
           )}
           {editable && (
-            <button type="button" className="btn btn-ok" disabled={ocupado} onClick={() => void hacer(() => confirmarOps(id))}>
+            <button
+              type="button"
+              className="btn btn-ok"
+              disabled={ocupado || (d.por_confirmar?.length ?? 0) > 0}
+              title={(d.por_confirmar?.length ?? 0) > 0 ? 'Primero resuelva lo que falta por confirmar' : undefined}
+              onClick={() => void hacer(() => confirmarOps(id))}
+            >
               <Icono nombre="check" /> Confirmar
             </button>
           )}
@@ -159,6 +168,15 @@ export default function PaginaOps({ id }: { id: string }) {
         <div className="callout callout-bad" role="alert" style={{ marginBottom: 16 }}>
           <Icono nombre="alerta" />
           <div>{error}</div>
+        </div>
+      )}
+      {d.documentos_eliminados_en && (
+        <div className="callout callout-info" style={{ marginBottom: 16 }}>
+          <Icono nombre="info" />
+          <div>
+            Las copias de los documentos se eliminaron el {formatFechaCorta(fechaLocal(d.documentos_eliminados_en))} por la política de retención. Se conserva
+            lo leído, lo decidido y el certificado de idoneidad; los enlaces a los archivos ya no abren.
+          </div>
         </div>
       )}
       {leyendo && (
@@ -185,12 +203,45 @@ export default function PaginaOps({ id }: { id: string }) {
       {analizada && (
         <>
           <Resumen d={d} />
-          {(d.revisiones?.length ?? 0) > 0 && (
-            <div className="callout callout-warn" style={{ marginBottom: 20 }}>
+          {(d.por_confirmar?.length ?? 0) > 0 && (
+            <div className="callout callout-warn" style={{ marginBottom: 16 }}>
               <Icono nombre="alerta" />
               <div>
-                <strong>Para revisar</strong>
+                <strong>Falta por confirmar antes de concluir</strong>
+                <div className="small">El sistema no dice que cumple apoyándose en algo que no leyó completo o que nadie confirmó.</div>
                 <ul>
+                  {d.por_confirmar!.map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+          {((d.avisos?.length ?? 0) > 0 || (d.revisiones?.length ?? 0) > 0) && (
+            <div className="callout callout-info" style={{ marginBottom: 20 }}>
+              <Icono nombre="info" />
+              <div>
+                <strong>Lo que encontró la lectura</strong>
+                <ul>
+                  {(d.avisos ?? []).map((a) => (
+                    <li key={a.texto}>
+                      {a.texto}{' '}
+                      {a.visto ? (
+                        <span className="small muted">· revisado</span>
+                      ) : (
+                        editable && (
+                          <button
+                            type="button"
+                            className="enlace small"
+                            disabled={ocupado}
+                            onClick={() => void decidir({ avisos_vistos: [...(d.avisos ?? []).filter((x) => x.visto).map((x) => x.texto), a.texto] })}
+                          >
+                            Ya lo revisé
+                          </button>
+                        )
+                      )}
+                    </li>
+                  ))}
                   {d.revisiones!.map((r) => (
                     <li key={r}>{r}</li>
                   ))}
@@ -218,7 +269,7 @@ export default function PaginaOps({ id }: { id: string }) {
       )}
 
       <div className="ops-pie small muted">
-        Creada el {formatFechaCorta(d.creada_en.slice(0, 10))} por {d.creada_por}
+        Creada el {formatFechaCorta(fechaLocal(d.creada_en))} por {d.creada_por}
         {d.segundos != null && ` · documentos leídos en ${d.segundos < 60 ? `${Math.round(d.segundos)} s` : `${Math.round(d.segundos / 60)} min`}`}
         {editable && (
           <>
@@ -253,14 +304,20 @@ function Resumen({ d }: { d: DetalleOps }) {
   const documentos = d.documentos ?? []
   const alDia = documentos.length - (d.documentos_pendientes ?? 0)
   const conclusion =
-    d.cumple == null ? { texto: 'Por revisar', tono: 'revisar' } : d.cumple ? { texto: 'Cumple el perfil', tono: 'cumple' } : { texto: 'No cumple el perfil', tono: 'error' }
+    d.cumple == null ? { texto: 'Sin conclusión', tono: 'revisar' } : d.cumple ? { texto: 'Cumple el perfil', tono: 'cumple' } : { texto: 'No cumple el perfil', tono: 'error' }
   const honorarios = d.perfil?.honorarios_mensuales ?? 0
   return (
     <div className="ops-resumen">
       <div className="ops-dato" data-tono={conclusion.tono}>
         <span>Conclusión</span>
         <strong>{conclusion.texto}</strong>
-        <small>{d.estado === 'confirmada' ? 'Confirmada por una persona' : 'Preliminar: la decide una persona'}</small>
+        <small>
+          {d.estado === 'confirmada'
+            ? 'Confirmada por una persona'
+            : d.cumple == null
+              ? `Faltan ${d.por_confirmar?.length ?? 0} cosas por confirmar`
+              : 'Preliminar: la decide una persona'}
+        </small>
       </div>
       <div className="ops-dato">
         <span>Experiencia que cuenta</span>
@@ -329,7 +386,7 @@ function Perfil({ d, editable, ocupado, onDecidir }: PropsSeccion) {
     setEditando(false)
   }
 
-  const titulos = (d.titulos ?? []).filter((t) => t.nivel !== 'bachiller')
+  const titulos = d.titulos ?? []
   const pideEspecifica = !!p && (p.especifica_minima > 0 || p.especifica_maxima != null)
 
   return (
@@ -475,17 +532,12 @@ function Perfil({ d, editable, ocupado, onDecidir }: PropsSeccion) {
           <div className="ops-ficha-ancha">
             <dt>Formación acreditada</dt>
             <dd>
-              {titulos.length === 0 && !d.matricula?.profesion && 'No se leyeron títulos.'}
-              {titulos.length === 0 && d.matricula?.profesion && (
-                <div>
-                  <span className="tag">Profesional</span> {d.matricula.profesion} <span className="small muted">· según su matrícula; el diploma no se pudo leer</span>
-                </div>
-              )}
+              {titulos.length === 0 && 'No se leyeron títulos.'}
               {titulos.map((t, i) => (
                 <div key={i}>
-                  <span className="tag">{NOMBRE_NIVEL[t.nivel] ?? t.nivel}</span>{' '}
-                  {t.nombre || (t.nivel === 'profesional' && d.matricula?.profesion) || 'Título sin nombre legible'}
+                  <span className="tag">{NOMBRE_NIVEL[t.nivel] ?? t.nivel}</span> {t.nombre || 'Título sin nombre legible'}
                   {t.fecha && <span className="small muted"> · {formatFechaCorta(t.fecha)}</span>}
+                  {t.por_matricula && <span className="small muted"> · según su matrícula; el diploma no se pudo leer</span>}
                   {t.declarado && <span className="small ops-motivo"> · declarado en la hoja de vida: confirme el diploma</span>}
                   {t.documento_id && (
                     <>
@@ -592,7 +644,15 @@ function Experiencia({ d, editable, ocupado, onDecidir }: PropsSeccion) {
         <div>
           <h2>Experiencia</h2>
           <p className="small muted">
-            En línea y sin traslapes: el tiempo trabajado en un mismo periodo cuenta una sola vez. Meses de 30 días y año de 360.
+            En línea y sin traslapes: el tiempo trabajado en un mismo periodo cuenta una sola vez. Meses de 30 días y año de 360. Solo cuenta lo
+            que está relacionado en la hoja de vida del SIGEP.
+          </p>
+          <p className="small muted">
+            {d.sigep == null
+              ? 'No se encontró la hoja de vida del SIGEP entre los documentos.'
+              : d.sigep.confiable
+                ? `Hoja de vida del SIGEP: ${d.sigep.empleos} empleos relacionados, todos leídos.`
+                : `Hoja de vida del SIGEP: ${d.sigep.empleos} empleos y solo se leyeron las fechas de ${d.sigep.leidos}; lo demás lo confirma usted.`}
           </p>
         </div>
         <div className="ops-total">
@@ -616,8 +676,7 @@ function Experiencia({ d, editable, ocupado, onDecidir }: PropsSeccion) {
             <thead>
               <tr>
                 <th>Entidad y contrato o cargo</th>
-                <th>Inicio</th>
-                <th>Terminación</th>
+                <th>Periodo</th>
                 <th>Tiempo que cuenta</th>
                 <th>Tipo</th>
                 <th>Estado</th>
@@ -631,12 +690,12 @@ function Experiencia({ d, editable, ocupado, onDecidir }: PropsSeccion) {
                 if (editando === f.id)
                   return (
                     <tr key={f.id}>
-                      <td colSpan={editable ? 7 : 6}>{formulario}</td>
+                      <td colSpan={editable ? 6 : 5}>{formulario}</td>
                     </tr>
                   )
                 return (
                   <tr key={f.id} data-apagada={!activa || f.estado === 'sobra'}>
-                    <td style={{ maxWidth: 360 }}>
+                    <td className="ops-quien">
                       <strong>{f.referencia || 'Sin contrato o cargo leído'}</strong>
                       <div className="small muted">
                         {f.entidad || 'Entidad sin leer'}
@@ -650,16 +709,16 @@ function Experiencia({ d, editable, ocupado, onDecidir }: PropsSeccion) {
                         )}
                         {f.manual && ' · agregado a mano'}
                         {f.corregido && !f.manual && ' · corregido'}
+                        {f.confirmado && ' · lectura confirmada'}
                       </div>
                       {f.motivo && <div className="small ops-motivo">{f.motivo}</div>}
-                      {f.nota && <div className="small ops-motivo">{f.nota}</div>}
-                      {f.abierto && !f.nota && <div className="small ops-motivo">Sin fecha de terminación: se contó hasta que se expidió la certificación.</div>}
+                      {f.duda && <div className="small ops-motivo">{f.duda}</div>}
+                      {f.sigep_confirmado && <div className="small muted">Una persona confirmó que está en la hoja de vida del SIGEP.</div>}
                     </td>
                     <td className="small nowrap">
-                      {formatFechaCorta(f.inicio)}
+                      {formatFechaCorta(f.inicio)} a {formatFechaCorta(f.fin)}
                       {f.recortado && f.cuenta_desde && <div className="muted">cuenta desde {formatFechaCorta(f.cuenta_desde)}</div>}
                     </td>
-                    <td className="small nowrap">{formatFechaCorta(f.fin)}</td>
                     <td className="small">{f.duracion || '—'}</td>
                     <td>
                       {activa &&
@@ -676,6 +735,8 @@ function Experiencia({ d, editable, ocupado, onDecidir }: PropsSeccion) {
                                       incluir: f.fijo ? true : null,
                                       relacionada: e.target.checked,
                                       ...(f.corregido ? { inicio: f.inicio, fin: f.fin, entidad: f.entidad, referencia: f.referencia } : {}),
+                                      ...(f.confirmado ? { confirmado: true } : {}),
+                                      ...(f.sigep_confirmado ? { en_sigep: true } : {}),
                                     },
                                   },
                                 })
@@ -711,12 +772,42 @@ function Experiencia({ d, editable, ocupado, onDecidir }: PropsSeccion) {
                                     ...a.cambio,
                                     relacionada: f.relacionada ?? null,
                                     ...(f.corregido ? { inicio: f.inicio, fin: f.fin, entidad: f.entidad, referencia: f.referencia } : {}),
+                                      ...(f.confirmado ? { confirmado: true } : {}),
+                                      ...(f.sigep_confirmado ? { en_sigep: true } : {}),
                                   },
                                 },
                               })
                             }
                           >
                             {a.texto}
+                          </button>
+                        )}
+                        {f.estado === 'sin_sigep' && (
+                          <button
+                            type="button"
+                            className="enlace small"
+                            style={{ fontWeight: 700 }}
+                            disabled={ocupado}
+                            title="Usted lo vio relacionado en la hoja de vida del SIGEP (queda registrado con su nombre)"
+                            onClick={() => void onDecidir({ periodos: { [f.id]: { en_sigep: true, relacionada: f.relacionada ?? null } } })}
+                          >
+                            Sí está en el SIGEP
+                          </button>
+                        )}
+                        {f.por_confirmar && activa && (
+                          <button
+                            type="button"
+                            className="enlace small"
+                            style={{ fontWeight: 700 }}
+                            disabled={ocupado}
+                            title="Usted revisó la certificación y la lectura es correcta"
+                            onClick={() =>
+                              void onDecidir({
+                                periodos: { [f.id]: { incluir: f.fijo ? true : null, relacionada: f.relacionada ?? null, confirmado: true, en_sigep: true } },
+                              })
+                            }
+                          >
+                            Confirmar lectura
                           </button>
                         )}
                         <button type="button" className="enlace small" disabled={ocupado} onClick={() => editar(f)}>
@@ -783,9 +874,14 @@ function Documentos({ d, editable, ocupado, onDecidir }: PropsSeccion) {
           <h2>Documentos del contratista</h2>
           <p className="small muted">Cada documento se reconoce por lo que dice. Lo que el sistema no pudo confirmar lo decide usted.</p>
         </div>
-        <button type="button" className="chip" data-activo={soloPendientes} onClick={() => setSoloPendientes((v) => !v)}>
-          Solo por revisar ({d.documentos_pendientes ?? 0})
-        </button>
+        <div className="page-head-acciones">
+          <button type="button" className="chip" data-activo={soloPendientes} onClick={() => setSoloPendientes((v) => !v)}>
+            Solo por revisar ({d.documentos_pendientes ?? 0})
+          </button>
+          <a className="btn btn-secondary btn-sm" href={urlListaVerificacion(d.id)}>
+            <Icono nombre="descargar" tam={15} /> Lista de verificación
+          </a>
+        </div>
       </div>
       <div className="tabla-wrap">
         <table className="tabla ops-tabla">

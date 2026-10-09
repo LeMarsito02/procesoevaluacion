@@ -26,7 +26,7 @@ from motor.pliego.lectura import Pagina, Seccion, codigo_documento_tipo, norm, s
 
 # Sube cuando cambian los detectores: los análisis guardados con otra versión
 # se rehacen.
-VERSION_ANALISIS = 5
+VERSION_ANALISIS = 8  # 8: sin el índice escaneado; verificaciones por título y subsecciones; notas claras
 
 Ambito = Literal["juridica", "tecnica", "financiera", "puntaje", "garantias", "general"]
 
@@ -103,6 +103,9 @@ class SeccionAnalizada(BaseModel):
     pagina: int
     ambito: Ambito
     verificaciones: list[str] = Field(default_factory=list)
+    # Lo que se le dice a la persona sobre una sección sin verificación propia
+    # (o con una parcial): nunca un «sin verificación» a secas.
+    nota: str | None = None
 
 
 class Exigencia(BaseModel):
@@ -306,6 +309,59 @@ def _detectar_obligaciones(sec: Seccion, paginas: list[Pagina]) -> list[Exigenci
     return salida
 
 
+_ROMANOS = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
+
+
+def _romano(texto: str) -> int | None:
+    if not texto or any(c not in _ROMANOS for c in texto):
+        return None
+    total = 0
+    for i, c in enumerate(texto):
+        valor = _ROMANOS[c]
+        total += -valor if i + 1 < len(texto) and _ROMANOS[texto[i + 1]] > valor else valor
+    return total
+
+
+def _notas(secciones: list[SeccionAnalizada], textos: dict[str, str]) -> None:
+    """Qué hacer con las secciones jurídicas que no tienen una verificación
+    propia del motor, dicho claro y según lo que el pliego dice en ellas."""
+    for s in secciones:
+        if s.ambito != "juridica":
+            continue
+        titulo, texto = norm(s.titulo), norm(textos.get(s.numero, ""))
+        if "CONFLICTO DE INTERES" in titulo:
+            if "juridica.carta" not in s.verificaciones:
+                s.verificaciones.append("juridica.carta")
+            s.nota = ("La carta de presentación trae la declaración de no estar incurso en inhabilidad, incompatibilidad o "
+                      "conflicto de interés: el programa verifica que esté. Un parentesco o vínculo concreto lo revisa el comité.")
+        elif "MIPYME" in titulo and re.search(r"NO (?:ES SUSCEPTIBLE DE LIMITARSE|SE LIMITA|ESTA LIMITAD)", texto):
+            s.nota = "No exige documentos: según el pliego, el proceso no se limita a MiPyme."
+        elif "MIPYME" in titulo:
+            s.nota = "El proceso puede estar limitado a MiPyme: revise la sección «Para tener en cuenta» y el SECOP."
+        elif "PERSONAS NATURALES" in titulo and re.search(r"CEDULA|PASAPORTE|DOCUMENTO DE IDENTI", texto) and not s.verificaciones:
+            s.nota = ("Pide el documento de identidad: lo verifica «Documento de identidad del representante legal» si se "
+                      "aplica ese hallazgo (arriba).")
+        elif "EXTERIOR" in titulo or "EXTRANJER" in titulo:
+            s.nota = ("Solo aplica a documentos expedidos en el exterior (proponentes o integrantes extranjeros). Aún no hay "
+                      "verificación automática: si un proponente es extranjero, revise la apostilla o legalización.")
+
+
+def _heredar_de_subsecciones(secciones: list[SeccionAnalizada]) -> None:
+    """Un título que solo agrupa ("III REQUISITOS HABILITANTES", "3.3
+    EXISTENCIA…") muestra lo que se verifica en sus subsecciones: si no, se
+    leía «sin verificación automática» en algo que sí se verifica más abajo."""
+    for s in secciones:
+        if s.ambito != "juridica" or s.verificaciones:
+            continue
+        romano = _romano(s.numero)
+        prefijo = f"{romano}." if romano else f"{s.numero}."
+        hijas: list[str] = []
+        for h in secciones:
+            if h is not s and h.ambito == "juridica" and h.numero.startswith(prefijo):
+                hijas += [v for v in h.verificaciones if v not in hijas]
+        s.verificaciones = hijas
+
+
 def extraer(paginas: list[Pagina]) -> Extraccion:
     todas = secciones(paginas)
     analizadas: list[SeccionAnalizada] = []
@@ -328,13 +384,17 @@ def extraer(paginas: list[Pagina]) -> Extraccion:
         ambitos[sec.numero] = amb
         analizadas.append(SeccionAnalizada(
             numero=sec.numero, titulo=sec.titulo, pagina=sec.pagina, ambito=amb,
-            verificaciones=verificaciones_de(sec.texto) if amb == "juridica" else [],
+            # El título también dice qué se pide ("3.4 CERTIFICACIÓN DE PAGOS DE
+            # SEGURIDAD SOCIAL…" no tiene cuerpo propio: todo está en 3.4.1…).
+            verificaciones=verificaciones_de(f"{sec.titulo}\n{sec.texto}") if amb == "juridica" else [],
         ))
         if amb == "juridica":
             exigencias += _detectar_vigencias(sec, paginas) + _detectar_fijos(sec, paginas)
             obligaciones += _detectar_obligaciones(sec, paginas)
         formatos += _detectar_formatos(sec, paginas)
         # "11.2 FORMATOS" viene como subsección del capítulo de anexos.
+    _heredar_de_subsecciones(analizadas)
+    _notas(analizadas, {s.numero: s.texto for s in todas})
     return Extraccion(
         paginas=len(paginas), documento_tipo=codigo_documento_tipo(paginas),
         secciones=analizadas, exigencias=_sin_repetir(exigencias), formatos=formatos, obligaciones=obligaciones,

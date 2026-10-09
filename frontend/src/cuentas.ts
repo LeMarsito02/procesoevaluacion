@@ -54,6 +54,8 @@ export interface Entidad {
   microsoft_crear_usuarios: boolean
   /** Tiene la licencia del módulo de prestación de servicios (OPS). */
   modulo_ops: boolean
+  /** Cuándo se comprobó que su administrador de Microsoft 365 aprobó la lectura de su OneDrive. */
+  onedrive_autorizado_en: string | null
 }
 
 export interface EventoAuditoria {
@@ -139,6 +141,12 @@ export const configurarMicrosoft = (
   id: string,
   datos: { microsoft_directorio: string; exigir_microsoft: boolean; microsoft_crear_usuarios: boolean },
 ) => enviarJson<Entidad>(`/api/plataforma/entidades/${id}`, 'PATCH', datos)
+
+/** Enlace que se le envía al administrador de Microsoft 365 de la entidad para
+ * que apruebe, una vez, que MiEvaluador lea (solo lectura) las carpetas de ofertas. */
+export const enlaceAutorizacionOneDrive = (id: string) =>
+  pedirJson<{ url: string; redirect_uri: string; autorizado_en: string | null }>(`/api/plataforma/entidades/${id}/onedrive`)
+export const probarOneDrive = (id: string) => enviarJson<Entidad>(`/api/plataforma/entidades/${id}/onedrive/probar`, 'POST')
 
 // --- Soporte de LeMarTek ---
 export interface PersonaSoporte {

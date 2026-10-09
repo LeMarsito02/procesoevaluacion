@@ -29,6 +29,7 @@ import unicodedata
 from collections.abc import Callable
 
 import requests
+from motor.gpu_turno import turno_ia
 from pydantic import BaseModel, Field
 
 from motor.pliego.lectura import Pagina, Seccion
@@ -39,7 +40,7 @@ CONTEXTO = int(os.environ.get("PLIEGO_IA_CONTEXTO", "4096"))
 TROZO = int(os.environ.get("PLIEGO_IA_TROZO", "3500"))
 HABILITADO = os.environ.get("PLIEGO_IA_HABILITADO", "1") == "1"
 # Cambia cuando cambia la forma de leer: las lecturas viejas se repiten.
-VERSION = 3
+VERSION = 4  # 4: ya no descarta las vigencias que dicen «antes de la fecha de cierre»
 TIEMPO_MAXIMO = float(os.environ.get("PLIEGO_IA_TIMEOUT", "600"))
 
 INSTRUCCION = """Eres abogado experto en contratación estatal colombiana (Ley 80 de 1993, Decreto 1082 de 2015, documentos tipo de Colombia Compra Eficiente).
@@ -75,7 +76,7 @@ _NO_ES_REQUISITO_RE = re.compile(
     r"|ADJUDICATARIO DEBERA|PARA LA SUSCRIPCION DEL CONTRATO|PARA EL PERFECCIONAMIENTO|LA ENTIDAD (?:DEBE|DEBERA|VERIFICARA|CONSULTARA)"
     r"|EXPERIENCIA|CAPACIDAD FINANCIERA|CAPACIDAD ORGANIZACIONAL|CAPACIDAD RESIDUAL|INDICADOR|PUNTAJE|PUNTOS|FACTOR DE CALIDAD"
     r"|OFERTA ECONOMICA|\bAIU\b|ADMINISTRACION, IMPREVISTOS|MANIFESTA\w* (?:DE |SU )?INTERES|SMMLV|VALORES CONVERTIDOS"
-    r"|EMPRENDIMIENTO|EMPRESAS? DE MUJERES|DESEMPATE|ADJUDICATARIO|EL CONTRATISTA|CADA PAGO|FECHA (?:Y HORA )?DE CIERRE"
+    r"|EMPRENDIMIENTO|EMPRESAS? DE MUJERES|DESEMPATE|ADJUDICATARIO|EL CONTRATISTA|CADA PAGO|FECHA Y HORA DE CIERRE"
     # La limitación a MiPyme la detecta el análisis por reglas, con su cita.
     r"|MIPYME"
     # Formatos de puntaje o desempate (no habilitan ni inhabilitan) y los que
@@ -173,6 +174,11 @@ def trozos(secciones: list[Seccion], ambitos: dict[str, str], largo: int = TROZO
 
 
 def _preguntar(texto: str, modelo: str = MODELO) -> str:
+    with turno_ia():
+        return _preguntar_en_turno(texto, modelo)
+
+
+def _preguntar_en_turno(texto: str, modelo: str) -> str:
     r = requests.post(
         f"{URL}/api/chat",
         timeout=TIEMPO_MAXIMO,

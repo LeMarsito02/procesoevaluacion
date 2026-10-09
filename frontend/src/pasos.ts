@@ -1,5 +1,5 @@
 /** Pasos del asistente de proceso y de la evaluación (barra superior). */
-export type Paso = 'nuevo' | 'datos' | 'pliego' | 'evaluacion' | 'control' | 'informe'
+export type Paso = 'nuevo' | 'datos' | 'pliego' | 'evaluacion' | 'control' | 'informe' | 'traslado'
 
 export const PASOS_NUEVO: { id: Paso; nombre: string }[] = [
   { id: 'nuevo', nombre: 'Documento y ofertas' },
@@ -14,4 +14,6 @@ export const PASOS_EVALUACION: { id: Paso; nombre: string }[] = [
   // adopción humana de lo que el sistema verificó, no un detalle del informe.
   { id: 'control', nombre: 'Control de la verificación' },
   { id: 'informe', nombre: 'Informe' },
+  // Después de publicar el informe: término del traslado y observaciones (RF-16).
+  { id: 'traslado', nombre: 'Traslado' },
 ]

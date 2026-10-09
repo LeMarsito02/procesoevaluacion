@@ -1,4 +1,8 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { eliminarCarga, verCarga } from '../api'
+import { useDialogos } from '../dialogos'
+import { huellaRapida } from '../huella'
+import { mensajeDe } from '../http'
 import Icono from './Icono'
 
 interface Props {
@@ -9,6 +13,8 @@ interface Props {
   /** Ofertas en .zip subidas a mano, en vez de una carpeta compartida. */
   ofertas: File[]
   analizando: boolean
+  /** Avance de la subida mientras se envían los archivos. */
+  subida?: { cargado: number; total: number; inicio: number; ahora: number; reutilizadas?: string[] } | null
   error: string | null
   onCambiar: (campos: {
     codigoProceso?: string
@@ -21,9 +27,48 @@ interface Props {
   onCancelar: () => void
 }
 
+// Lo que acepta el servidor por carga (SUBIDA_MAXIMA_CARGA): hasta 10 GB por archivo, 20 GB en total.
+const LIMITE_SUBIDA = 20 * 1024 ** 3
+
+function tiempoLegible(segundos: number): string {
+  if (segundos < 60) return `${Math.max(1, Math.round(segundos))} s`
+  const m = Math.floor(segundos / 60)
+  return m < 60 ? `${m} min ${String(Math.round(segundos % 60)).padStart(2, '0')} s` : `${Math.floor(m / 60)} h ${m % 60} min`
+}
+
+/** Barra de la subida con lo enviado, la velocidad y el tiempo que falta. */
+function AvanceSubida({ cargado, total, inicio, ahora, reutilizadas = [] }: { cargado: number; total: number; inicio: number; ahora: number; reutilizadas?: string[] }) {
+  const pct = total > 0 ? Math.min(100, (cargado / total) * 100) : 0
+  const segundos = (ahora - inicio) / 1000
+  const velocidad = segundos > 0.5 ? cargado / segundos : 0
+  const falta = velocidad > 0 ? (total - cargado) / velocidad : null
+  const terminada = cargado >= total && total > 0
+  return (
+    <div className="subida" role="status" aria-live="polite">
+      <div className="leyendo-cabeza">
+        <strong>{terminada ? 'Archivos subidos: guardándolos en el servidor…' : `Subiendo los archivos · ${Math.floor(pct)} %`}</strong>
+        {!terminada && falta !== null && segundos > 1.5 && <span className="small muted">faltan unos {tiempoLegible(falta)}</span>}
+      </div>
+      <div className="barra-progreso" role="progressbar" aria-label="Avance de la subida" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.floor(pct)}>
+        <span style={{ width: `${pct}%` }} />
+      </div>
+      {reutilizadas.length > 0 && (
+        <span className="small" style={{ color: 'var(--ok)', fontWeight: 600 }}>
+          Ya estaba en el servidor, no se vuelve a subir: {reutilizadas.join(', ')}
+        </span>
+      )}
+      <span className="small muted">
+        {tamanoLegible(cargado)} de {tamanoLegible(total)}
+        {velocidad > 0 && !terminada ? ` · ${tamanoLegible(velocidad)}/s` : ''} · Si se corta o recarga la página, vuelva a elegir los mismos archivos: sigue desde donde iba.
+      </span>
+    </div>
+  )
+}
+
 function tamanoLegible(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes < 1024 ** 3) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }
 
 export default function PasoNuevo(props: Props) {
@@ -34,18 +79,82 @@ export default function PasoNuevo(props: Props) {
   // Las ofertas llegan de una de dos formas, y antes las dos casillas estaban
   // una debajo de la otra con una nota explicando cuál manda. Se elige primero
   // y solo se muestra la que corresponde.
-  const [origen, setOrigen] = useState<'archivos' | 'carpeta'>(carpetaDrive.trim() ? 'carpeta' : 'archivos')
+  const { confirmar } = useDialogos()
+  // Qué archivos elegidos ya están en el servidor (por su huella): esos no se suben.
+  const [enServidor, setEnServidor] = useState<Record<string, { huella: string; ofertas: number } | null>>({})
+  const [avisoCargas, setAvisoCargas] = useState<string | null>(null)
+  const clave = (f: File) => `${f.name}|${f.size}|${f.lastModified}`
+  useEffect(() => {
+    let vivo = true
+    for (const f of ofertas) {
+      const k = clave(f)
+      huellaRapida(f)
+        .then(async (huella) => {
+          const r = await verCarga(huella, f.size)
+          if (vivo) setEnServidor((e) => ({ ...e, [k]: r.guardada ? { huella, ofertas: r.ofertas } : null }))
+        })
+        .catch(() => vivo && setEnServidor((e) => ({ ...e, [k]: null })))
+    }
+    return () => {
+      vivo = false
+    }
+  }, [ofertas])
 
-  // Las ofertas pueden venir de una carpeta compartida o subidas a mano: hace
-  // falta una de las dos, no las dos.
-  const falta = [
-    !codigoProceso.trim() && 'el código del proceso',
-    !fechaCierre && 'la fecha de cierre',
-    !archivo && 'el PDF del Documento Base',
-    !(carpetaDrive.trim() || ofertas.length > 0) &&
-      (origen === 'archivos' ? 'los .zip de las ofertas' : 'el enlace de la carpeta con las ofertas'),
-  ].filter(Boolean) as string[]
-  const listo = falta.length === 0
+  async function eliminarDelServidor(huella: string, nombre: string) {
+    if (
+      !(await confirmar({
+        titulo: `¿Eliminar «${nombre}» del servidor?`,
+        mensaje: 'Se borran sus ofertas guardadas, salvo las que ya use algún proceso (esas se conservan). Si lo vuelve a elegir, se subirá completo.',
+        aceptar: 'Eliminar del servidor',
+        cancelar: 'Conservar',
+        peligro: true,
+      }))
+    )
+      return
+    try {
+      const r = await eliminarCarga(huella)
+      setAvisoCargas(`«${nombre}» se eliminó del servidor (${r.ofertas_borradas} ofertas borradas).`)
+      setEnServidor((e) => Object.fromEntries(Object.entries(e).map(([k, x]) => [k, x && x.huella === huella ? null : x])))
+    } catch (err) {
+      setAvisoCargas(mensajeDe(err, 'No se pudo eliminar.'))
+    }
+  }
+
+  // Lo habitual es una carpeta compartida; subirlas desde el equipo es la excepción.
+  const [origen, setOrigen] = useState<'archivos' | 'carpeta'>(ofertas.length > 0 ? 'archivos' : 'carpeta')
+  // Se marcan los campos que faltan solo después de intentar continuar.
+  const [intentado, setIntentado] = useState(false)
+
+  // Lo que hace falta para continuar, a la vista y con su campo: las ofertas
+  // pueden venir de una carpeta compartida o subidas a mano (una de las dos).
+  const requisitos = [
+    { id: 'codigo', texto: 'Código del proceso', hecho: !!codigoProceso.trim() },
+    { id: 'fecha', texto: 'Fecha de cierre', hecho: !!fechaCierre },
+    { id: 'documento', texto: 'PDF del Documento Base', hecho: !!archivo },
+    {
+      id: origen === 'archivos' ? 'ofertas' : 'drive',
+      texto: origen === 'archivos' ? 'Los .zip de las ofertas' : 'Enlace de la carpeta con las ofertas',
+      hecho: !!(carpetaDrive.trim() || ofertas.length > 0),
+    },
+  ]
+  // El servidor acepta hasta 2 GB por carga (LIMITE_OFERTAS_SUBIDAS): se avisa
+  // antes de subir, no después de una hora de subida.
+  const pesoOfertas = ofertas.reduce((suma, o) => suma + o.size, 0)
+  const demasiado = origen === 'archivos' && pesoOfertas > LIMITE_SUBIDA
+  const listo = requisitos.every((x) => x.hecho) && !demasiado
+  const falta = (id: string) => intentado && !requisitos.find((x) => x.id === id)?.hecho
+
+  function continuar() {
+    if (listo) {
+      props.onAnalizar()
+      return
+    }
+    setIntentado(true)
+    const primero = requisitos.find((x) => !x.hecho)
+    const campo = primero && document.getElementById(primero.id === 'documento' ? 'zona-documento' : primero.id)
+    campo?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    campo?.focus()
+  }
 
   function soltar(e: React.DragEvent) {
     e.preventDefault()
@@ -71,7 +180,7 @@ export default function PasoNuevo(props: Props) {
         className="card"
         onSubmit={(e) => {
           e.preventDefault()
-          if (listo) props.onAnalizar()
+          continuar()
         }}
       >
         <div className="grid-2" style={{ marginBottom: 20 }}>
@@ -81,10 +190,11 @@ export default function PasoNuevo(props: Props) {
               <Icono nombre="hash" tam={16} />
               <input
                 id="codigo"
+                aria-invalid={falta('codigo')}
                 className="input"
                 placeholder="ENT-CM-037-2026"
                 value={codigoProceso}
-                onChange={(e) => props.onCambiar({ codigoProceso: e.target.value })}
+                onChange={(e) => props.onCambiar({ codigoProceso: e.target.value.toUpperCase() })}
                 required
               />
             </div>
@@ -95,6 +205,7 @@ export default function PasoNuevo(props: Props) {
               <Icono nombre="calendario" tam={16} />
               <input
                 id="fecha"
+                aria-invalid={falta('fecha')}
                 className="input"
                 type="date"
                 value={fechaCierre}
@@ -109,7 +220,9 @@ export default function PasoNuevo(props: Props) {
         <div className="field" style={{ marginBottom: 20 }}>
           <label>Documento Base (PDF)</label>
           <div
+            id="zona-documento"
             className="dropzone"
+            data-falta={falta('documento')}
             role="button"
             tabIndex={0}
             data-over={arrastrando}
@@ -186,7 +299,7 @@ export default function PasoNuevo(props: Props) {
         <div className="field" hidden={origen !== 'archivos'}>
           <label htmlFor="ofertas">Los .zip de las ofertas</label>
           <div className="acciones">
-            <button type="button" className="btn btn-secondary" onClick={() => inputOfertas.current?.click()}>
+            <button type="button" id="ofertas" className="btn btn-secondary" data-falta={falta('ofertas')} onClick={() => inputOfertas.current?.click()}>
               <Icono nombre="carpeta" tam={15} /> Elegir los .zip de las ofertas
             </button>
             {ofertas.length > 0 && (
@@ -203,7 +316,7 @@ export default function PasoNuevo(props: Props) {
           </div>
           <input
             ref={inputOfertas}
-            id="ofertas"
+            aria-label="Elegir los .zip de las ofertas"
             type="file"
             multiple
             accept=".zip,.rar,.7z"
@@ -211,19 +324,55 @@ export default function PasoNuevo(props: Props) {
             onChange={(e) => props.onCambiar({ ofertas: Array.from(e.target.files ?? []) })}
           />
           {ofertas.length > 0 && (
-            <ul className="hint" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-              {ofertas.slice(0, 8).map((o) => (
-                <li key={o.name}>
-                  {o.name} · {tamanoLegible(o.size)}
-                </li>
-              ))}
-              {ofertas.length > 8 && <li>y {ofertas.length - 8} más…</li>}
+            <ul className="ofertas-elegidas">
+              {ofertas.slice(0, 12).map((o) => {
+                const estado = enServidor[clave(o)]
+                return (
+                  <li key={clave(o)}>
+                    <span>
+                      {o.name} · {tamanoLegible(o.size)}
+                    </span>
+                    {estado === undefined ? (
+                      <span className="small muted">revisando si ya está en el servidor…</span>
+                    ) : estado ? (
+                      <span className="oferta-en-servidor">
+                        <span>
+                          <Icono nombre="check" tam={13} grosor={3} /> Ya está en el servidor ({estado.ofertas} ofertas): no se volverá a subir
+                        </span>
+                        <button type="button" className="enlace" onClick={() => void eliminarDelServidor(estado.huella, o.name)}>
+                          Eliminar del servidor
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="small muted">se subirá</span>
+                    )}
+                  </li>
+                )
+              })}
+              {ofertas.length > 12 && <li className="small muted">y {ofertas.length - 12} más…</li>}
             </ul>
+          )}
+          {demasiado && (
+            <div className="callout callout-bad" role="alert" style={{ marginTop: 10 }}>
+              <Icono nombre="alerta" />
+              <div>
+                Las ofertas pesan {tamanoLegible(pesoOfertas)} y el máximo por carga es 20 GB. Para ofertas tan pesadas use{' '}
+                <button type="button" className="enlace" onClick={() => setOrigen('carpeta')}>
+                  una carpeta compartida
+                </button>
+                : el servidor las descarga directo, sin pasar por la red de este equipo, y es mucho más rápido.
+              </div>
+            </div>
+          )}
+          {avisoCargas && (
+            <div className="callout callout-ok" role="status" style={{ marginTop: 8 }}>
+              <div>{avisoCargas}</div>
+            </div>
           )}
           <span className="hint">
             Un .zip por proponente, nombrado “P1 Nombre del proponente” o “1. Nombre”. También sirve un solo .zip que
             traiga todas las ofertas dentro, cada una en su propio .zip o en su carpeta. Si un nombre no dice el
-            número, se numera por el orden en que lo elija y queda anotado. Súbalas por tandas si pesan mucho.
+            número, se numera por el orden en que lo elija y queda anotado. Hasta 10 GB por archivo; si las ofertas pesan mucho, una carpeta compartida es más rápida.
           </span>
         </div>
 
@@ -233,6 +382,7 @@ export default function PasoNuevo(props: Props) {
             <Icono nombre="carpeta" tam={16} />
             <input
               id="drive"
+              aria-invalid={falta('drive')}
               className="input"
               placeholder="https://drive.google.com/drive/folders/… o https://1drv.ms/f/…"
               value={carpetaDrive}
@@ -252,20 +402,30 @@ export default function PasoNuevo(props: Props) {
           </div>
         )}
 
-        <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {falta.length > 0 && !analizando && (
-            <span className="small muted" style={{ textAlign: 'right' }}>
-              Falta {falta.length > 1 ? `${falta.slice(0, -1).join(', ')} y ${falta[falta.length - 1]}` : falta[0]}.
-            </span>
-          )}
+        <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {analizando && props.subida && <AvanceSubida {...props.subida} />}
+          <div className="requisitos-continuar" data-listo={listo} aria-live="polite" hidden={analizando}>
+            <strong>{listo ? 'Todo listo para continuar' : 'Para continuar complete:'}</strong>
+            <ul>
+              {requisitos.map((x) => (
+                <li key={x.id} data-hecho={x.hecho} data-falta={intentado && !x.hecho}>
+                  <span className="requisito-marca" aria-hidden="true">
+                    {x.hecho ? <Icono nombre="check" tam={13} grosor={3} /> : null}
+                  </span>
+                  {x.texto}
+                  <span className="sr-only">{x.hecho ? ' (listo)' : ' (falta)'}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
             <button className="btn btn-ghost" type="button" onClick={props.onCancelar}>
               Cancelar
             </button>
-            <button className="btn btn-primary btn-lg" type="submit" disabled={!listo || analizando}>
+            <button className="btn btn-primary btn-lg" type="submit" disabled={analizando}>
             {analizando ? (
               <>
-                <span className="spinner" /> Leyendo documento y buscando ofertas…
+                <span className="spinner" /> {props.subida && props.subida.total > 0 ? `Subiendo · ${Math.floor(Math.min(100, (props.subida.cargado / props.subida.total) * 100))} %` : 'Subiendo los archivos…'}
               </>
             ) : (
               <>

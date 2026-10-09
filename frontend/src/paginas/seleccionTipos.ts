@@ -2,7 +2,8 @@
 export type Eleccion = '' | 'yo' | string
 
 /** dependencia: '' = la que sugiera el objeto del contrato; otro valor = id de la dependencia. */
-export type SeleccionTipos = Record<string, { incluir: boolean; eleccion: Eleccion; dependencia?: string }>
+/** comite: más integrantes del comité (ids), además del responsable, que lo coordina. */
+export type SeleccionTipos = Record<string, { incluir: boolean; eleccion: Eleccion; dependencia?: string; comite?: string[] }>
 
 export const SELECCION_INICIAL: SeleccionTipos = {
   juridica: { incluir: true, eleccion: '' },

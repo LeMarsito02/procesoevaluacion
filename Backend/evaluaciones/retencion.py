@@ -4,6 +4,11 @@
   y ya tienen su expediente permanente: se borran las copias completas de las
   ofertas descargadas de Drive y se marca el proceso. El expediente (documentos
   evaluados, certificados aportados, Excel, Word y registro) nunca se borra.
+- Prestaciones de servicios confirmadas hace más de RETENCION_DIAS: se borran
+  las copias de los documentos de la entidad y del contratista (cédula, examen
+  médico, bienes y rentas…) y el texto que se guardó de las certificaciones.
+  Quedan lo leído, lo decidido y quién confirmó; el certificado de idoneidad
+  se puede seguir descargando.
 - Cachés derivadas de los documentos (texto OCR, respuestas de la IA,
   resultados por requisito): se borran las que no se han usado en
   RETENCION_DIAS, sean del proceso que sean.
@@ -20,7 +25,7 @@ from django.conf import settings
 from django.db.models import Count, Max, Q
 from django.utils import timezone
 
-from evaluaciones.models import EstadoEvaluacion, EstadoExpediente, Proceso, Proponente
+from evaluaciones.models import ContratacionOps, EstadoEvaluacion, EstadoExpediente, EstadoOps, Proceso, Proponente
 
 log = logging.getLogger("mievaluador.retencion")
 
@@ -34,6 +39,8 @@ class Informe:
     procesos: list[str] = field(default_factory=list)
     archivos_ofertas: int = 0
     archivos_cache: int = 0
+    contrataciones: int = 0
+    archivos_ops: int = 0
     bytes_liberados: int = 0
 
 
@@ -90,6 +97,8 @@ def aplicar(dias: int | None = None, simulacro: bool = False) -> Informe:
             proceso.save(update_fields=["documentos_eliminados_en"])
         informe.procesos.append(proceso.codigo)
 
+    _retener_ops(dias, informe, simulacro)
+
     limite = time.time() - dias * 86400
     for nombre in CACHES_DERIVADAS:
         carpeta = CACHE / nombre
@@ -109,11 +118,34 @@ def aplicar(dias: int | None = None, simulacro: bool = False) -> Informe:
                 informe.archivos_ofertas += 1
 
     log.info(
-        "Retención%s: %d procesos, %d archivos de ofertas, %d de caché, %.1f MB",
+        "Retención%s: %d procesos, %d prestaciones de servicios, %d archivos de ofertas, %d de caché, %.1f MB",
         " (simulacro)" if simulacro else "",
         len(informe.procesos),
+        informe.contrataciones,
         informe.archivos_ofertas,
         informe.archivos_cache,
         informe.bytes_liberados / 1e6,
     )
     return informe
+
+
+def _retener_ops(dias: int, informe: Informe, simulacro: bool) -> None:
+    limite = timezone.now() - timedelta(days=dias)
+    vencidas = ContratacionOps.objects.filter(
+        estado=EstadoOps.CONFIRMADA, confirmada_en__lte=limite, documentos_eliminados_en__isnull=True
+    )
+    for contratacion in vencidas:
+        for doc in contratacion.documentos.all():
+            informe.archivos_ops += 1
+            informe.bytes_liberados += doc.tamano
+            if not simulacro:
+                doc.archivo.delete(save=False)
+                doc.delete()
+        if not simulacro:
+            # El texto de las certificaciones solo servía para comparar obligaciones.
+            resultado = contratacion.resultado or {}
+            for periodo in resultado.get("periodos") or []:
+                periodo["texto"] = ""
+            contratacion.resultado, contratacion.documentos_eliminados_en = resultado, timezone.now()
+            contratacion.save(update_fields=["resultado", "documentos_eliminados_en"])
+        informe.contrataciones += 1

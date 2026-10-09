@@ -20,7 +20,7 @@ from uuid import UUID
 from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.http import FileResponse, HttpRequest
-from ninja import File, Form, NinjaAPI, Router
+from ninja import File, Form, NinjaAPI, Router, Schema
 from ninja.errors import HttpError, Throttled
 from ninja.files import UploadedFile
 from ninja.throttling import AnonRateThrottle, AuthRateThrottle
@@ -29,7 +29,7 @@ from api.auth import router as auth_router
 from api.configuracion import router as configuracion_router
 from api.equipo import equipo, plataforma
 from api.evaluaciones import router as evaluaciones_router
-from cuentas.seguridad import sesion_activa, ve_datos_de
+from cuentas.seguridad import auditar, sesion_activa, ve_datos_de
 from evaluaciones import pliego as pliego_servicio
 from evaluaciones.permisos import puede_crear_procesos
 from motor.esquemas.proceso import (
@@ -156,7 +156,7 @@ async def analizar_documento_base(
         raise HttpError(400, "El archivo PDF está vacío.")
 
     try:
-        proceso = await asyncio.to_thread(build_proceso, codigo_proceso.strip(), fecha_cierre, pdf_bytes)
+        proceso = await asyncio.to_thread(build_proceso, codigo_proceso.strip().upper(), fecha_cierre, pdf_bytes)
     except Exception as exc:  # noqa: BLE001
         raise HttpError(422, f"No se pudo analizar el Documento Base: {exc}") from exc
 
@@ -178,7 +178,8 @@ async def analizar_documento_base(
         no_reconocidos = resultado_local.no_reconocidos
     elif carpeta_drive and carpeta_drive.strip():
         try:
-            resultado = await asyncio.to_thread(list_proponentes, carpeta_drive.strip())
+            directorio = await asyncio.to_thread(_directorio_microsoft, request.auth, entidad_id)
+            resultado = await asyncio.to_thread(list_proponentes, carpeta_drive.strip(), directorio)
             proponentes = resultado.proponentes
             no_reconocidos = resultado.no_reconocidos
         except (DriveConfigError, DriveAccessError, ValueError) as exc:
@@ -192,6 +193,222 @@ async def analizar_documento_base(
         pliego=pliego,
         pliego_error=pliego_error,
     )
+
+
+def _directorio_microsoft(usuario, entidad_id: UUID | None) -> str | None:
+    """Directorio de Microsoft de la entidad en la que se crea el proceso: solo
+    se leen enlaces de OneDrive de Microsoft 365 de ese directorio."""
+    from cuentas.models import Entidad
+
+    destino = usuario.entidad_id if not usuario.es_superadmin else entidad_id
+    entidad = Entidad.objects.filter(pk=destino).first() if destino else None
+    return entidad.microsoft_directorio or None if entidad else None
+
+
+# --- Proceso a medio crear: la lectura va en segundo plano y queda guardada ---
+def _preparacion_out(p) -> dict:
+    return {
+        "id": str(p.id), "codigo": p.codigo, "fecha_cierre": p.fecha_cierre.isoformat(), "carpeta_drive": p.carpeta_drive,
+        "nombre_archivo": p.nombre_archivo, "ofertas_subidas": p.ofertas_subidas is not None,
+        "estado": p.estado, "etapa": p.etapa, "progreso": p.progreso, "error": p.error,
+        "creada_en": p.creada_en.isoformat(), "iniciada_en": p.iniciada_en.isoformat() if p.iniciada_en else None,
+        "entidad_id": str(p.entidad_id), "resultado": p.resultado,
+    }
+
+
+def _preparacion_propia(request: HttpRequest, preparacion_id: UUID):
+    from django.shortcuts import get_object_or_404
+
+    from evaluaciones.models import PreparacionProceso
+
+    return get_object_or_404(PreparacionProceso, pk=preparacion_id, creada_por=request.auth)
+
+
+# --- Subida de ofertas por pedazos (hasta 10 GB por archivo, se retoma si se corta) ---
+class SubidaIn(Schema):
+    nombre: str
+    tamano: int
+    # Huella rápida del archivo (frontend/src/huella.ts): si ya se subió y repartió, no se sube otra vez.
+    huella: str | None = None
+
+
+def _subida_out(x) -> dict:
+    return {"id": x.id, "nombre": x.nombre, "tamano": x.tamano, "recibido": x.recibido, "completa": x.completa,
+            "reutilizada": x.reuso is not None, "ofertas": len(x.reuso["partes"]) if x.reuso else None}
+
+
+def _subida_o_error(funcion, *args):
+    from evaluaciones import subidas as subidas_servicio
+
+    try:
+        return funcion(*args)
+    except subidas_servicio.ErrorSubida as exc:
+        raise HttpError(exc.codigo, str(exc)) from exc
+
+
+@procesos.post("/subidas")
+def crear_subida(request: HttpRequest, datos: SubidaIn) -> dict:
+    from evaluaciones import subidas as subidas_servicio
+
+    if not puede_crear_procesos(request.auth):
+        raise HttpError(403, "Su rol no permite crear procesos.")
+    return _subida_out(_subida_o_error(subidas_servicio.crear, request.auth.id, datos.nombre, datos.tamano, datos.huella,
+                                       _entidad_de_carga(request)))
+
+
+def _entidad_de_carga(request: HttpRequest, entidad_id: UUID | None = None):
+    usuario = request.auth
+    return usuario.entidad_id if not usuario.es_superadmin else (entidad_id if ve_datos_de(usuario, entidad_id) else None)
+
+
+@procesos.get("/cargas")
+def listar_cargas(request: HttpRequest, entidad_id: UUID | None = None) -> list[dict]:
+    """Las ofertas subidas desde el equipo que quedaron guardadas en el servidor
+    (se reutilizan si se elige el mismo archivo)."""
+    from evaluaciones import subidas as subidas_servicio
+
+    entidad = _entidad_de_carga(request, entidad_id)
+    return subidas_servicio.cargas_de(entidad) if entidad else []
+
+
+@procesos.get("/cargas/{huella}")
+def ver_carga(request: HttpRequest, huella: str, tamano: int, entidad_id: UUID | None = None) -> dict:
+    """Si un archivo (por su huella) ya está guardado en el servidor."""
+    from evaluaciones import subidas as subidas_servicio
+
+    entidad = _entidad_de_carga(request, entidad_id)
+    carga = subidas_servicio.buscar_carga(huella, tamano, entidad) if entidad else None
+    return {"guardada": carga is not None, "ofertas": len(carga["partes"]) if carga else 0}
+
+
+@procesos.delete("/cargas/{huella}")
+def eliminar_carga(request: HttpRequest, huella: str, entidad_id: UUID | None = None) -> dict:
+    from evaluaciones import subidas as subidas_servicio
+
+    if not puede_crear_procesos(request.auth):
+        raise HttpError(403, "Su rol no permite crear procesos.")
+    entidad = _entidad_de_carga(request, entidad_id)
+    borradas = _subida_o_error(subidas_servicio.eliminar_carga, huella, entidad)
+    auditar(request, "ofertas.carga_eliminada", entidad_id=entidad, huella=huella[:16], ofertas_borradas=borradas)
+    return {"ofertas_borradas": borradas}
+
+
+@procesos.get("/subidas/{subida_id}")
+def ver_subida(request: HttpRequest, subida_id: str) -> dict:
+    from evaluaciones import subidas as subidas_servicio
+
+    return _subida_out(_subida_o_error(subidas_servicio.ver, subida_id, request.auth.id))
+
+
+@procesos.put("/subidas/{subida_id}")
+def agregar_a_subida(request: HttpRequest, subida_id: str, desde: int) -> dict:
+    """Un pedazo del archivo, en el cuerpo de la petición (application/octet-stream)."""
+    from evaluaciones import subidas as subidas_servicio
+
+    return _subida_out(_subida_o_error(subidas_servicio.agregar, subida_id, request.auth.id, desde, request.body))
+
+
+@procesos.delete("/subidas/{subida_id}", response={204: None})
+def eliminar_subida(request: HttpRequest, subida_id: str):
+    from evaluaciones import subidas as subidas_servicio
+
+    _subida_o_error(subidas_servicio.ver, subida_id, request.auth.id)
+    subidas_servicio.borrar(subida_id)
+    return 204, None
+
+
+@procesos.post("/preparaciones", throttle=[AuthRateThrottle(settings.LIMITES_API["pesado"])])
+def crear_preparacion(
+    request: HttpRequest,
+    codigo_proceso: Form[str],
+    fecha_cierre: Form[date],
+    archivo: File[UploadedFile],
+    carpeta_drive: Form[str | None] = None,
+    ofertas: File[list[UploadedFile] | None] = None,
+    entidad_id: Form[UUID | None] = None,
+    # Ofertas ya subidas por pedazos (/procesos/subidas): las reparte el trabajador.
+    subidas: Form[list[str] | None] = None,
+) -> dict:
+    """Guarda lo que subió la persona y pone la lectura en la fila. Responde
+    al instante; el avance se consulta con GET."""
+    from evaluaciones.models import PreparacionProceso
+    from motor.integrations import ofertas_locales
+
+    usuario = request.auth
+    if not puede_crear_procesos(usuario):
+        raise HttpError(403, "Su rol no permite crear procesos.")
+    entidad = usuario.entidad_id if not usuario.es_superadmin else (entidad_id if ve_datos_de(usuario, entidad_id) else None)
+    if entidad is None:
+        raise HttpError(400, "Elija la entidad en la que se crea el proceso.")
+    nombre = (archivo.name or "").lower()
+    if archivo.content_type not in ("application/pdf", "application/octet-stream") and not nombre.endswith(".pdf"):
+        raise HttpError(400, "El Documento Base debe ser un PDF.")
+    pdf = archivo.read()
+    if not pdf:
+        raise HttpError(400, "El PDF del Documento Base está vacío.")
+    guardadas = None
+    if subidas:
+        # Ofertas subidas por pedazos: completas y de esta persona. Las reparte
+        # el trabajador desde el disco (pueden ser 10 GB por archivo).
+        from evaluaciones import subidas as subidas_servicio
+
+        listas = [_subida_o_error(subidas_servicio.ver, x, usuario.id) for x in subidas]
+        incompletas = [x.nombre for x in listas if not x.completa]
+        if incompletas:
+            raise HttpError(409, f"Aún no termina de subir: {', '.join(incompletas)}.")
+        if sum(x.tamano for x in listas) > settings.SUBIDA_MAXIMA_CARGA:
+            raise HttpError(413, f"Las ofertas pasan de {settings.SUBIDA_MAXIMA_CARGA / 1024**3:.0f} GB en total: súbalas en dos procesos o use una carpeta compartida.")
+        guardadas = {"pendientes": [{"id": x.id, "nombre": x.nombre, "tamano": x.tamano, "reuso": x.reuso} for x in listas]}
+    elif ofertas:
+        contenidos = [(o.name or "sin nombre", o.read()) for o in ofertas]
+        total = sum(len(c) for _, c in contenidos)
+        if total > LIMITE_OFERTAS_SUBIDAS:
+            raise HttpError(413, f"Las ofertas pesan {total / 1e6:.0f} MB en total; el máximo por carga es "
+                                 f"{LIMITE_OFERTAS_SUBIDAS / 1e6:.0f} MB. Súbelas en varias veces.")
+        r = ofertas_locales.desde_archivos(contenidos)
+        guardadas = {"proponentes": [x.model_dump(mode="json") for x in r.proponentes], "no_reconocidos": r.no_reconocidos}
+    from django.core.files.base import ContentFile
+
+    p = PreparacionProceso(
+        entidad_id=entidad, creada_por=usuario, codigo=codigo_proceso.strip().upper(), fecha_cierre=fecha_cierre,
+        carpeta_drive=(carpeta_drive or "").strip(), nombre_archivo=archivo.name or "documento_base.pdf", ofertas_subidas=guardadas,
+        etapa="En fila para leer",
+    )
+    p.archivo.save("documento_base.pdf", ContentFile(pdf), save=False)
+    p.save()
+    return _preparacion_out(p)
+
+
+@procesos.get("/preparaciones")
+def listar_preparaciones(request: HttpRequest) -> list[dict]:
+    """Los procesos que la persona dejó a medio crear (los más recientes primero)."""
+    from evaluaciones.models import PreparacionProceso
+
+    return [{k: v for k, v in _preparacion_out(p).items() if k != "resultado"}
+            for p in PreparacionProceso.objects.filter(creada_por=request.auth)[:10]]
+
+
+@procesos.get("/preparaciones/{preparacion_id}")
+def ver_preparacion(request: HttpRequest, preparacion_id: UUID) -> dict:
+    return _preparacion_out(_preparacion_propia(request, preparacion_id))
+
+
+@procesos.post("/preparaciones/{preparacion_id}/reintentar")
+def reintentar_preparacion(request: HttpRequest, preparacion_id: UUID) -> dict:
+    from evaluaciones.models import PreparacionProceso
+
+    p = _preparacion_propia(request, preparacion_id)
+    p.estado, p.error, p.progreso, p.etapa, p.resultado = PreparacionProceso.PENDIENTE, "", 0, "En fila para leer", None
+    p.save(update_fields=["estado", "error", "progreso", "etapa", "resultado"])
+    return _preparacion_out(p)
+
+
+@procesos.delete("/preparaciones/{preparacion_id}", response={204: None})
+def eliminar_preparacion(request: HttpRequest, preparacion_id: UUID):
+    from evaluaciones import preparacion
+
+    preparacion.borrar(_preparacion_propia(request, preparacion_id))
+    return 204, None
 
 
 @procesos.post("/pliego", throttle=[AuthRateThrottle(settings.LIMITES_API["pesado"])])
@@ -235,27 +452,7 @@ async def _analizar_pliego(
     return payload, None
 
 
-def _payload_pliego(analisis, reutilizado: bool) -> dict:
-    """Lo que ve la persona al crear el proceso: hallazgos (con la lectura con
-    IA si ya terminó), el mapa de requisitos del pliego y el avance de la IA."""
-    from motor import criterios
-
-    secciones = [
-        {**s, "verificaciones": [criterios.VERIFICACIONES[v].titulo for v in s["verificaciones"] if v in criterios.VERIFICACIONES]}
-        for s in analisis.extraccion["secciones"]
-        if s["ambito"] == "juridica"
-    ]
-    return {
-        "id": str(analisis.id),
-        "nombre_archivo": analisis.nombre_archivo,
-        "paginas": analisis.paginas,
-        "documento_tipo": analisis.documento_tipo,
-        "reutilizado": reutilizado,
-        "hallazgos": [h.model_dump(mode="json") for h in pliego_servicio.hallazgos(analisis)],
-        "secciones": secciones,
-        "lectura_ia": pliego_servicio.estado_lectura(analisis),
-        "requisitos": pliego_servicio.mapa(analisis),
-    }
+_payload_pliego = pliego_servicio.payload_creacion
 
 
 @procesos.get("/pliego/{analisis_id}/archivo")
@@ -399,3 +596,12 @@ api.add_router("/asistente", asistente_router)
 from api.ops import router as ops_router  # noqa: E402
 
 api.add_router("/ops", ops_router)
+from api.tramite import router as tramite_router  # noqa: E402
+
+api.add_router("/tramite", tramite_router)
+from api.economica import router as economica_router  # noqa: E402
+
+api.add_router("/economica", economica_router)
+from api.coincidencias import router as coincidencias_router  # noqa: E402
+
+api.add_router("/coincidencias", coincidencias_router)

@@ -217,6 +217,22 @@ def _nit_texto(empresa: Empresa) -> str:
     return f" (NIT {empresa.nit})" if empresa.nit else ""
 
 
+_TIPO_SOCIETARIO_RE = re.compile(r"(?:SAS|SA|LTDA|LIMITADA|ESP|BIC|EU|SCA|SENC|ZOMAC)+$")
+
+
+def _clave_empresa(nombre: str) -> str:
+    """El nombre de una empresa sin puntos, espacios ni tipo societario, para
+    comparar siglas: «KONKON S.A.S.» y «Konkon SAS» son la misma."""
+    letras = re.sub(r"[^A-Z0-9Ñ]", "", _norm(nombre))
+    return _TIPO_SOCIETARIO_RE.sub("", letras) or letras
+
+
+def _misma_sigla(nombre: str, sigla: str | None) -> bool:
+    clave = _clave_empresa(nombre)
+    # Con menos de tres letras una coincidencia no prueba nada.
+    return bool(sigla) and len(clave) >= 3 and clave == _clave_empresa(sigla)
+
+
 def _con_integrantes_juridicos(empresas: list[Empresa], integrantes: list[Integrante]) -> list[Empresa]:
     """Los integrantes jurídicos del Formato 2 que no aportaron certificado de
     existencia también deben tener sus antecedentes: si solo se miraran los
@@ -234,7 +250,17 @@ def _con_integrantes_juridicos(empresas: list[Empresa], integrantes: list[Integr
     sueltos = []
     for integrante in juridicos:
         nit = _solo_digitos(integrante.identificacion or "")[:9]
-        if any((nit and e.nit == nit) or _nombres_coinciden(integrante.nombre, e.razon_social or "") for e in todas):
+        # Por NIT, por razón social o por la sigla del certificado: el Formato 2
+        # suele nombrar a la empresa por su sigla («KONKON S.A.S») y el
+        # certificado, por la razón social («KONSTRUCCIONES Y KONSULTORIAS S.A.S»).
+        if any(
+            (nit and e.nit == nit)
+            or _nombres_coinciden(integrante.nombre, e.razon_social or "")
+            # «ICSSA SAS» y «ICSSA S.A.S» son la misma: se comparan sin puntos ni tipo societario.
+            or _misma_sigla(integrante.nombre, e.razon_social)
+            or _misma_sigla(integrante.nombre, e.sigla)
+            for e in todas
+        ):
             continue
         sueltos.append((integrante, nit))
     sin_nombre = [i for i, e in enumerate(todas) if not e.razon_social]
@@ -243,7 +269,7 @@ def _con_integrantes_juridicos(empresas: list[Empresa], integrantes: list[Integr
     # nombre de otra empresa confundiría al evaluador: se dejan como están.
     if len(sueltos) == 1 and len(sin_nombre) == 1:
         integrante, _ = sueltos.pop()
-        todas[sin_nombre[0]] = Empresa(integrante.nombre, todas[sin_nombre[0]].nit)
+        todas[sin_nombre[0]] = Empresa(integrante.nombre, todas[sin_nombre[0]].nit, todas[sin_nombre[0]].sigla)
     elif sin_nombre and len(todas) >= len(juridicos):
         return todas  # hay tantos certificados como integrantes jurídicos: no falta nadie
     return todas + [Empresa(integrante.nombre, nit) for integrante, nit in sueltos]
@@ -271,7 +297,8 @@ MESES_SUBSANACION = 3
 def problema_de_vigencia(config: AntecedenteConfig, texto_norm: str, fecha_cierre: date | None) -> str | None:
     """Por qué el certificado no sirve por su fecha (None si sirve o no se
     revisa). El REDAM debe estar vigente al cierre; los demás, expedidos a
-    lo sumo `antecedentes_meses` antes del cierre (la entidad además puede
+    lo sumo `antecedentes_disciplinarios_fiscales_meses` (Procuraduría y Contraloría)
+    o `antecedentes_meses` (Policía y RNMC) antes del cierre (la entidad además puede
     consultarlos en línea)."""
     from motor.evaluacion.personalizado import fecha_expedicion
 
@@ -291,7 +318,10 @@ def problema_de_vigencia(config: AntecedenteConfig, texto_norm: str, fecha_cierr
         if hasta < fecha_cierre:
             return f"venció el {hasta.strftime('%d/%m/%Y')}, antes del cierre ({fecha_cierre.strftime('%d/%m/%Y')})"
         return None
-    meses = criterios.valor("antecedentes_meses")
+    # Procuraduría y Contraloría valen tres meses; Policía y RNMC, lo que diga el criterio.
+    meses = criterios.valor("antecedentes_disciplinarios_fiscales_meses"
+                            if config.requisito in (CONFIG_CONTRALORIA.requisito, CONFIG_PROCURADURIA.requisito)
+                            else "antecedentes_meses")
     if not meses:
         return None
     if expedicion is None:

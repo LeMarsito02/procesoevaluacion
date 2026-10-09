@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import itertools
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -200,6 +201,18 @@ def _texto(page, escaneado: bool) -> str:
     return texto_pagina_tabla(page)
 
 
+def _lecturas(page, escaneado: bool) -> list[str]:
+    """Las lecturas de la página, en orden: la de siempre y, si la página es
+    escaneada, también la de página completa, por si la primera se saltó
+    renglones (ver `texto_pagina_corrida`). La segunda solo se pide si hace falta."""
+    from motor.procesamiento.pdf_utils import texto_pagina_corrida
+
+    primera = _texto(page, escaneado)
+    if not escaneado:
+        return [primera]
+    return [primera, texto_pagina_corrida(page)]
+
+
 # El encabezado y el pie del documento tipo, que se repiten en cada página.
 _ENCABEZADO_RE = re.compile(
     r"DOCUMENTOS?\s+(?:BASE|TIPO)|VERSION\s*\d|CCE-EICP|PAGINA\s*\d|CODIGO\s+CCE")
@@ -231,7 +244,8 @@ def _orden_de_busqueda(pdf: pdfplumber.PDF, titulo: str, escaneado: bool):
     # El índice está en las primeras páginas y ya se le hizo OCR al detectar el
     # tipo de documento, así que mirarlo es gratis.
     for page in pdf.pages[:_PAGINAS_DE_MUESTRA]:
-        texto = _strip_accents(_texto(page, True).upper())
+        # Las dos lecturas: la de bloques a veces se salta la línea del índice.
+        texto = _strip_accents("\n".join(_lecturas(page, True)).upper())
         for m in re.finditer(re.escape(titulo) + r"[^\n\d]{0,90}?(\d{1,3})", texto):
             pagina = int(m.group(1))
             if 1 <= pagina <= total:
@@ -748,10 +762,19 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
     # the document, which has no characteristics table. Check every page
     # that mentions the heading and keep the first one that actually yields
     # a "Vigencia" and/or "Valor Asegurado" row.
-    for i, page in enumerate(_orden_de_busqueda(pdf, "GARANTIA DE SERIEDAD DE LA OFERTA", escaneado)):
-        text = _texto(page, escaneado)
-        if "GARANTIA DE SERIEDAD DE LA OFERTA" not in _strip_accents(text.upper()):
-            continue
+    # Dos pasadas: primero las páginas donde la lectura de siempre ya muestra el
+    # título (está en caché: es barato); solo si ninguna sirve, se lee cada
+    # página también completa, por si la lectura por bloques se comió el título.
+    orden = _orden_de_busqueda(pdf, "GARANTIA DE SERIEDAD DE LA OFERTA", escaneado)
+    con_titulo = [p for p in orden if "GARANTIA DE SERIEDAD DE LA OFERTA" in _strip_accents(_texto(p, escaneado).upper())]
+    candidatas = con_titulo
+    if escaneado:
+        from motor.procesamiento.pdf_utils import texto_pagina_corrida
+
+        resto = (p for p in orden if p not in con_titulo
+                 and "GARANTIA DE SERIEDAD DE LA OFERTA" in _strip_accents(texto_pagina_corrida(p).upper()))
+        candidatas = itertools.chain(con_titulo, resto)
+    for page in candidatas:
 
         window_pages = [page]
         siguiente = page.page_number  # page_number es 1-based: esto es el índice del siguiente
@@ -787,11 +810,14 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
                 # La tabla de características puede ser una imagen, o venir vacía
                 # aunque exista: sus filas también se leen del texto, que las trae
                 # con la etiqueta delante.
-                de_texto = _garantia_del_texto(_texto(p, escaneado))
-                if vigencia_meses is None and de_texto[0] is not None:
-                    vigencia_meses, raw_vigencia = de_texto[0], de_texto[1]
-                if porcentaje is None and de_texto[2] is not None:
-                    porcentaje, raw_valor = de_texto[2], de_texto[3]
+                for lectura in _lecturas(p, escaneado):
+                    de_texto = _garantia_del_texto(lectura)
+                    if vigencia_meses is None and de_texto[0] is not None:
+                        vigencia_meses, raw_vigencia = de_texto[0], de_texto[1]
+                    if porcentaje is None and de_texto[2] is not None:
+                        porcentaje, raw_valor = de_texto[2], de_texto[3]
+                    if vigencia_meses is not None and porcentaje is not None:
+                        break
             if vigencia_meses is None and escaneado:
                 vigencia_meses, dice = _vigencia_a_fondo(p)
                 if vigencia_meses is not None:
@@ -814,8 +840,8 @@ def _find_garantia_seriedad(pdf: pdfplumber.PDF, escaneado: bool = False) -> Par
             # busca en las dos páginas de la ventana, exigiendo que sea del
             # presupuesto y no "del valor del contrato", que es lo que dicen las
             # garantías del contrato.
-            for p in window_pages:
-                porcentaje, raw = _porcentaje_del_presupuesto(_texto(p, escaneado))
+            for lectura in (x for p in window_pages for x in _lecturas(p, escaneado)):
+                porcentaje, raw = _porcentaje_del_presupuesto(lectura)
                 if porcentaje is not None:
                     raw_valor = raw_valor or raw
                     break

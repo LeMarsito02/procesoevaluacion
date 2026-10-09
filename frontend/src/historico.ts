@@ -132,12 +132,14 @@ export function guardarArchivo(b: Blob, nombre: string) {
 }
 
 /** Fuente oficial donde se consulta cada antecedente (se reconoce por las pistas del requisito). */
+// Direcciones comprobadas el 9/10/2026: la de la Procuraduría (CertWEB) daba 404 y las de
+// RNMC (srvpsi) y REDAM (redam.sisben) ya no existían. Si una deja de abrir, se cambia aquí.
 export const FUENTES: { clave: string; nombre: string; url: string; pide: string }[] = [
   { clave: 'policia', nombre: 'Policía Nacional · antecedentes judiciales', url: 'https://antecedentes.policia.gov.co:7005/WebJudicial/', pide: 'cédula y fecha de expedición' },
-  { clave: 'rnmc', nombre: 'Policía Nacional · medidas correctivas (RNMC)', url: 'https://srvpsi.policia.gov.co/PSC/frm_cnp_consulta.aspx', pide: 'cédula y fecha de expedición' },
-  { clave: 'procuradur', nombre: 'Procuraduría General de la Nación', url: 'https://www.procuraduria.gov.co/CertWEB/Certificado.aspx?tpo=1', pide: 'cédula o NIT' },
+  { clave: 'rnmc', nombre: 'Policía Nacional · medidas correctivas (RNMC)', url: 'https://srvcnpc.policia.gov.co/PSC/frm_cnp_consulta.aspx', pide: 'cédula y fecha de expedición' },
+  { clave: 'procuradur', nombre: 'Procuraduría General de la Nación', url: 'https://www.procuraduria.gov.co/Pages/Generacion-de-antecedentes.aspx', pide: 'cédula o NIT' },
   { clave: 'contralor', nombre: 'Contraloría General de la República', url: 'https://www.contraloria.gov.co/control-fiscal/responsabilidad-fiscal/certificado-de-antecedentes-fiscales', pide: 'cédula o NIT' },
-  { clave: 'redam', nombre: 'REDAM · deudores alimentarios morosos', url: 'https://redam.sisben.gov.co/', pide: 'cédula' },
+  { clave: 'redam', nombre: 'REDAM · deudores alimentarios morosos', url: 'https://www.redam.gov.co/', pide: 'cédula' },
   {
     clave: 'copnia',
     nombre: 'COPNIA · vigencia y antecedentes disciplinarios',

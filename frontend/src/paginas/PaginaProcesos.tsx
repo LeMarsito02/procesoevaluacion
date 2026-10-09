@@ -101,7 +101,7 @@ export default function PaginaProcesos() {
         </div>
       ) : (
         <div className="tabla-wrap">
-          <table className="tabla">
+          <table className="tabla tabla-apilable">
             <thead>
               <tr>
                 <th>Proceso</th>
@@ -114,13 +114,13 @@ export default function PaginaProcesos() {
             <tbody>
               {visibles.map((p) => (
                 <tr key={p.id}>
-                  <td style={{ maxWidth: 300 }}>
+                  <td data-label="Proceso" style={{ maxWidth: 300 }}>
                     <strong>{p.codigo}</strong>
                     <div className="small muted recortar">{p.objeto}</div>
                   </td>
-                  <td className="small nowrap">{textoCierre(p.fecha_cierre)}</td>
-                  <td className="num">{p.proponentes}</td>
-                  <td>
+                  <td data-label="Cierre" className="small nowrap">{textoCierre(p.fecha_cierre)}</td>
+                  <td data-label="Proponentes" className="num">{p.proponentes}</td>
+                  <td data-label="Evaluaciones">
                     <div className="lista-ev">
                       {p.evaluaciones.map((e) => {
                         const pct = porcentajeAvance(e)
@@ -138,7 +138,7 @@ export default function PaginaProcesos() {
                       })}
                     </div>
                   </td>
-                  <td className="small muted nowrap">
+                  <td data-label="Creado" className="small muted nowrap">
                     {formatFechaCorta(p.creado_en.slice(0, 10))}
                     <div>{p.creado_por.nombre_completo}</div>
                     {p.puede_eliminar && (

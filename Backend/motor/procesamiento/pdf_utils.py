@@ -5,7 +5,6 @@ import io
 import os
 import re
 import shutil
-import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -39,7 +38,9 @@ def _reparar_pdf(contenido: bytes) -> bytes | None:
 # resultado se guarda en disco por (contenido del PDF, página), porque el OCR
 # cuesta segundos por página y cada requisito vuelve a leer los mismos
 # documentos.
-OCR_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "ocr"
+from motor.procesamiento import ocr_motor  # noqa: E402
+
+OCR_CACHE_DIR = ocr_motor.directorio_cache(Path(__file__).resolve().parent.parent.parent / "cache" / "ocr")
 OCR_RESOLUCION = 250
 OCR_MINIMO_CARACTERES = 40
 OCR_TIMEOUT_SEGUNDOS = 90
@@ -64,23 +65,16 @@ def _ocr_pagina(page, reforzado: bool = False, filas: bool = False) -> str:
     """`filas`: tesseract en modo bloque uniforme (--psm 6), que conserva cada
     fila de una tabla (etiqueta y cifras juntas) en vez de leer columna por
     columna; lo usan los estados financieros escaneados."""
+    # El reforzado es OTRO tratamiento de la imagen (300 ppp, blanco y negro)
+    # también con PaddleOCR: hay reglas que exigen que dos lecturas coincidan
+    # (la fecha de expedición de la cédula) y dos lecturas de la misma imagen
+    # coincidirían siempre, sin probar nada.
     if reforzado:
         imagen = page.to_image(resolution=OCR_REFORZADO_RESOLUCION).original.convert("L")
         imagen = imagen.point(lambda v: 255 if v > OCR_REFORZADO_UMBRAL else 0)
     else:
-        imagen = page.to_image(resolution=OCR_RESOLUCION).original
-    buffer = io.BytesIO()
-    imagen.save(buffer, format="PNG")
-    del imagen
-    entorno = {**os.environ, "OMP_THREAD_LIMIT": "2"}
-    salida = subprocess.run(
-        ["tesseract", "stdin", "stdout", "-l", "spa", *(["--psm", "6"] if reforzado or filas else [])],
-        input=buffer.getvalue(),
-        capture_output=True,
-        timeout=OCR_TIMEOUT_SEGUNDOS,
-        env=entorno,
-    )
-    return salida.stdout.decode("utf-8", errors="ignore")
+        imagen = page.to_image(resolution=ocr_motor.RESOLUCION_PADDLE if ocr_motor.usa_paddle() else OCR_RESOLUCION).original
+    return ocr_motor.leer(imagen, psm="6" if reforzado or filas else None, timeout=OCR_TIMEOUT_SEGUNDOS)
 
 
 def texto_pagina_tabla(page) -> str:
@@ -95,7 +89,7 @@ def texto_pagina_tabla(page) -> str:
     cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}_filas.txt" if huella else None
     try:
         if cache is not None and cache.exists():
-            return cache.read_text(encoding="utf-8") or crudo
+            return ocr_motor.corregir_digitos(cache.read_text(encoding="utf-8")) or crudo
         ocr = _ocr_pagina(page, filas=True)
         if cache is not None:
             OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -143,7 +137,7 @@ def paginas_ocr_reforzado(
                     continue
                 archivo_cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}_reforzado.txt"
                 if archivo_cache.exists():
-                    partes.append((page.page_number, archivo_cache.read_text(encoding="utf-8")))
+                    partes.append((page.page_number, ocr_motor.corregir_digitos(archivo_cache.read_text(encoding="utf-8"))))
                     continue
                 texto = _ocr_pagina(page, reforzado=True)
                 OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -186,6 +180,31 @@ def _huella(contenido: bytes) -> str:
     return huella
 
 
+def texto_pagina_corrida(page) -> str:
+    """Texto de una página escaneada leído como página completa (el modo por
+    defecto de tesseract), no por bloques. El modo por bloques (--psm 6)
+    conserva las filas de una tabla, pero en páginas con texto y tabla
+    mezclados a veces se salta renglones enteros: en el pliego ICCU-LP-014-2026
+    perdió el título «7.1 Garantía de seriedad de la oferta» y las filas de
+    vigencia y valor asegurado, que en página completa salen bien. Se usa como
+    segunda lectura cuando la primera no trae el dato. Cacheado aparte."""
+    crudo = page.extract_text() or ""
+    if len(crudo.strip()) >= 300 or not page.images or not OCR_HABILITADO:
+        return texto_pagina(page)
+    huella = getattr(page.pdf, "_huella_contenido", None)
+    cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}_corrido.txt" if huella else None
+    try:
+        if cache is not None and cache.exists():
+            return ocr_motor.corregir_digitos(cache.read_text(encoding="utf-8")) or crudo
+        ocr = _ocr_pagina(page)
+        if cache is not None:
+            OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache.write_text(ocr, encoding="utf-8")
+        return ocr if len(ocr.strip()) > len(crudo.strip()) else crudo
+    except Exception:  # noqa: BLE001
+        return crudo
+
+
 def texto_pagina(page) -> str:
     """Texto de una página de pdfplumber; si la página es escaneada (sin
     texto útil pero con imagen), se obtiene con OCR (tesseract), cacheado."""
@@ -214,14 +233,53 @@ _CID_RE = re.compile(r"\(cid:\d+\)")
 OCR_MINIMO_CIDS = 30
 
 
+# Página escaneada con encabezado y pie de texto: el cuerpo son imágenes que
+# cubren al menos esta fracción de la hoja, o muchas imágenes (hay escáneres
+# que guardan cada renglón como una tira aparte). Pasó con el pliego
+# ICCU-LP-014-2026: cada página traía ~160 letras de texto propio (el
+# encabezado del documento tipo) y 75 tiras que cubrían el 39 % de la hoja; se
+# tomaba por digital y el cuerpo nunca se leía.
+OCR_FRACCION_IMAGEN_ESCANEO = 0.25
+OCR_IMAGENES_ESCANEO = 20
+
+
+def _fraccion_con_imagen(page) -> float:
+    area = float(page.width * page.height) or 1.0
+    cubierta = 0.0
+    for im in page.images:
+        try:
+            cubierta += max(0.0, float(im["x1"]) - float(im["x0"])) * max(0.0, float(im["bottom"]) - float(im["top"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return min(1.0, cubierta / area)
+
+
+# Página sin texto y sin imágenes para pdfminer que, dibujada, sí tiene algo: el
+# contenido va en una anotación o en un objeto que pdfminer no recorre (primera
+# hoja del Formato 6 de P-12 en ICCU-LP-014-2026). Se dibuja en pequeño y se
+# mira si hay tinta: una hoja de verdad en blanco no gasta OCR.
+TINTA_RESOLUCION = 40
+TINTA_MINIMA = 0.003
+
+
+def _tiene_tinta(page) -> bool:
+    try:
+        histograma = page.to_image(resolution=TINTA_RESOLUCION).original.convert("L").histogram()
+    except Exception:  # noqa: BLE001
+        return False
+    total = sum(histograma) or 1
+    return sum(histograma[:160]) / total >= TINTA_MINIMA
+
+
 def _necesita_ocr(page, texto: str) -> bool:
     if len(_CID_RE.findall(texto)) >= OCR_MINIMO_CIDS:
         return True
     util = len(_ESTAMPA_FIRMA_RE.sub("", texto).strip())
     if util < OCR_MINIMO_CARACTERES:
-        return bool(page.images)
+        return bool(page.images) or _tiene_tinta(page)
     if util < OCR_MAXIMO_CARACTERES_TEXTO_DIBUJADO:
-        return len(page.curves) >= OCR_MINIMO_CURVAS_TEXTO_DIBUJADO
+        return len(page.curves) >= OCR_MINIMO_CURVAS_TEXTO_DIBUJADO or (
+            bool(page.images) and (len(page.images) >= OCR_IMAGENES_ESCANEO or _fraccion_con_imagen(page) >= OCR_FRACCION_IMAGEN_ESCANEO))
     return False
 
 
@@ -235,7 +293,8 @@ def _texto_pagina_sin_memoria(page) -> str:
         huella = getattr(page.pdf, "_huella_contenido", None)
         archivo_cache = OCR_CACHE_DIR / f"{huella}_{page.page_number}.txt" if huella else None
         if archivo_cache is not None and archivo_cache.exists():
-            return archivo_cache.read_text(encoding="utf-8")
+            # Corregido al leer: una regla nueva de letras por cifras cubre también lo ya guardado.
+            return ocr_motor.corregir_digitos(archivo_cache.read_text(encoding="utf-8"))
         texto_ocr = _ocr_pagina(page)
         if archivo_cache is not None:
             OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -295,6 +354,19 @@ def abrir_pdf(contenido: bytes) -> Iterator[pdfplumber.PDF]:
         if reparado is None:
             raise
         pdf = pdfplumber.open(io.BytesIO(reparado))
+    if not pdf.pages:
+        # Abre sin error pero «sin páginas»: pdfminer no entiende su árbol de
+        # páginas. Pasó con el Formato 2 de P-22 y la cédula de P-83 en
+        # ICCU-LP-014-2026: los documentos estaban y se daban por no aportados.
+        reparado = _reparar_pdf(contenido)
+        if reparado is not None:
+            try:
+                otro = pdfplumber.open(io.BytesIO(reparado))
+            except PdfminerException:
+                otro = None
+            if otro is not None and otro.pages:
+                pdf.close()
+                pdf = otro
     pdf._huella_contenido = _huella(contenido)
     with pdf:
         yield pdf

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import re
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -131,22 +132,138 @@ def proponente_motor(p: Proponente, evaluacion: Evaluacion | None = None) -> Pro
     )
 
 
-def _documentos_aportados(p: Proponente, evaluacion: Evaluacion) -> list[tuple[str, bytes]]:
+def aportados_con_nombre(evaluacion: Evaluacion, p: Proponente) -> list[tuple[str, "DocumentoAportado"]]:
+    """Cada certificado aportado con el nombre con que el motor y la pantalla lo
+    conocen («Req 16 - Policía Nacional de Colombia.pdf»). Dos certificados del
+    mismo requisito suelen llamarse igual (la página oficial les pone el mismo
+    nombre a todos): el segundo se numera. Antes compartían nombre y uno tapaba
+    al otro: a una de las dos personas le seguía «faltando» su certificado."""
     from evaluaciones.models import DocumentoAportado
 
+    vistos: dict[str, int] = {}
+    salida = []
+    for d in DocumentoAportado.objects.filter(evaluacion=evaluacion, proponente=p).order_by("subido_en", "id"):
+        nombre = f"Req {d.requisito} - {d.nombre_original}"
+        vistos[nombre] = vistos.get(nombre, 0) + 1
+        if vistos[nombre] > 1:
+            base, punto, extension = nombre.rpartition(".")
+            nombre = f"{base} ({vistos[nombre]}).{extension}" if punto else f"{nombre} ({vistos[nombre]})"
+        salida.append((nombre, d))
+    return salida
+
+
+def _documentos_aportados(p: Proponente, evaluacion: Evaluacion) -> list[tuple[str, bytes]]:
     documentos = []
-    for d in DocumentoAportado.objects.filter(evaluacion=evaluacion, proponente=p):
+    for nombre, d in aportados_con_nombre(evaluacion, p):
         try:
             with d.archivo.open("rb") as archivo:
-                documentos.append((f"Req {d.requisito} - {d.nombre_original}", archivo.read()))
+                documentos.append((nombre, archivo.read()))
         except Exception:  # noqa: BLE001
             log.exception("No se pudo leer el documento aportado %s", d.pk)
     return documentos
 
 
+MAX_SOPORTES = 12
+
+
+def soportes_nombrados(texto: str, archivos: list[str], ya: list[str]) -> list[str]:
+    """Los documentos de la oferta que el motivo nombra (por su ruta o por su
+    nombre de archivo), en el orden en que aparecen, después de los que el
+    motor ya dio como soporte. Para que cada documento que se menciona se pueda
+    abrir desde el requisito sin ir a buscarlo en la carpeta."""
+    hallados: list[tuple[int, str]] = []
+    for archivo in archivos:
+        if archivo in ya:
+            continue
+        corto = archivo.rsplit("/", 1)[-1]
+        donde = texto.find(archivo)
+        if donde < 0 and len(corto) >= 8:
+            donde = texto.find(corto)
+        if donde >= 0:
+            hallados.append((donde, archivo))
+    return (ya + [a for _, a in sorted(hallados)])[:MAX_SOPORTES]
+
+
+def completar_soportes(proponente: Proponente, resultados: list[ResultadoRequisito]) -> None:
+    """Añade a cada resultado los documentos que su motivo nombra. Si la oferta
+    no se puede abrir, los resultados quedan como estaban."""
+    if not any(r.motivo for r in resultados):
+        return
+    try:
+        from motor.integrations.drive import _cache_paths, download_file_bytes
+        from motor.procesamiento.zip_utils import extraer_pdfs
+
+        # Solo con la oferta que ya está en este equipo (la evaluación la acaba de
+        # usar): enlazar soportes no justifica salir a descargarla otra vez.
+        identificador = proponente.drive_file_id or ""
+        if not identificador.startswith("local:") and not _cache_paths(identificador)[0].exists():
+            return
+        archivos = sorted(extraer_pdfs(download_file_bytes(proponente.drive_file_id)).keys())
+    except Exception:  # noqa: BLE001
+        log.exception("No se pudieron listar los documentos de %s para enlazar los soportes", proponente.hoja)
+        return
+    for r in resultados:
+        if r.motivo:
+            ya = [a for a in r.archivos_soporte if a != r.archivo_evaluado]
+            r.archivos_soporte = [a for a in soportes_nombrados(r.motivo, archivos, ya) if a != r.archivo_evaluado]
+
+
+# En el servidor web solo se evalúa un proponente a la vez: el motor guarda los
+# criterios de la entidad en variables del módulo.
+_CANDADO_REEVALUAR = threading.Lock()
+
+
+def requisitos_del_certificado(requisito: int) -> set[int]:
+    """Los requisitos que usan el certificado aportado a `requisito`: el COPNIA
+    sirve al aval y a los antecedentes del ingeniero, y los cinco antecedentes
+    suelen venir en un mismo PDF."""
+    from motor.evaluacion.formato1 import _REQUISITOS_QUE_COMPARTEN_APORTADO
+
+    return set(_REQUISITOS_QUE_COMPARTEN_APORTADO.get(requisito, {requisito}))
+
+
+def reevaluar_requisitos(evaluacion: Evaluacion, proponente: Proponente, numeros: set[int]) -> int:
+    """Vuelve a evaluar SOLO esos requisitos de un proponente y guarda el
+    resultado, sin pasar por la fila. Es lo que pasa al adjuntar, consultar o
+    quitar un certificado: el requisito se actualiza enseguida. Antes se
+    reevaluaba la oferta entera (carta, RUP, lectura de cédulas con IA…) y el
+    «cumple» tardaba muchos minutos en aparecer."""
+    from motor.esquemas.proceso import ProcesoDocumentoBase
+    from motor.evaluacion.todos import evaluar_proponente_todos
+
+    definicion = definicion_de(evaluacion)
+    parte = definicion.model_copy(update={"requisitos": [r for r in definicion.requisitos if r.numero in numeros]})
+    if not parte.requisitos:
+        return 0
+    documento = ProcesoDocumentoBase.model_validate(evaluacion.proceso.documento_base)
+    documento.criterios = parte.model_dump(mode="json")
+    with _CANDADO_REEVALUAR:
+        resultados = evaluar_proponente_todos(proponente_motor(proponente, evaluacion), documento)
+    # Si esta vez no se pudo evaluar (la oferta no abrió, falló la lectura), se
+    # conserva el resultado que ya había: un error pasajero no borra lo evaluado.
+    ya_sanos = set(
+        Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente, datos__error=None).values_list("requisito", flat=True)
+    )
+    resultados = [r for r in resultados if not (r.error and r.requisito in ya_sanos)]
+    if not resultados:
+        return 0
+    guardar_resultados(evaluacion, proponente, resultados)
+    actualizar_estado(evaluacion)
+    return len(resultados)
+
+
 def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultados: list[ResultadoRequisito]) -> None:
     from evaluaciones.cumplimiento import trazabilidad_resultado
 
+    completar_soportes(proponente, resultados)
+    # Lo que una persona asoció a mano a un requisito no se pierde al reevaluar.
+    anteriores = dict(Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente).values_list("requisito", "datos"))
+    for r in resultados:
+        previo = anteriores.get(r.requisito) or {}
+        if previo.get("archivos_asociados") and not r.archivos_asociados:
+            r.archivos_asociados = list(previo["archivos_asociados"])
+        if previo.get("archivos_excluidos") and not r.archivos_excluidos:
+            r.archivos_excluidos = list(previo["archivos_excluidos"])
     with transaction.atomic():
         for r in resultados:
             datos = r.model_dump(mode="json")
@@ -162,6 +279,16 @@ def guardar_resultados(evaluacion: Evaluacion, proponente: Proponente, resultado
                     "trazabilidad": trazabilidad_resultado(datos),
                 },
             )
+        # Resultados de requisitos que ya no hacen parte de la evaluación (el
+        # pliego no los pide): no se dejan colgando de una evaluación anterior.
+        if evaluacion.tipo == "tecnica":
+            fuera = requisitos_fuera_del_pliego("tecnica", evaluacion.proceso.parametros_tecnicos or {})
+        elif evaluacion.tipo == "financiera":
+            fuera = requisitos_fuera_del_pliego("financiera", evaluacion.proceso.parametros_financieros or {})
+        else:
+            fuera = set()
+        if fuera:
+            Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente, requisito__in=fuera).delete()
         sincronizar_personas(evaluacion, proponente)
     try:
         # Por qué esta oferta no se pudo decidir sola. Es para mejorar el
@@ -588,6 +715,30 @@ def plantilla_activa(entidad_id: UUID, tipo: str) -> PlantillaEvaluacion | None:
     return PlantillaEvaluacion.objects.filter(entidad_id=entidad_id, tipo=tipo, activa=True).first()
 
 
+def requisitos_fuera_del_pliego(tipo: str, parametros: dict) -> set[int]:
+    """Números de los requisitos técnicos o financieros que el pliego de este
+    proceso no incluye, según lo que se leyó de él. Vacío si el pliego no se
+    pudo leer: ante la duda, el requisito se queda."""
+    fuera: set[int] = set()
+    if tipo == "tecnica":
+        from motor.tecnica.evaluador import FACTORES, PERSONAL_CLAVE
+
+        puntajes = parametros.get("puntajes") or {}
+        # None = el pliego no nombra el factor o dice NO APLICA (con el pliego leído).
+        fuera |= {numero for clave, numero in FACTORES.items() if clave in puntajes and puntajes[clave] is None}
+        if "personal_clave" in puntajes and puntajes["personal_clave"] is None:
+            fuera.add(PERSONAL_CLAVE)
+    elif tipo == "financiera":
+        from motor.financiera.evaluador import NUMEROS
+
+        if parametros.get("patrimonio_aplica") is False:
+            fuera.add(NUMEROS["patrimonio"])
+        if parametros.get("residual_aplica") is False:
+            # Uno por lote: 221, 222, …
+            fuera |= set(range(NUMEROS["residual"], NUMEROS["residual"] + 9))
+    return fuera
+
+
 def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
     """La evaluación de la entidad (su plantilla) con los ajustes del pliego de
     este proceso que una persona aceptó."""
@@ -609,6 +760,14 @@ def definicion_de(evaluacion: Evaluacion) -> criterios.DefinicionEvaluacion:
     if evaluacion.tipo == "financiera":
         parametros = parametros_financieros_de(evaluacion.proceso) or {}
         definicion = criterios.expandir_lotes(definicion, [l["nombre"] for l in parametros.get("lotes", [])])
+    if evaluacion.tipo in ("tecnica", "financiera") and evaluacion.estado != EstadoEvaluacion.APROBADA:
+        # Igual que la jurídica: la lista de requisitos sale del pliego. Lo que
+        # este pliego no pide no es un requisito del proceso (ni siquiera «N.A.»).
+        # Una evaluación aprobada es el registro oficial y no cambia.
+        fuera = requisitos_fuera_del_pliego(evaluacion.tipo, parametros)
+        if fuera:
+            definicion = definicion.model_copy(
+                update={"requisitos": [r for r in definicion.requisitos if r.numero not in fuera]})
     # El salario mínimo del año del cierre, salvo que la entidad fije otro.
     if not definicion.parametros.get("smmlv"):
         salario = salario_minimo(evaluacion.proceso.fecha_cierre.year)
@@ -1013,6 +1172,50 @@ def resultados_con_decisiones(evaluacion: Evaluacion) -> list[ResultadoRequisito
     ]
 
 
+def _notas_de_decision(evaluacion: Evaluacion) -> dict[tuple[str, int], str]:
+    """Quién decidió cada requisito y cuándo, para la observación del informe.
+    La nota de un «no cumple» ya es el motivo del resultado: no se repite."""
+    notas: dict[tuple[str, int], str] = {}
+    for rev in Revision.objects.filter(evaluacion=evaluacion).select_related("usuario", "proponente"):
+        veredicto = "CUMPLE" if rev.cumple else "NO CUMPLE"
+        nota = f" — {rev.nota.strip()}" if rev.cumple and (rev.nota or "").strip() else ""
+        quien = rev.usuario.nombre_completo or rev.usuario.email
+        notas[(rev.proponente.hoja, rev.requisito)] = (
+            f"[Revisado por {quien} el {timezone.localtime(rev.fecha):%d/%m/%Y}: {veredicto}{nota}]"
+        )
+    return notas
+
+
+def _integrantes_para_informe(evaluacion: Evaluacion) -> dict[str, list[tuple[str, str]]]:
+    """Integrantes de cada proponente plural con su NIT (con dígito de
+    verificación) y su participación, que sale del Formato 2 leído por la técnica."""
+    import unicodedata
+
+    from evaluaciones.models import PersonaVerificada
+    from motor.excel.filler import nit_con_dv
+
+    def clave(nombre: str) -> str:
+        plano = "".join(c for c in unicodedata.normalize("NFD", nombre.upper()) if c.isalnum())
+        return re.sub(r"(SAS|LTDA|SA|ESP)$", "", plano)
+
+    partes: dict[tuple[str, str], float] = {}
+    tecnica = Evaluacion.objects.filter(proceso_id=evaluacion.proceso_id, tipo="tecnica").first()
+    if tecnica is not None:
+        for hoja, datos in Resultado.objects.filter(evaluacion=tecnica).values_list("proponente__hoja", "datos"):
+            for i in ((datos or {}).get("detalle") or {}).get("integrantes") or []:
+                if i.get("nombre") and i.get("participacion") is not None:
+                    partes[(hoja, clave(i["nombre"]))] = float(i["participacion"])
+    salida: dict[str, list[tuple[str, str]]] = {}
+    personas = PersonaVerificada.objects.filter(evaluacion=evaluacion, rol="integrante").select_related("proponente").order_by("creada_en")
+    for persona in personas:
+        documento = f"NIT {nit_con_dv(persona.documento)}" if persona.tipo == "juridica" else f"C.C. {persona.documento}"
+        parte = partes.get((persona.proponente.hoja, clave(persona.nombre)))
+        salida.setdefault(persona.proponente.hoja, []).append(
+            (f"{persona.nombre} — {documento}", f"{parte * 100:g} %" if parte is not None else "")
+        )
+    return salida
+
+
 def generar_informe_excel(evaluacion: Evaluacion) -> tuple[bytes, str]:
     from motor.esquemas.proceso import ProcesoDocumentoBase
     from motor.excel.filler import fill_template
@@ -1037,6 +1240,11 @@ def generar_informe_excel(evaluacion: Evaluacion) -> tuple[bytes, str]:
         resultados_con_decisiones(evaluacion),
         mapeo=mapeo,
         tipo=evaluacion.get_tipo_display(),
+        # Sin filas fijadas por la entidad, la hoja se diligencia con los requisitos
+        # de ESTE proceso, en su orden (título, CUMPLE, documento y observación).
+        requisitos=None if filas else [(r.numero, r.titulo) for r in definicion_de(evaluacion).requisitos],
+        observaciones=_notas_de_decision(evaluacion),
+        integrantes=_integrantes_para_informe(evaluacion),
     )
     borrador = "" if evaluacion.estado == EstadoEvaluacion.APROBADA else " (BORRADOR)"
     # Mismo nombre que usa la plantilla oficial ("INFORME EVALUACION JURIDICA …"), sin tildes.

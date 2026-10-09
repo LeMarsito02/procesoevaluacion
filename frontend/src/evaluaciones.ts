@@ -152,6 +152,10 @@ export const crearProceso = (datos: {
   tipos: string[]
   entidad_id?: string | null
   dependencias?: Record<string, string | undefined>
+  /** La preparación (proceso a medio crear) de la que sale: el servidor la borra al crearlo. */
+  preparacion_id?: string | null
+  /** Más integrantes del comité por tipo, además del responsable. */
+  comites?: Record<string, string[]>
   responsable_id?: string | null
   sin_responsable?: boolean
   responsables?: Record<string, string | null>
@@ -189,11 +193,48 @@ async function descargarBlob(ruta: string): Promise<{ blob: Blob; nombre: string
   return { blob: await res.blob(), nombre }
 }
 
-export const descargarInforme = (id: string) => descargarBlob(`/api/evaluaciones/${id}/informe`)
+/** El informe en Excel (la plantilla oficial) o en PDF, y los resultados en CSV (RF-22). */
+export type FormatoInforme = 'xlsx' | 'pdf' | 'csv'
+export const descargarInforme = (id: string, formato: FormatoInforme = 'xlsx') =>
+  descargarBlob(formato === 'csv' ? `/api/evaluaciones/${id}/resultados.csv` : `/api/evaluaciones/${id}/informe?formato=${formato}`)
 /** Las tres áreas del proceso en un archivo, con puntaje y orden de elegibilidad. */
-export const descargarConsolidado = (id: string) => descargarBlob(`/api/evaluaciones/${id}/consolidado`)
+export const descargarConsolidado = (id: string, formato: 'xlsx' | 'pdf' = 'xlsx') => descargarBlob(`/api/evaluaciones/${id}/consolidado?formato=${formato}`)
 export const verDocumentoProponente = (id: string, proponenteId: string, archivo: string) =>
   descargarBlob(`/api/evaluaciones/${id}/proponentes/${proponenteId}/documento?archivo=${encodeURIComponent(archivo)}`).then((r) => r.blob)
+
+/** Una página del documento como imagen (para los equipos que no muestran un PDF
+ * dentro de la página). Devuelve la imagen y cuántas páginas tiene el documento. */
+export async function paginaDelDocumento(
+  id: string, proponenteId: string, archivo: string, n: number, resolucion: number,
+): Promise<{ blob: Blob; paginas: number }> {
+  const res = await pedir(
+    `/api/evaluaciones/${id}/proponentes/${proponenteId}/documento/pagina?archivo=${encodeURIComponent(archivo)}&n=${n}&resolucion=${resolucion}`,
+  )
+  if (!res.ok) throw new ErrorApi(res.status, await detalleError(res))
+  return { blob: await res.blob(), paginas: Number(res.headers.get('X-Paginas') ?? '1') || 1 }
+}
+
+/** Dónde aparece un texto dentro de un documento de la oferta (con el texto
+ * leído por OCR: el buscador del navegador no ve nada en un escaneo). */
+export const buscarEnDocumento = (id: string, proponenteId: string, archivo: string, q: string) =>
+  pedirJson<{ pagina: number; fragmento: string }[]>(
+    `/api/evaluaciones/${id}/proponentes/${proponenteId}/documento/buscar?archivo=${encodeURIComponent(archivo)}&q=${encodeURIComponent(q)}`,
+  )
+
+/** Sube la Matriz 2 del proceso (PDF, Word o Excel): de ella salen los umbrales
+ * de los indicadores financieros. Los proponentes ya evaluados vuelven a la fila. */
+export async function subirMatriz2(id: string, archivo: File): Promise<{ avisos: string[]; reevaluados: number }> {
+  const cuerpo = new FormData()
+  cuerpo.append('archivo', archivo)
+  const res = await pedir(`/api/evaluaciones/${id}/matriz2`, { method: 'POST', body: cuerpo })
+  if (!res.ok) throw new ErrorApi(res.status, await detalleError(res))
+  return res.json()
+}
+
+/** Deja `archivos` como los documentos asociados a mano a un requisito (reemplaza
+ * la lista anterior). Devuelve el resultado ya actualizado. */
+export const asociarDocumentos = (id: string, proponenteId: string, requisito: number, archivos: string[], excluidos: string[]) =>
+  enviarJson<ResultadoRequisito>(`/api/evaluaciones/${id}/proponentes/${proponenteId}/requisitos/${requisito}/documentos`, 'PUT', { archivos, excluidos })
 
 /** Todos los documentos de la oferta del proponente, para mirar la carpeta y
  * buscar a mano el que el motor no encontró. */
@@ -428,9 +469,9 @@ export const actualizarPlantillaEvaluacion = (id: string) =>
 /** La explicación en palabras llanas de un resultado, redactada por el modelo
  * local. `texto` viene en null cuando el modelo no está disponible o no se pudo
  * verificar lo que respondió: la pantalla se queda con el detalle técnico. */
-export const explicacionDelResultado = (evaluacionId: string, proponenteId: string, requisito: number) =>
+export const explicacionDelResultado = (evaluacionId: string, proponenteId: string, requisito: number, soloGuardada = false) =>
   pedirJson<{ texto: string | null }>(
-    `/api/evaluaciones/${evaluacionId}/proponentes/${proponenteId}/explicacion/${requisito}`,
+    `/api/evaluaciones/${evaluacionId}/proponentes/${proponenteId}/explicacion/${requisito}${soloGuardada ? '?guardada=true' : ''}`,
   )
 
 

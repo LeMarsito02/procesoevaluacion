@@ -60,6 +60,12 @@ def leer_paginas(contenido: bytes) -> list[Pagina]:
 
 # Líneas del índice: "CAPÍTULO III. REQUISITOS HABILITANTES ........ 25".
 _LINEA_INDICE_RE = re.compile(r"\.{4,}\s*\d+\s*$")
+# En un pliego escaneado el OCR pierde los puntos guía y deja el título con el
+# número de página pegado: "3.2 CAPACIDAD JURÍDICA 18", "1.15 CAUSALES DE
+# RECHAZO .9". Una página con varias así es el índice (ICCU-LP-014-2026).
+_LINEA_INDICE_OCR_RE = re.compile(
+    r"^(?:CAP[IÍ]TULO\s+[IVXLC]+|[IVXLC]+|\d{1,2}(?:\.\d{1,2}){0,3})\.?\s+[A-ZÁÉÍÓÚÑÜ][^a-záéíóúñ]*?\s\.?\s*\d{1,3}\s*$"
+)
 _NUMERO_PAGINA_RE = re.compile(r"^\s*(?:P[AÁ]GINA\s+)?(\d{1,4})(?:\s+DE\s+(\d{1,4}))?\s*$", re.IGNORECASE)
 
 
@@ -104,8 +110,9 @@ def secciones(paginas: list[Pagina]) -> list[Seccion]:
             l for l in propias
             if l and re.sub(rf"\b{p.numero}\b", "#", l) not in repetidas and not _es_numero_de_pagina(l, len(paginas))
         ]
-        # Página de índice: la mayoría de sus títulos terminan en "..... 25".
-        if sum(bool(_LINEA_INDICE_RE.search(l)) for l in propias) >= 5:
+        # Página de índice: la mayoría de sus títulos terminan en "..... 25" (o,
+        # escaneada, en " 25" o " .25" sin los puntos).
+        if sum(bool(_LINEA_INDICE_RE.search(l) or _LINEA_INDICE_OCR_RE.match(l)) for l in propias) >= 5:
             continue
         lineas.extend((p.numero, l) for l in propias if not _LINEA_INDICE_RE.search(l))
 

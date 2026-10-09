@@ -121,3 +121,55 @@ export function mensajeDe(err: unknown, porDefecto = MENSAJE_SISTEMA): string {
   if (err instanceof ErrorApi) return err.message
   return porDefecto
 }
+
+/** Avance de una subida: bytes enviados y total. */
+export interface AvanceSubida {
+  cargado: number
+  total: number
+}
+
+/** POST de un formulario con archivos informando el avance de la subida
+ * (fetch no lo informa). Mismo CSRF, credenciales y mensajes de error que `pedir`. */
+export async function subirConAvance<T>(
+  ruta: string,
+  formulario: FormData | Blob,
+  onAvance: (a: AvanceSubida) => void,
+  reintento = true,
+  metodo: 'POST' | 'PUT' = 'POST',
+): Promise<T> {
+  const token = csrf ?? (await obtenerCsrf())
+  const { status, tipo, texto } = await new Promise<{ status: number; tipo: string; texto: string }>((resolver, rechazar) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open(metodo, `${API_URL}${ruta}`)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('X-CSRFToken', token)
+    if (formulario instanceof Blob) xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onAvance({ cargado: e.loaded, total: e.total })
+    }
+    xhr.onload = () => resolver({ status: xhr.status, tipo: xhr.getResponseHeader('Content-Type') ?? '', texto: xhr.responseText })
+    xhr.onerror = () => rechazar(new ErrorApi(0, MENSAJE_SIN_CONEXION))
+    xhr.onabort = () => rechazar(new ErrorApi(0, MENSAJE_SIN_CONEXION))
+    xhr.send(formulario)
+  })
+  const json = tipo.includes('application/json')
+  let datos: { detail?: unknown } | null = null
+  if (json) {
+    try {
+      datos = JSON.parse(texto)
+    } catch {
+      // Cuerpo ilegible: se usa el mensaje genérico.
+    }
+  }
+  if (status >= 200 && status < 300) {
+    if (!json || datos === null) throw new ErrorApi(502, MENSAJE_SISTEMA)
+    return datos as T
+  }
+  if (status === 403 && reintento && typeof datos?.detail === 'string' && /CSRF/i.test(datos.detail)) {
+    await obtenerCsrf()
+    return subirConAvance<T>(ruta, formulario, onAvance, false, metodo)
+  }
+  if (status === 401) window.dispatchEvent(new Event('sesion-vencida'))
+  const detalle = typeof datos?.detail === 'string' && datos.detail.trim() ? datos.detail : mensajePorEstado(status)
+  throw new ErrorApi(status, /CSRF/i.test(detalle) ? 'La página estuvo inactiva mucho tiempo. Recárguela e inténtelo de nuevo.' : detalle)
+}

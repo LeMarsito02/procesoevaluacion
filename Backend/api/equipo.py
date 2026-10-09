@@ -90,6 +90,7 @@ class EntidadOut(Schema):
     exigir_microsoft: bool = False
     microsoft_crear_usuarios: bool = False
     modulo_ops: bool = False
+    onedrive_autorizado_en: datetime | None = None
 
 
 class EntidadCreadaOut(Schema):
@@ -261,6 +262,7 @@ def _entidad_out(e: Entidad) -> EntidadOut:
         id=e.id, nombre=e.nombre, nit=e.nit, activa=e.activa, usuarios=e.usuarios.count(), creada_en=e.creada_en,
         microsoft_directorio=e.microsoft_directorio, exigir_microsoft=e.exigir_microsoft,
         microsoft_crear_usuarios=e.microsoft_crear_usuarios, modulo_ops=e.modulo_ops,
+        onedrive_autorizado_en=e.onedrive_autorizado_en,
     )
 
 
@@ -346,6 +348,55 @@ def actualizar_entidad(request: HttpRequest, entidad_id: UUID, datos: Actualizar
         entidad.modulo_ops = datos.modulo_ops
         entidad.save(update_fields=["modulo_ops"])
         auditar(request, "entidad.modulo_ops", entidad_id=entidad.id, objeto=entidad, activo=datos.modulo_ops)
+    return _entidad_out(entidad)
+
+
+# --- OneDrive de Microsoft 365 de la entidad ---
+def _url_retorno_onedrive() -> str:
+    return f"{settings.FRONTEND_URL}/api/auth/microsoft/onedrive-retorno"
+
+
+def _directorio_o_error(entidad: Entidad) -> str:
+    if not entidad.microsoft_directorio:
+        raise HttpError(400, "Registre primero el directorio de Microsoft de la entidad.")
+    return entidad.microsoft_directorio
+
+
+@plataforma.get("/entidades/{entidad_id}/onedrive")
+def onedrive_autorizacion(request: HttpRequest, entidad_id: UUID) -> dict:
+    """El enlace que se le envía al administrador de Microsoft 365 de la
+    entidad para que apruebe, una sola vez, la lectura de su OneDrive."""
+    from motor.integrations import onedrive_empresa
+
+    _solo_superadmin(request)
+    entidad = get_object_or_404(Entidad, pk=entidad_id)
+    try:
+        url = onedrive_empresa.url_autorizacion(_directorio_o_error(entidad), _url_retorno_onedrive())
+    except onedrive_empresa.OneDriveEmpresaError as exc:
+        raise HttpError(400, str(exc)) from exc
+    return {"url": url, "redirect_uri": _url_retorno_onedrive(), "autorizado_en": entidad.onedrive_autorizado_en}
+
+
+@plataforma.post("/entidades/{entidad_id}/onedrive/probar", response=EntidadOut)
+def onedrive_probar(request: HttpRequest, entidad_id: UUID) -> EntidadOut:
+    """Pide a Microsoft un token de la aplicación para el directorio de la
+    entidad y mira en él qué permisos aprobó su administrador."""
+    from motor.integrations import onedrive_empresa
+
+    _solo_superadmin(request)
+    entidad = get_object_or_404(Entidad, pk=entidad_id)
+    try:
+        aprobados = onedrive_empresa.permisos(_directorio_o_error(entidad))
+    except onedrive_empresa.OneDriveEmpresaError as exc:
+        if entidad.onedrive_autorizado_en:
+            entidad.onedrive_autorizado_en = None
+            entidad.save(update_fields=["onedrive_autorizado_en"])
+        raise HttpError(409, str(exc)) from exc
+    if not any(p in aprobados for p in onedrive_empresa.PERMISOS_SUFICIENTES):
+        raise HttpError(409, "Microsoft responde, pero la entidad no aprobó la lectura de archivos (Files.Read.All).")
+    entidad.onedrive_autorizado_en = timezone.now()
+    entidad.save(update_fields=["onedrive_autorizado_en"])
+    auditar(request, "entidad.onedrive_autorizado", entidad_id=entidad.id, objeto=entidad, permisos=sorted(aprobados))
     return _entidad_out(entidad)
 
 

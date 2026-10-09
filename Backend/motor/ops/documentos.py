@@ -240,9 +240,9 @@ def verificar_documentos(
 ) -> tuple[list[ResultadoDocumento], Clasificacion]:
     """La lista de verificación del contratista y cómo se repartieron los archivos.
 
-    `fecha_referencia` es la fecha contra la que se mide la vigencia (la del
-    estudio previo); `vigencia_meses` dice, por clave, cuántos meses antes de
-    esa fecha puede haberse expedido un documento. `exige_libreta` en None
+    Ningún documento caduca salvo los que la entidad indique en
+    `vigencia_meses` (por clave, cuántos meses antes de `fecha_referencia`, la
+    del estudio previo, puede haberse expedido). `exige_libreta` en None
     significa que no se sabe si la persona es hombre menor de 50 años.
     """
     vigencia_meses = vigencia_meses or {}
@@ -290,7 +290,9 @@ def verificar_documentos(
 
 
 def _antecedente(doc: DocumentoExigido, pdfs: dict[str, bytes], nombre: str, cedula: str | None, fecha_referencia: date | None) -> ResultadoDocumento:
-    r = antecedentes.evaluar_antecedente(pdfs, doc.antecedente, [(nombre, cedula)], fecha_cierre=fecha_referencia)
+    # En prestación de servicios los antecedentes no caducan (criterio jurídico
+    # de la entidad): se revisa que estén y que no reporten novedades, no su fecha.
+    r = antecedentes.evaluar_antecedente(pdfs, doc.antecedente, [(nombre, cedula)], fecha_cierre=None)
     if r.cumple:
         return ResultadoDocumento(doc.clave, doc.nombre, CUMPLE, archivo=r.archivo)
     estado = r.personas[0].estado if r.personas else ""

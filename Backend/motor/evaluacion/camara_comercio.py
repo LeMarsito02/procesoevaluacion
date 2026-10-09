@@ -190,6 +190,10 @@ def encontrar_documentos(pdfs: dict[str, bytes], titulo_re: re.Pattern[str], pis
 # la sociedad: los que aparecen después son de terceros (revisor fiscal…).
 NIT_CERTIFICADO_RE = re.compile(r"\b(?:NIT|N\.I\.T)\.?\s*:?\s*(\d[\d.]{7,}\d)")
 RAZON_SOCIAL_RE = re.compile(r"RAZON SOCIAL\s*:\s*([A-Z0-9Ñ&][A-Z0-9Ñ&.,\- ]{2,80}?)\s+(?:NIT|N\.I\.T|SIGLA)\b")
+# La sigla va junto a la razón social: «RAZON SOCIAL : KONSTRUCCIONES Y KONSULTORIAS
+# S.A.S SIGLA : KONKON S.A.S NIT : 901839938-3». Con ella firman muchas empresas
+# el Formato 2, y sin leerla la misma empresa salía dos veces en el proponente.
+SIGLA_RE = re.compile(r"\bSIGLA\s*:\s*([A-Z0-9Ñ&][A-Z0-9Ñ&.,\- ]{1,60}?)\s+(?:NIT|N\.I\.T|DOMICILIO|MATRICULA|RAZON)\b")
 CODIGO_VERIFICACION_RE = re.compile(r"CODIGO DE VERIFICACION:?\s*([A-Z0-9]{6,})")
 
 
@@ -201,6 +205,8 @@ class Empresa:
 
     razon_social: str | None
     nit: str  # 9 dígitos, sin dígito de verificación
+    # Nombre abreviado con que la empresa también se identifica («KONKON S.A.S»).
+    sigla: str | None = None
 
     @property
     def nombre(self) -> str:
@@ -221,7 +227,11 @@ def empresas_con_certificado(pdfs: dict[str, bytes]) -> list[Empresa]:
             continue
         digitos = re.sub(r"\D", "", nit.group(1))[:9]
         razon = RAZON_SOCIAL_RE.search(texto_norm)
-        empresas.setdefault(digitos, Empresa(razon.group(1).strip(" .,") if razon else None, digitos))
+        sigla = SIGLA_RE.search(texto_norm)
+        sigla = sigla.group(1).strip(" .,") if sigla else None
+        if sigla and re.fullmatch(r"NO\s+REPORT[OA]|NO\s+TIENE|NO\s+REGISTRA|SIN\s+SIGLA|N\.?\s?A\.?|NINGUNA", sigla):
+            sigla = None  # el certificado dice que la empresa no tiene sigla
+        empresas.setdefault(digitos, Empresa(razon.group(1).strip(" .,") if razon else None, digitos, sigla))
     return list(empresas.values())
 
 
@@ -311,10 +321,14 @@ def _texto_encabezado(pdfs: dict[str, bytes], nombre: str) -> str:
 
 
 class ResultadoEvaluacionCamara:
-    def __init__(self, cumple: bool, motivo: str | None, archivo: str | None) -> None:
+    def __init__(self, cumple: bool, motivo: str | None, archivo: str | None,
+                 soportes: list[str] | None = None) -> None:
         self.cumple = cumple
         self.motivo = motivo
         self.archivo = archivo
+        # Otros documentos que sostienen el resultado (el certificado de cada
+        # integrante, el acta que autoriza al representante): se abren aparte.
+        self.soportes = [s for s in (soportes or []) if s != archivo]
 
 
 def _evaluar_vigencia_documentos(
@@ -347,7 +361,8 @@ def _evaluar_vigencia_documentos(
             )
 
     cumple = not motivos
-    return ResultadoEvaluacionCamara(cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0])
+    return ResultadoEvaluacionCamara(cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0],
+                                     soportes=encontrados)
 
 
 # Lo que la Cámara de Comercio inscribe cuando hay un embargo, una orden
@@ -387,6 +402,85 @@ def gravamenes_del_certificado(texto_norm: str) -> list[str]:
     return fragmentos
 
 
+# Qué es cada anotación y qué debe mirar el abogado. El programa no decide: lo
+# explica en claro para que quien revisa no tenga que descifrar el certificado.
+# La reorganización va primero: el registro titula la sección «PROCESO DE
+# REORGANIZACION EMPRESARIAL, ADJUDICACION O LIQUIDACION JUDICIAL» y eso no
+# significa que la sociedad esté en liquidación.
+_ANOTACIONES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"REORGANIZACION|INSOLVENCIA|VALIDACION|PROMOTOR"),
+     "la sociedad está en un proceso de reorganización empresarial (insolvencia, Ley 1116 de 2006)",
+     "confirma quién representa hoy a la sociedad (puede haber un promotor), si necesita autorización del juez del "
+     "concurso para comprometerse en este contrato y si el pliego dice algo sobre proponentes en reorganización"),
+    (re.compile(r"LIQUIDACION|DISUELTA|DISOLUCION"),
+     "la sociedad aparece en liquidación o disuelta",
+     "una sociedad en liquidación solo puede realizar los actos necesarios para liquidarse: confirma si puede "
+     "presentar oferta y contratar"),
+    (re.compile(r"EMBARGO"),
+     "registra un embargo",
+     "mira sobre qué recae (establecimiento de comercio, acciones, cuotas, bienes) y si afecta la capacidad para "
+     "contratar o las garantías"),
+    (re.compile(r"DEMANDA"),
+     "tiene una demanda inscrita",
+     "mira de qué proceso es y si afecta la capacidad para contratar"),
+    (re.compile(r"ORDENES\s+DE\s+AUTORIDAD"),
+     "registra órdenes de autoridad competente",
+     "lee la orden (suele ser una medida cautelar) y mira si afecta la capacidad para contratar"),
+)
+
+
+# Un punto que termina la frase: no el de una abreviatura («AUTO NO. 460», «ART. 5», «S.A.S. EN»).
+_FIN_DE_FRASE_RE = re.compile(r"(?<!\bNO)(?<!\bNRO)(?<!\bNUM)(?<!\bART)(?<!\bS)(?<!\bA)(?<!\bLTDA)(?<!\bCIA)\.\s+(?=[A-Z])")
+
+
+def _frase_completa(texto: str, inicio: int, fin: int) -> str:
+    """La frase del certificado que contiene la anotación, de punto a punto, en
+    vez de un recorte que empieza y termina a mitad de palabra."""
+    cortes = [m.end() for m in _FIN_DE_FRASE_RE.finditer(texto)]
+    desde = max([c for c in cortes if c <= inicio] or [0])
+    desde = max(desde, inicio - 320)
+    # El encabezado que la Cámara repite en cada página termina en una raya: la frase empieza después.
+    raya = max((m.end() for m in re.finditer(r"-{5,}", texto[desde:inicio])), default=0)
+    desde += raya
+    hasta = min([c for c in cortes if c > fin] or [len(texto)])
+    hasta = min(hasta, fin + 420)
+    hasta = min(hasta, fin + (texto[fin:hasta].find("-----") if "-----" in texto[fin:hasta] else hasta))
+    return " ".join(texto[desde:hasta].split()).strip(" -")
+
+
+def anotaciones_del_certificado(contenido: bytes) -> list[tuple[str, str, str, int]]:
+    """Embargos, órdenes judiciales o insolvencia que registra un certificado de
+    existencia: (qué es, qué revisar, frase del certificado, página)."""
+    from motor.procesamiento.pdf_utils import paginas_de_texto
+
+    halladas: dict[str, tuple[str, str, str, int]] = {}
+    pesos: dict[str, tuple[bool, int]] = {}
+    # La frase que trae el acto y su fecha («MEDIANTE AUTO NO. 460-011886 DEL 11 DE JULIO DE 2025…»).
+    actos: dict[str, tuple[str, int]] = {}
+    for numero, pagina in enumerate(paginas_de_texto(contenido, max_paginas=MAX_PAGINAS_CERTIFICADO), 1):
+        texto = " ".join(_norm(pagina).split())
+        for m in GRAVAMEN_RE.finditer(texto):
+            que, revisar = next(((q, rv) for patron, q, rv in _ANOTACIONES if patron.search(m.group(0))),
+                                ("registra una anotación judicial", "lee la anotación y mira si afecta la capacidad para contratar"))
+            frase = _frase_completa(texto, m.start(), m.end())
+            # De cada clase de anotación se muestra la frase que más dice: la que
+            # trae la decisión (admitir, decretar, ordenar) y no el título de la sección.
+            peso = (bool(re.search(r"ADMIT|ADMISION|DECRET|RESOLVIO|ORDEN[OA]\b", frase)), len(frase))
+            if que not in halladas or peso > pesos[que]:
+                halladas[que], pesos[que] = (que, revisar, frase, numero), peso
+            if que not in actos and re.search(r"(?:AUTO|OFICIO|AVISO|RESOLUCION)\s+NO\.?\s*[\d-]+\s+DEL?\s+\d{1,2}\s+DE\s+[A-Z]+\s+DE\s+\d{4}", frase):
+                actos[que] = (frase, numero)
+    salida = []
+    for que, (_, revisar, frase, numero) in halladas.items():
+        acto = actos.get(que)
+        if acto and acto[0] not in frase and frase not in acto[0]:
+            # Las dos frases, en el orden del certificado, con la página de la primera.
+            primera, segunda = sorted([(acto[1], acto[0]), (numero, frase)])
+            frase, numero = f"{primera[1]} … {segunda[1]}", primera[0]
+        salida.append((que, revisar, frase, numero))
+    return salida
+
+
 def evaluar_requisito6(pdfs: dict[str, bytes], fecha_cierre: date, tipo_proponente: str | None) -> ResultadoEvaluacionCamara:
     """Requisito 6: Certificado de Existencia y Representación Legal,
     expedido máximo 1 mes antes de la fecha de cierre. N.A. si el
@@ -403,17 +497,31 @@ def evaluar_requisito6(pdfs: dict[str, bytes], fecha_cierre: date, tipo_proponen
     if resultado.archivo is None:
         return resultado
     motivos = [resultado.motivo] if resultado.motivo else []
-    for nombre in encontrar_documentos(pdfs, TITULO_EXISTENCIA_RE, PISTAS_EXISTENCIA):
-        fragmentos = gravamenes_del_certificado(_norm(_texto_completo(pdfs, nombre)))
-        if fragmentos:
-            citas = " … ".join(f"«{f}»" for f in fragmentos[:3])
+    encontrados = encontrar_documentos(pdfs, TITULO_EXISTENCIA_RE, PISTAS_EXISTENCIA)
+    con_anotacion: list[str] = []
+    for nombre in encontrados:
+        anotaciones = anotaciones_del_certificado(pdfs[nombre])
+        if not anotaciones:
+            continue
+        con_anotacion.append(nombre)
+        encabezado = _norm(_texto_encabezado(pdfs, nombre))
+        razon = RAZON_SOCIAL_RE.search(encabezado)
+        nit = NIT_CERTIFICADO_RE.search(encabezado)
+        empresa = razon.group(1).strip(" .,") if razon else "la sociedad"
+        if nit:
+            empresa += f" (NIT {nit.group(1)})"
+        # Una anotación por renglón: qué es, dónde está, qué dice y qué revisar.
+        for que, revisar, frase, pagina in anotaciones[:4]:
             motivos.append(
-                f"el certificado '{nombre}' registra embargos, órdenes judiciales o un proceso de insolvencia: {citas} "
-                "— revisa si afecta la capacidad jurídica para contratar"
+                f"{empresa}: {que}. Está en su certificado de existencia '{nombre}', página {pagina}. "
+                f"El certificado dice: «{frase}». Qué revisar: {revisar}"
             )
     if not motivos:
-        return resultado
-    return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(motivos), archivo=resultado.archivo)
+        return ResultadoEvaluacionCamara(cumple=resultado.cumple, motivo=resultado.motivo, archivo=resultado.archivo,
+                                         soportes=encontrados)
+    # El certificado con la anotación va primero entre los documentos, para abrirlo de una vez.
+    return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(motivos), archivo=resultado.archivo,
+                                     soportes=con_anotacion + encontrados)
 
 
 def evaluar_requisito9(pdfs: dict[str, bytes], fecha_cierre: date) -> ResultadoEvaluacionCamara:
@@ -510,6 +618,38 @@ def _proporcion_objeto_relacionado_laxo(objeto_social: str, objeto_base: str) ->
 PROPORCION_MINIMA_OBJETO_SOCIAL = 0.1
 
 
+_INSTRUCCION_OBJETO_SOCIAL = (
+    "Un proceso de contratación estatal en Colombia tiene por objeto: «{objeto}». El documento es el OBJETO SOCIAL de "
+    "una empresa que se presenta. Responde si ese objeto social le permite EJECUTAR el objeto del proceso, es decir, "
+    "si incluye esa clase de actividad (por ejemplo construcción, mejoramiento, mantenimiento o rehabilitación de "
+    "obras civiles, vías o infraestructura cuando el proceso es de obra). No basta que sea del sector: si el proceso "
+    "es de obra y el objeto social solo habla de consultoría, interventoría, estudios o diseños, NO lo permite. "
+    'Responde JSON: {{"permite": true|false, "cita": "frase exacta y corta del objeto social que lo permite, o null"}}'
+)
+# La frase que cite la IA tiene que hablar de ejecutar obra: es lo que se podrá comprobar contra el certificado.
+_CITA_DE_OBRA_RE = re.compile(r"CONSTRU|\bOBRAS?\b|\bVIA[SL]?\b|VIALES|CARRETER|PAVIMENT|INFRAESTRUCT|EDIFICA|MANTENIM|MEJORAM|REHABILIT")
+
+
+def objeto_social_con_ia(objeto_social: str, objeto_base: str) -> str | None:
+    """Cuando las palabras del objeto social no coinciden con las del objeto del
+    proceso pero la empresa es del sector («ingeniería… y construcciones» frente
+    a «mejoramiento de la vía»), la IA infiere si lo cubre. Solo vale si señala
+    la frase exacta del objeto social que lo permite, esa frase está de verdad
+    en el certificado y habla de ejecutar obra. Devuelve la frase, o None."""
+    if not objeto_social.strip() or not _SECTOR_OBRAS_RE.search(_norm(objeto_social)):
+        return None
+    try:
+        respuesta = consultar_json(_INSTRUCCION_OBJETO_SOCIAL.format(objeto=objeto_base[:500]), objeto_social[:3000])
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(respuesta, dict) or respuesta.get("permite") is not True:
+        return None
+    cita = respuesta.get("cita")
+    if not isinstance(cita, str) or len(cita.strip()) < 8 or not cita_literal(cita, objeto_social):
+        return None
+    return cita.strip() if _CITA_DE_OBRA_RE.search(_norm(cita)) else None
+
+
 def evaluar_requisito7(
     pdfs: dict[str, bytes], objeto_base: str, tipo_proponente: str | None
 ) -> ResultadoEvaluacionCamara:
@@ -531,16 +671,31 @@ def evaluar_requisito7(
             archivo=None,
         )
 
-    motivos = []
+    # En un consorcio o unión temporal se mira el objeto social de CADA integrante,
+    # y el resultado dice cómo quedó cada uno (no solo el que falla).
+    motivos: list[str] = []
+    conformes: list[str] = []
     for nombre in encontrados:
         texto_norm = _norm(_texto_completo(pdfs, nombre))
+        razon = RAZON_SOCIAL_RE.search(texto_norm)
+        quien = razon.group(1).strip(" .,") if razon else f"'{nombre}'"
         objeto_social = _extraer_objeto_social(texto_norm)
         proporcion = _proporcion_objeto_relacionado_laxo(objeto_social or "", objeto_base)
-        if proporcion < PROPORCION_MINIMA_OBJETO_SOCIAL:
-            motivos.append(f"el objeto social de '{nombre}' no se relaciona claramente con el objeto del proceso")
+        if proporcion >= PROPORCION_MINIMA_OBJETO_SOCIAL:
+            conformes.append(f"{quien}: objeto social relacionado con el del proceso")
+            continue
+        cita = objeto_social_con_ia(objeto_social or "", objeto_base)
+        if cita:
+            conformes.append(f"{quien}: su objeto social cubre el del proceso («{cita}», inferido con IA local y verificado en el certificado)")
+        else:
+            motivos.append(f"{quien}: su objeto social no se relaciona claramente con el objeto del proceso ('{nombre}')")
 
-    cumple = not motivos
-    return ResultadoEvaluacionCamara(cumple=cumple, motivo="; ".join(motivos) if motivos else None, archivo=encontrados[0])
+    if motivos:
+        return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(motivos + conformes), archivo=encontrados[0],
+                                         soportes=encontrados)
+    # Con un solo certificado y sin nada que aclarar no hace falta nota.
+    nota = "; ".join(conformes) if len(encontrados) > 1 or any("IA local" in c for c in conformes) else None
+    return ResultadoEvaluacionCamara(cumple=True, motivo=nota, archivo=encontrados[0], soportes=encontrados)
 
 
 # Redacciones reales de "el representante legal no tiene límite para
@@ -654,10 +809,142 @@ def _seccion_facultades(texto_norm: str) -> str:
     return match.group(0)[:MAX_CARACTERES_SECCION_FACULTADES]
 
 
+# Órganos sociales que autorizan al representante legal, del más específico al
+# más general: el certificado dice cuál ("previa autorización de la junta
+# directiva") y el acta que lo autoriza tiene que ser de ese mismo órgano.
+_ORGANOS_SOCIALES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("la junta directiva", re.compile(r"JUNTA\s+DIRECTIVA")),
+    ("la junta de socios", re.compile(r"JUNTA\s+(?:GENERAL\s+)?DE\s+SOCIOS")),
+    ("el consejo de administración", re.compile(r"CONSEJO\s+DE\s+ADMINISTRACION")),
+    ("la asamblea de asociados", re.compile(r"ASAMBLEA\s+(?:GENERAL\s+)?DE\s+ASOCIADOS")),
+    ("la asamblea general de accionistas", re.compile(r"ASAMBLEA\s+(?:GENERAL\s+)?(?:DE\s+)?ACCIONISTAS|ASAMBLEA\s+GENERAL")),
+    ("el máximo órgano social", re.compile(r"MAXIMO\s+ORGANO")),
+    ("la asamblea", re.compile(r"\bASAMBLEA\b")),
+)
+# Nombre del archivo que suele traer el acta: se mira primero (y entero).
+_PISTA_ACTA_RE = re.compile(r"ACTA|AUTORIZ|ASAMBLEA|JUNTA|SOCIOS|ACCIONISTAS|CONSEJO", re.IGNORECASE)
+_ES_ACTA_RE = re.compile(r"\bACTA\b|EXTRACTO\s+DEL?\s+ACTA|CERTIFICACION\s+DE\s+(?:LA\s+)?(?:DECISION|AUTORIZACION)")
+_AUTORIZA_RE = re.compile(r"AUTORIZ[AO]|AUTORIZACION|FACULTA[RD]?\b|APRUEBA")
+PAGINAS_ACTA = 6
+# Lo que el certificado pide en términos generales lo cumple el órgano concreto.
+_ORGANOS_QUE_CUMPLEN = {
+    "la asamblea": {"la asamblea general de accionistas", "la asamblea de asociados"},
+    "el máximo órgano social": {"la asamblea general de accionistas", "la asamblea de asociados", "la junta de socios",
+                                "la asamblea"},
+}
+
+
+def _organos_de(fragmento: str) -> list[str]:
+    """Los órganos que nombra la restricción (sin repetir el genérico cuando ya
+    está el específico: «asamblea general de accionistas» no suma «asamblea»)."""
+    hallados: list[str] = []
+    ocupado: list[tuple[int, int]] = []
+    for etiqueta, patron in _ORGANOS_SOCIALES:
+        for m in patron.finditer(fragmento):
+            if any(a <= m.start() < b for a, b in ocupado):
+                continue
+            ocupado.append((m.start(), m.end()))
+            if etiqueta not in hallados:
+                hallados.append(etiqueta)
+    return hallados
+
+
+def _patron_codigo(codigo: str | None) -> re.Pattern[str] | None:
+    """«ICCU-LP-014-2026» también como «LP 14 2026» o «LP-014-2026»."""
+    partes = re.findall(r"[A-Z]+|\d+", _norm(codigo or ""))
+    if len(partes) < 2:
+        return None
+    if len(partes) >= 4:
+        partes = partes[-3:]
+    trozos = [rf"0*{int(t)}" if t.isdigit() else re.escape(t) for t in partes]
+    return re.compile(r"\b" + r"[\s\-_./N°NO]*".join(trozos) + r"\b")
+
+
+def buscar_acta_de_autorizacion(
+    pdfs: dict[str, bytes], certificado: str, texto_certificado: str, restriccion: str,
+    codigo_proceso: str | None = None, soportes: list[str] | None = None,
+) -> tuple[bool, str]:
+    """Busca en la oferta el acta del órgano que el certificado exige para que
+    el representante legal pueda contratar. (encontrada, motivo).
+
+    Nunca aprueba: si el acta es válida lo decide el abogado (así lo pidió).
+    `encontrada` es True cuando el acta es del MISMO órgano que pide el
+    certificado, autoriza, nombra este proceso, es de esta empresa (su NIT o
+    su razón social) y no trae a su vez un tope de cuantía; si no, el motivo
+    dice qué documento se encontró y qué le falta, o que no está."""
+    organos = _organos_de(restriccion) or _organos_de(_seccion_facultades(texto_certificado))
+    if not organos:
+        organos = ["el órgano social"]
+    quien = " o ".join(organos)
+    nit = NIT_CERTIFICADO_RE.search(texto_certificado)
+    nit = re.sub(r"\D", "", nit.group(1))[:9] if nit else None
+    razon = RAZON_SOCIAL_RE.search(texto_certificado)
+    razon = re.sub(r"\s+", " ", razon.group(1)).strip(" .,") if razon else None
+    codigo_re = _patron_codigo(codigo_proceso)
+
+    nombres = [n for n in pdfs if n != certificado]
+    nombres.sort(key=lambda n: 0 if _PISTA_ACTA_RE.search(n.rsplit("/", 1)[-1]) else 1)
+    parciales: list[str] = []
+    for nombre in nombres:
+        try:
+            texto = re.sub(r"\s+", " ", _norm(extraer_texto(pdfs[nombre], max_paginas=PAGINAS_ACTA)))
+        except Exception:  # noqa: BLE001
+            continue
+        if not (_ES_ACTA_RE.search(texto) and _AUTORIZA_RE.search(texto)):
+            continue
+        del_acta = _organos_de(texto)
+        if not del_acta:
+            continue
+        corto = nombre.rsplit("/", 1)[-1]
+        if soportes is not None and nombre not in soportes:
+            soportes.append(nombre)
+        aceptados = set(organos).union(*(_ORGANOS_QUE_CUMPLEN.get(o, set()) for o in organos))
+        mismo_organo = any(o in aceptados for o in del_acta) or organos == ["el órgano social"]
+        if not mismo_organo:
+            parciales.append(
+                f"'{corto}' es un acta de {' / '.join(del_acta)}, pero el certificado pide autorización de {quien}"
+            )
+            continue
+        faltas = []
+        if codigo_re is not None and not codigo_re.search(texto):
+            faltas.append(f"no menciona el proceso {codigo_proceso}")
+        de_la_empresa = (nit and nit in re.sub(r"\D", "", texto)) or (razon and razon in texto)
+        if not de_la_empresa:
+            faltas.append("no se ve el NIT ni la razón social de la empresa")
+        if LIMITE_CUANTIA_RE.search(texto):
+            faltas.append("trae un tope de cuantía: compáralo con el valor de la oferta")
+        if not faltas:
+            return True, (
+                f"'{certificado}' exige autorización de {quien} para contratar; se aportó el acta '{corto}', que "
+                "autoriza al representante legal para este proceso — confírmala"
+            )
+        parciales.append(f"se encontró el acta '{corto}' de {' / '.join(del_acta)}, pero " + "; ".join(faltas))
+    if parciales:
+        return False, (
+            f"'{certificado}' exige autorización de {quien} para contratar: " + "; ".join(parciales[:3])
+            + " — revisa el acta"
+        )
+    return False, (
+        f"'{certificado}' exige autorización de {quien} para contratar y no se encontró en la oferta el acta que "
+        "autoriza al representante legal — pídela como subsanación"
+    )
+
+
 def _evaluar_facultades_certificado(
-    nombre: str, texto_norm: str, valor_proceso: float | None = None
+    nombre: str, texto_norm: str, valor_proceso: float | None = None,
+    pdfs: dict[str, bytes] | None = None, codigo_proceso: str | None = None,
+    soportes: list[str] | None = None,
 ) -> tuple[bool, str | None]:
-    """(cumple, motivo) para un Certificado de Existencia."""
+    """(cumple, motivo) para un Certificado de Existencia. Si el certificado
+    restringe al representante legal y se tienen los documentos de la oferta,
+    se busca el acta del órgano que debe autorizarlo."""
+
+    def con_acta(restriccion: str, motivo: str) -> tuple[bool, str]:
+        if pdfs is None:
+            return False, f"{motivo} — revisa si hay autorización de la asamblea o junta"
+        _, del_acta = buscar_acta_de_autorizacion(pdfs, nombre, texto_norm, restriccion, codigo_proceso, soportes)
+        return False, f"{motivo}. {del_acta}"
+
     if any(patron.search(texto_norm) for patron in FACULTADES_SIN_LIMITE_PATRONES):
         return True, None
 
@@ -681,15 +968,16 @@ def _evaluar_facultades_certificado(
                 f"proceso (${valor_proceso:,.0f}): puede suscribir el contrato"
             )
         if monto is not None and valor_proceso is not None:
-            return False, (
+            return con_acta(fragmento, (
                 f"'{nombre}' limita al representante legal a {expresado} (${monto:,.0f}), por debajo del valor del "
-                f"proceso (${valor_proceso:,.0f}) — revisa si hay autorización de la asamblea o junta"
-            )
+                f"proceso (${valor_proceso:,.0f})"
+            ))
         falta = " (no está registrado el salario mínimo del año del proceso)" if expresado == "salarios mínimos" else ""
-        return False, (
+        cumple, motivo = con_acta(fragmento, (
             f"'{nombre}' menciona un posible límite de cuantía para el representante legal{falta} "
-            f"(\"...{fragmento}...\") — revisa si el proceso lo supera y si hay autorización"
-        )
+            f"(\"...{fragmento}...\") — revisa si el proceso lo supera"
+        ))
+        return cumple, motivo
 
     respuesta = consultar_json(_INSTRUCCION_FACULTADES, seccion)
     if respuesta is None or not isinstance(respuesta.get("restriccion_para_contratar"), bool):
@@ -700,10 +988,13 @@ def _evaluar_facultades_certificado(
     if respuesta["restriccion_para_contratar"]:
         cita = respuesta.get("cita")
         if isinstance(cita, str) and cita_literal(cita, seccion):
-            return False, f"'{nombre}' restringe al representante legal para contratar: \"{cita}\" — revisa manualmente"
+            return con_acta(_norm(cita), f"'{nombre}' restringe al representante legal para contratar: \"{cita}\"")
+        # Sin la frase exacta no se sabe qué órgano autoriza: se busca, pero
+        # nunca se aprueba solo con eso.
+        _, del_acta = con_acta(seccion, "")
         return False, (
             f"'{nombre}' podría restringir al representante legal para contratar (no se pudo ubicar la frase exacta) "
-            "— revisa manualmente"
+            f"— revisa manualmente. {del_acta}".strip()
         )
     return True, (
         f"'{nombre}': las facultades del representante legal no mencionan límites de cuantía ni autorizaciones para "
@@ -712,7 +1003,8 @@ def _evaluar_facultades_certificado(
 
 
 def evaluar_requisito8(
-    pdfs: dict[str, bytes], tipo_proponente: str | None, valor_proceso: float | None = None
+    pdfs: dict[str, bytes], tipo_proponente: str | None, valor_proceso: float | None = None,
+    codigo_proceso: str | None = None,
 ) -> ResultadoEvaluacionCamara:
     """Requisito 8: Facultades del representante legal. Cumple cuando el
     certificado dice expresamente que no hay restricción para contratar, o
@@ -736,9 +1028,10 @@ def evaluar_requisito8(
 
     no_cumple: list[str] = []
     notas: list[str] = []
+    soportes: list[str] = list(encontrados)
     for nombre in encontrados:
         cumple_certificado, motivo = _evaluar_facultades_certificado(
-            nombre, _norm(_texto_completo(pdfs, nombre)), valor_proceso
+            nombre, _norm(_texto_completo(pdfs, nombre)), valor_proceso, pdfs, codigo_proceso, soportes
         )
         if not cumple_certificado:
             no_cumple.append(motivo or "")
@@ -746,8 +1039,9 @@ def evaluar_requisito8(
             notas.append(motivo)
 
     if no_cumple:
-        return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(no_cumple), archivo=encontrados[0])
-    return ResultadoEvaluacionCamara(cumple=True, motivo="; ".join(notas) if notas else None, archivo=encontrados[0])
+        return ResultadoEvaluacionCamara(cumple=False, motivo="; ".join(no_cumple), archivo=encontrados[0], soportes=soportes)
+    return ResultadoEvaluacionCamara(cumple=True, motivo="; ".join(notas) if notas else None, archivo=encontrados[0],
+                                     soportes=soportes)
 
 
 # Sección de sanciones del RUP, confirmada con RUP reales de este proceso:
@@ -877,6 +1171,7 @@ def _evaluar_proponente_camara(
             motivo=resultado.motivo,
             archivo_evaluado=resultado.archivo,
             archivos_disponibles=sorted(pdfs.keys()) if resultado.archivo is None else [],
+            archivos_soporte=getattr(resultado, "soportes", []),
             tipo_proponente=tipo_proponente,
             # El requisito de identidad dice, persona por persona, si está su
             # cédula y desde cuándo (los demás no traen detalle por persona).
@@ -900,7 +1195,8 @@ def evaluar_proponente_requisito7(proponente: Proponente, proceso: ProcesoDocume
 
 def evaluar_proponente_requisito8(proponente: Proponente, proceso: ProcesoDocumentoBase) -> ResultadoRequisito:
     return _evaluar_proponente_camara(
-        8, lambda pdfs, proceso, tipo: evaluar_requisito8(pdfs, tipo, _valor_de_referencia(proceso)), proponente, proceso
+        8, lambda pdfs, proceso, tipo: evaluar_requisito8(pdfs, tipo, _valor_de_referencia(proceso), proceso.codigo_proceso),
+        proponente, proceso
     )
 
 

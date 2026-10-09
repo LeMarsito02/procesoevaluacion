@@ -272,6 +272,30 @@ def microsoft_iniciar(request: HttpRequest):
     return HttpResponseRedirect(url)
 
 
+@router.get("/microsoft/onedrive-retorno", auth=None)
+def onedrive_retorno(request: HttpRequest, admin_consent: str = "", tenant: str = "", error: str = ""):
+    """Microsoft vuelve aquí después de que el administrador de la entidad
+    aprueba (o no) la lectura de su OneDrive. No se confía en estos parámetros:
+    el permiso se confirma con «Probar» en Entidades → Microsoft."""
+    from django.http import HttpResponse
+
+    aprobado = admin_consent.lower() == "true" and not error
+    titulo = "Permiso aprobado" if aprobado else "El permiso no se aprobó"
+    texto = (
+        "Gracias. MiEvaluador ya puede leer, solo en modo lectura, las carpetas de ofertas que su entidad comparta con un "
+        "enlace de OneDrive o SharePoint. Ya puede cerrar esta página."
+        if aprobado
+        else "Microsoft no confirmó la aprobación. Si fue un error, vuelva a abrir el enlace con una cuenta de "
+        "administrador global de Microsoft 365."
+    )
+    return HttpResponse(
+        f"""<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MiEvaluador · OneDrive</title>
+<body style="font-family:system-ui,sans-serif;max-width:560px;margin:15vh auto;padding:0 16px;color:#00143c">
+<h1 style="font-size:1.4rem">{titulo}</h1><p style="line-height:1.5">{texto}</p></body></html>"""
+    )
+
+
 @router.get("/microsoft/retorno")
 def microsoft_retorno(request: HttpRequest, code: str = "", state: str = "", error: str = ""):
     if not microsoft.activo():

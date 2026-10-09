@@ -41,6 +41,8 @@ class Periodo:
     obligaciones_iguales: list[int] = field(default_factory=list)
     # Texto de la certificación (su página y la siguiente), para compararlo.
     texto: str = field(default="", repr=False)
+    # La página anterior, la suya y la siguiente: ahí debe estar nombrada la persona.
+    contexto: str = field(default="", repr=False)
     archivo: str = ""
     pagina: int | None = None
 
@@ -79,19 +81,23 @@ def _nombre(periodo: Periodo) -> str:
     return periodo.referencia or periodo.entidad or f"el periodo que empieza el {periodo.inicio:%d/%m/%Y}"
 
 
-def _dias_del_tramo(periodo: Periodo, inicio: date, fin: date, ambos_extremos: bool) -> int:
-    dias = dias_comerciales(inicio, fin, ambos_extremos)
-    for desde, hasta in periodo.suspensiones:
-        dias -= dias_comerciales(max(desde, inicio), min(hasta, fin))
-    return max(dias, 0)
+def _suspendidos(periodo: Periodo, inicio: date, fin: date) -> int:
+    return sum(dias_comerciales(max(desde, inicio), min(hasta, fin)) for desde, hasta in periodo.suspensiones)
 
 
 def poner_en_linea(periodos: list[Periodo], desde: date | None = None, ambos_extremos: bool = True) -> ExperienciaLineal:
     """Deja los periodos sin traslapes. `desde` es la fecha a partir de la cual
-    cuenta la experiencia (el grado); sin ella cuenta todo."""
+    cuenta la experiencia (el grado); sin ella cuenta todo.
+
+    El tiempo se cuenta por bloques continuos: si un periodo sigue a otro sin
+    dejar días libres, sus días son los que le agrega al bloque. Así dos
+    contratos seguidos suman lo mismo que uno solo con esas fechas (con meses
+    de 30 días, contarlos sueltos regalaría un día en cada 31).
+    """
     lineal = ExperienciaLineal()
     cubierto_hasta: date | None = None
     cubre: Periodo | None = None
+    bloque_desde: date | None = None
     for periodo in sorted(periodos, key=lambda p: (p.inicio, -p.fin.toordinal())):
         if periodo.fin < periodo.inicio:
             lineal.descartados.append(Descartado(periodo, "La fecha de terminación es anterior a la de inicio."))
@@ -107,9 +113,13 @@ def poner_en_linea(periodos: list[Periodo], desde: date | None = None, ambos_ext
         if inicio > periodo.fin:
             lineal.descartados.append(Descartado(periodo, f"Se traslapa por completo con {_nombre(cubre)}."))
             continue
-        lineal.tramos.append(Tramo(periodo, inicio, periodo.fin, _dias_del_tramo(periodo, inicio, periodo.fin, ambos_extremos)))
-        if cubierto_hasta is None or periodo.fin > cubierto_hasta:
-            cubierto_hasta, cubre = periodo.fin, periodo
+        seguido = cubierto_hasta is not None and inicio == cubierto_hasta + timedelta(days=1)
+        if not seguido:
+            bloque_desde = inicio
+        ya_contado = dias_comerciales(bloque_desde, cubierto_hasta, ambos_extremos) if seguido else 0
+        dias = dias_comerciales(bloque_desde, periodo.fin, ambos_extremos) - ya_contado - _suspendidos(periodo, inicio, periodo.fin)
+        lineal.tramos.append(Tramo(periodo, inicio, periodo.fin, max(dias, 0)))
+        cubierto_hasta, cubre = periodo.fin, periodo
     return lineal
 
 

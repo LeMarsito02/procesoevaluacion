@@ -49,6 +49,24 @@ export SUPERADMIN_SIN_PERMISO="${SUPERADMIN_SIN_PERMISO:-1}"
 detener "uvicorn config.asgi:application.*--port 8000"
 detener "manage.py trabajar_fila"
 sleep 2
+# Servicio de OCR con PaddleOCR (OCR_MOTOR=paddle en .env). Corre en su propio
+# entorno de Python (OCR_ENTORNO, por defecto ~/.local/share/mievaluador-ocr):
+# Paddle no tiene paquetes para el Python del backend. Se arranca antes que el
+# trabajador y se espera a que cargue el modelo.
+MOTOR_OCR=$(grep -E "^OCR_MOTOR=" .env 2>/dev/null | tail -1 | cut -d= -f2)
+ENTORNO_OCR=$(grep -E "^OCR_ENTORNO=" .env 2>/dev/null | tail -1 | cut -d= -f2)
+ENTORNO_OCR="${ENTORNO_OCR:-$HOME/.local/share/mievaluador-ocr}"
+detener "ocr_servicio/servidor.py"
+# Se espera a que el anterior suelte el puerto: si no, el nuevo choca con él y no arranca.
+for _ in $(seq 1 20); do curl -sf -m 1 http://127.0.0.1:8866/salud >/dev/null || break; sleep 0.5; done
+if [ "$MOTOR_OCR" = "paddle" ] && [ -x "$ENTORNO_OCR/bin/python" ]; then
+  # GPU compartida con la IA (portátil de 4 GB): se turnan la GPU (ver motor/gpu_turno.py).
+  GPU_COMPARTIDA=$(grep -E "^GPU_COMPARTIDA=" .env 2>/dev/null | tail -1 | cut -d= -f2)
+  LLM_URL_OCR=$(grep -E "^LLM_URL=" .env 2>/dev/null | tail -1 | cut -d= -f2)
+  GPU_COMPARTIDA="${GPU_COMPARTIDA:-0}" LLM_URL="${LLM_URL_OCR:-http://127.0.0.1:11434}" GPU_CANDADO="$BACKEND/cache/gpu.lock" \
+    nohup "$ENTORNO_OCR/bin/python" -I "$BACKEND/ocr_servicio/servidor.py" > .scratch/ocr_dev.log 2>&1 &
+  for _ in $(seq 1 90); do curl -sf http://127.0.0.1:8866/salud >/dev/null && break; sleep 1; done
+fi
 nohup uvicorn config.asgi:application --host "$HOST" --port 8000 > .scratch/backend_dev.log 2>&1 &
 # Trabajador de la fila central (evalúa en segundo plano). Al detenerse con
 # SIGTERM devuelve a la fila lo que tenía a medias.
@@ -67,8 +85,12 @@ echo "MiEvaluador:"
 pg_isready -q -h 127.0.0.1 -p 5433 && ok "Base de datos" "arriba (5433)" || ok "Base de datos" "NO RESPONDE"
 curl -sf http://127.0.0.1:8000/api/health >/dev/null && ok "Backend" "arriba (8000)" || ok "Backend" "NO RESPONDE · mira Backend/.scratch/backend_dev.log"
 pgrep -f "manage.py trabajar_fila" >/dev/null && ok "Trabajador" "arriba" || ok "Trabajador" "NO ARRANCÓ · mira Backend/.scratch/fila_dev.log"
+if [ "$MOTOR_OCR" = "paddle" ]; then
+  curl -sf http://127.0.0.1:8866/salud >/dev/null && ok "OCR" "PaddleOCR arriba (8866)" || ok "OCR" "NO RESPONDE · se lee con Tesseract · mira Backend/.scratch/ocr_dev.log"
+fi
 curl -sf -o /dev/null http://127.0.0.1:5173/ && ok "Frontend" "arriba → http://localhost:5173" || ok "Frontend" "NO RESPONDE · mira Backend/.scratch/frontend_dev.log"
 if [ "$HOST" = "0.0.0.0" ]; then
-  IP=$(ip -4 addr show scope global | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
+  # Las de la red real, no las de Docker ni las de las máquinas virtuales.
+  IP=$(ip -4 -o addr show scope global | awk '$2 !~ /^(docker|br-|virbr|veth|tun|wg)/ {print $4}' | cut -d/ -f1 | paste -sd' ' | sed 's/ /:5173 · http:\/\//g')
   ok "En la red" "http://$IP:5173"
 fi

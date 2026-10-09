@@ -174,6 +174,16 @@ def leer_con_ia(analisis: AnalisisPliego) -> None:
         progreso(partes_juridicas + hechos, total)
 
     requisitos = lector_ia.leer(secciones, ambitos, paginas, progreso_juridico)
+    if not requisitos and partes_juridicas:
+        # Un pliego con secciones jurídicas siempre exige algo: cero requisitos es
+        # una mala lectura (escaneo, modelo que no respondió bien), nunca un «listo».
+        AnalisisPliego.objects.filter(pk=analisis.pk).update(
+            estado_ia="error", progreso_ia=100, version_ia=lector_ia.VERSION, ia_terminada=timezone.now(),
+            error_ia=(f"la IA leyó {partes_juridicas} partes jurídicas del pliego y no sacó ningún requisito: la lectura no es "
+                      "confiable. Se usan las verificaciones por reglas; revise el pliego"),
+        )
+        log.warning("Pliego %s: la IA no encontró requisitos en %d partes jurídicas", analisis.nombre_archivo, partes_juridicas)
+        return
     leidos = (parametros_ia.leer(secciones, ambitos, progreso_parametros)
               if parametros_ia.HABILITADO else parametros_ia.ParametrosIA())
     AnalisisPliego.objects.filter(pk=analisis.pk).update(
@@ -297,3 +307,26 @@ def aplicar_ajustes(
     datos["parametros"] = parametros
     datos["requisitos"] = requisitos
     return criterios.DefinicionEvaluacion.model_validate(datos)
+
+
+def payload_creacion(analisis, reutilizado: bool) -> dict:
+    """Lo que ve la persona al crear el proceso: hallazgos (con la lectura con
+    IA si ya terminó), el mapa de requisitos del pliego y el avance de la IA."""
+    from motor import criterios
+
+    secciones = [
+        {**s, "verificaciones": [criterios.VERIFICACIONES[v].titulo for v in s["verificaciones"] if v in criterios.VERIFICACIONES]}
+        for s in analisis.extraccion["secciones"]
+        if s["ambito"] == "juridica"
+    ]
+    return {
+        "id": str(analisis.id),
+        "nombre_archivo": analisis.nombre_archivo,
+        "paginas": analisis.paginas,
+        "documento_tipo": analisis.documento_tipo,
+        "reutilizado": reutilizado,
+        "hallazgos": [h.model_dump(mode="json") for h in hallazgos(analisis)],
+        "secciones": secciones,
+        "lectura_ia": estado_lectura(analisis),
+        "requisitos": mapa(analisis),
+    }

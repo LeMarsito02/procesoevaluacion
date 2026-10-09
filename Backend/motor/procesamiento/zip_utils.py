@@ -12,6 +12,38 @@ from motor.procesamiento.memoria_proponente import PdfsProponente
 from motor.procesamiento.pdf_utils import limpiar_memoria_texto
 
 MAX_PROFUNDIDAD = 6
+# Comprimidos que no son .zip: se abren con 7-Zip. El .7z no se abría y la
+# oferta de P-27 en ICCU-LP-014-2026 (tres .7z) quedaba casi sin documentos.
+_OTROS_COMPRIMIDOS = (".rar", ".7z", ".tar", ".tgz", ".tar.gz", ".gz", ".bz2", ".xz")
+# Un documento aportado como imagen suelta (la cédula en .jpg) se convierte a
+# PDF de una página para que se lea con OCR como cualquier escaneo.
+_IMAGENES = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp")
+
+
+def _imagen_a_pdf(datos: bytes) -> bytes | None:
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(datos)) as imagen:
+            salida = io.BytesIO()
+            imagen.convert("RGB").save(salida, format="PDF", resolution=200.0)
+            return salida.getvalue()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _agregar(pdfs: dict[str, bytes], ruta: str, datos: bytes, extensiones: tuple[str, ...]) -> bool:
+    """Guarda el archivo si es de los que se piden; las imágenes, como PDF."""
+    lower = ruta.lower()
+    if lower.endswith(extensiones):
+        pdfs[ruta] = datos
+        return True
+    if ".pdf" in extensiones and lower.endswith(_IMAGENES):
+        convertido = _imagen_a_pdf(datos)
+        if convertido is not None:
+            pdfs[f"{ruta}.pdf"] = convertido
+        return True
+    return False
 
 # Algunos proponentes comprimen sus documentos en .rar en vez de .zip.
 # Python no tiene soporte nativo para RAR, así que usamos 7-Zip (que sabe
@@ -35,7 +67,7 @@ def _extraer_rar(contenido: bytes, _profundidad: int, _ruta: str, extensiones: t
                 [_SIETE_ZIP, "x", "-y", f"-o{destino}", str(rar_path)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                timeout=120,
+                timeout=600,
                 check=True,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
@@ -54,11 +86,11 @@ def _extraer_rar(contenido: bytes, _profundidad: int, _ruta: str, extensiones: t
             except OSError:
                 continue
 
-            if lower.endswith(extensiones):
-                pdfs[ruta_completa] = data
-            elif lower.endswith(".zip"):
+            if _agregar(pdfs, ruta_completa, data, extensiones):
+                continue
+            if lower.endswith(".zip"):
                 pdfs.update(_extraer_pdfs(data, _profundidad + 1, ruta_completa, extensiones))
-            elif lower.endswith(".rar"):
+            elif lower.endswith(_OTROS_COMPRIMIDOS) and _profundidad < MAX_PROFUNDIDAD:
                 pdfs.update(_extraer_rar(data, _profundidad + 1, ruta_completa, extensiones))
 
     return pdfs
@@ -144,11 +176,11 @@ def _extraer_pdfs(
                     continue
 
                 lower = nombre.lower()
-                if lower.endswith(extensiones):
-                    pdfs[ruta_completa] = contenido
-                elif lower.endswith(".zip"):
+                if _agregar(pdfs, ruta_completa, contenido, extensiones):
+                    continue
+                if lower.endswith(".zip"):
                     pdfs.update(_extraer_pdfs(contenido, _profundidad + 1, ruta_completa, extensiones))
-                elif lower.endswith(".rar"):
+                elif lower.endswith(_OTROS_COMPRIMIDOS):
                     pdfs.update(_extraer_rar(contenido, _profundidad + 1, ruta_completa, extensiones))
     except zipfile.BadZipFile:
         # El nivel superior también podría venir como .rar en vez de .zip.

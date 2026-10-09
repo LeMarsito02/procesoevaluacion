@@ -16,7 +16,7 @@ export default function BotonAsistente({ evaluacionId, etiqueta }: { evaluacionI
   if (abierto) return <ChatAsistente evaluacionFija={{ id: evaluacionId, etiqueta }} onCerrar={() => setAbierto(false)} />
   return (
     <button type="button" className="chat-flotante no-imprimir" onClick={() => setAbierto(true)} aria-label="Abrir el asistente para preguntar sobre esta evaluación">
-      <Icono nombre="chispa" tam={18} /> Preguntar al asistente
+      <Icono nombre="chispa" tam={18} /> <span className="chat-flotante-texto">Preguntar al asistente</span>
     </button>
   )
 }

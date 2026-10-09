@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Icono from './Icono'
+import { copiarAlPortapapeles } from '../format'
 
 interface Props {
   nombre: string
@@ -18,7 +19,7 @@ export default function TarjetaCredenciales({ nombre, email, password, contexto 
 
   async function copiar() {
     try {
-      await navigator.clipboard.writeText(texto)
+      if (!(await copiarAlPortapapeles(texto))) throw new Error('sin portapapeles')
       setCopiado(true)
       window.setTimeout(() => setCopiado(false), 2500)
     } catch {

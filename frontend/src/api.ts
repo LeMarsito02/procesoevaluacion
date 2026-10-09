@@ -1,4 +1,5 @@
-import { detalleError, pedir, pedirJson } from './http'
+import { huellaRapida } from './huella'
+import { detalleError, enviarJson, pedir, pedirJson, subirConAvance, type AvanceSubida } from './http'
 
 export interface Lote {
   numero: string
@@ -83,6 +84,8 @@ export interface SeccionPliego {
   pagina: number
   ambito: string
   verificaciones: string[]
+  /** Qué hacer con la sección cuando no tiene una verificación propia (o es parcial). */
+  nota?: string | null
 }
 
 /** Lectura profunda del pliego con la IA local (corre en el trabajador). */
@@ -148,6 +151,12 @@ export interface ResultadoRequisito {
   cumple: boolean | null
   motivo: string | null
   archivo_evaluado: string | null
+  /** Otros documentos que sostienen el resultado (los que nombra el motivo, el acta, el de cada integrante). */
+  archivos_soporte?: string[]
+  /** Documentos de la carpeta que quien revisa asoció a mano a este requisito. */
+  archivos_asociados?: string[]
+  /** Documentos que el programa relacionó y quien revisa quitó porque no corresponden. */
+  archivos_excluidos?: string[]
   lotes_encontrados: string[]
   numero_proceso_encontrado: boolean
   objeto_relacionado: boolean | null
@@ -276,6 +285,208 @@ export interface DetalleTecnico {
   experiencia_acreditada?: boolean
 }
 
+
+/** Un proceso a medio crear: el servidor lee el Documento Base, las ofertas y
+ * el pliego en segundo plano y lo guarda; recargar la página no lo pierde. */
+export interface Preparacion {
+  id: string
+  codigo: string
+  fecha_cierre: string
+  carpeta_drive: string
+  nombre_archivo: string
+  ofertas_subidas: boolean
+  estado: 'pendiente' | 'leyendo' | 'lista' | 'error'
+  etapa: string
+  progreso: number
+  error: string
+  creada_en: string
+  iniciada_en: string | null
+  entidad_id: string
+  resultado?: AnalisisResponse | null
+}
+
+export async function crearPreparacion(
+  codigoProceso: string,
+  fechaCierre: string,
+  archivo: File,
+  carpetaDrive: string,
+  entidadId: string | null,
+  ofertas: File[],
+  onAvance: (a: AvanceSubida) => void = () => {},
+  onReutilizada: (nombre: string) => void = () => {},
+): Promise<Preparacion> {
+  const formData = new FormData()
+  formData.append('codigo_proceso', codigoProceso)
+  formData.append('fecha_cierre', fechaCierre)
+  formData.append('archivo', archivo)
+  if (entidadId) formData.append('entidad_id', entidadId)
+  if (ofertas.length > 0) {
+    // Primero las ofertas, por pedazos (pueden ser varios GB); luego el Documento Base.
+    const total = ofertas.reduce((s, f) => s + f.size, 0) + archivo.size
+    const ids = await subirOfertasPorPedazos(ofertas, (a) => onAvance({ cargado: a.cargado, total }), onReutilizada)
+    for (const id of ids) formData.append('subidas', id)
+    const pesoOfertas = total - archivo.size
+    const p = await subirConAvance<Preparacion>('/api/procesos/preparaciones', formData, (a) =>
+      onAvance({ cargado: pesoOfertas + Math.min(a.cargado, archivo.size), total }),
+    )
+    olvidarSubidas(ofertas)
+    return p
+  }
+  if (carpetaDrive.trim()) formData.append('carpeta_drive', carpetaDrive.trim())
+  return subirConAvance<Preparacion>('/api/procesos/preparaciones', formData, onAvance)
+}
+/** Subida de ofertas por pedazos: cada archivo (hasta 10 GB) sube en trozos
+ * de 32 MB que el servidor va pegando en disco; si se corta, se sigue desde lo
+ * que llegó. Devuelve los identificadores de las subidas, en el mismo orden. */
+const PEDAZO = 32 * 1024 * 1024
+interface EstadoSubida {
+  id: string
+  recibido: number
+  tamano: number
+  completa: boolean
+  /** El archivo ya estaba en el servidor (misma huella): no se sube. */
+  reutilizada?: boolean
+}
+const claveSubida = (f: File) => `mievaluador-subida:${f.name}:${f.size}:${f.lastModified}`
+
+async function retomarOcrear(f: File): Promise<EstadoSubida> {
+  // 1) ¿Ya está en el servidor? Se pregunta antes que nada: si está, no se sube
+  //    (y una subida vieja a medias del mismo archivo sobra: se elimina).
+  let huella: string | null = null
+  try {
+    huella = await huellaRapida(f)
+  } catch {
+    // Sin huella se sube normal.
+  }
+  let guardada: string | null = null
+  try {
+    guardada = localStorage.getItem(claveSubida(f))
+  } catch {
+    // Sin almacenamiento local: no hay subida que retomar.
+  }
+  if (huella) {
+    const s = await enviarJson<EstadoSubida>('/api/procesos/subidas', 'POST', { nombre: f.name, tamano: f.size, huella })
+    if (s.reutilizada) {
+      if (guardada) {
+        await pedir(`/api/procesos/subidas/${guardada}`, { method: 'DELETE' }).catch(() => undefined)
+        try {
+          localStorage.removeItem(claveSubida(f))
+        } catch {
+          // Nada que olvidar.
+        }
+      }
+      return s
+    }
+    // No está: si había una subida a medias se retoma y la recién creada sobra.
+    if (guardada) {
+      try {
+        const vieja = await pedirJson<EstadoSubida>(`/api/procesos/subidas/${guardada}`)
+        if (vieja.tamano === f.size && !vieja.reutilizada) {
+          await pedir(`/api/procesos/subidas/${s.id}`, { method: 'DELETE' }).catch(() => undefined)
+          return vieja
+        }
+      } catch {
+        // Vencida o de otra sesión: se sigue con la nueva.
+      }
+    }
+    try {
+      localStorage.setItem(claveSubida(f), s.id)
+    } catch {
+      // Sin almacenamiento local la subida funciona igual; solo no se retoma tras recargar.
+    }
+    return s
+  }
+  // 2) Sin huella: retomar la subida a medias o empezar una nueva.
+  if (guardada) {
+    try {
+      const vieja = await pedirJson<EstadoSubida>(`/api/procesos/subidas/${guardada}`)
+      if (vieja.tamano === f.size) return vieja
+    } catch {
+      // Vencida o de otra sesión: se empieza de nuevo.
+    }
+  }
+  const s = await enviarJson<EstadoSubida>('/api/procesos/subidas', 'POST', { nombre: f.name, tamano: f.size, huella: null })
+  try {
+    localStorage.setItem(claveSubida(f), s.id)
+  } catch {
+    // Sin almacenamiento local la subida funciona igual; solo no se retoma tras recargar.
+  }
+  return s
+}
+
+const esperar = (ms: number) => new Promise((r) => window.setTimeout(r, ms))
+
+export async function subirOfertasPorPedazos(
+  ofertas: File[],
+  onAvance: (a: AvanceSubida) => void,
+  onReutilizada: (nombre: string) => void = () => {},
+): Promise<string[]> {
+  const total = ofertas.reduce((t, f) => t + f.size, 0)
+  let previos = 0
+  const ids: string[] = []
+  for (const f of ofertas) {
+    let s = await retomarOcrear(f)
+    if (s.reutilizada) onReutilizada(f.name)
+    let fallos = 0
+    while (!s.completa) {
+      const desde = s.recibido
+      const trozo = f.slice(desde, Math.min(f.size, desde + PEDAZO))
+      try {
+        s = await subirConAvance<EstadoSubida>(
+          `/api/procesos/subidas/${s.id}?desde=${desde}`,
+          trozo,
+          (a) => onAvance({ cargado: previos + desde + a.cargado, total }),
+          true,
+          'PUT',
+        )
+        fallos = 0
+      } catch (err) {
+        // 409: el servidor ya tenía más (un reintento que sí había llegado): se sigue desde ahí.
+        // Red caída: se reintenta con espera creciente; tras varios intentos, se avisa.
+        fallos += 1
+        if (fallos > 8) throw err
+        await esperar(Math.min(30000, 1000 * 2 ** fallos))
+        s = await pedirJson<EstadoSubida>(`/api/procesos/subidas/${s.id}`)
+      }
+      onAvance({ cargado: previos + s.recibido, total })
+    }
+    previos += f.size
+    ids.push(s.id)
+  }
+  return ids
+}
+
+/** Olvida en este navegador las subidas ya usadas (la preparación las reparte y borra). */
+export function olvidarSubidas(ofertas: File[]) {
+  try {
+    for (const f of ofertas) localStorage.removeItem(claveSubida(f))
+  } catch {
+    // Nada que olvidar.
+  }
+}
+
+/** Ofertas subidas desde el equipo que quedaron guardadas en el servidor: se
+ * reutilizan si se vuelve a elegir el mismo archivo, y se pueden eliminar. */
+export interface CargaGuardada {
+  huella: string
+  nombre: string
+  tamano: number
+  ofertas: number
+  registrada: number | null
+  completa: boolean
+}
+export const listarCargas = () => pedirJson<CargaGuardada[]>('/api/procesos/cargas')
+export const verCarga = (huella: string, tamano: number) =>
+  pedirJson<{ guardada: boolean; ofertas: number }>(`/api/procesos/cargas/${huella}?tamano=${tamano}`)
+export const eliminarCarga = (huella: string) => pedirJson<{ ofertas_borradas: number }>(`/api/procesos/cargas/${huella}`, { method: 'DELETE' })
+
+export const listarPreparaciones = () => pedirJson<Preparacion[]>('/api/procesos/preparaciones')
+export const verPreparacion = (id: string) => pedirJson<Preparacion>(`/api/procesos/preparaciones/${id}`)
+export const reintentarPreparacion = (id: string) => enviarJson<Preparacion>(`/api/procesos/preparaciones/${id}/reintentar`, 'POST')
+export async function eliminarPreparacion(id: string): Promise<void> {
+  const res = await pedir(`/api/procesos/preparaciones/${id}`, { method: 'DELETE' })
+  if (!res.ok && res.status !== 404) throw new Error(await extractErrorDetail(res))
+}
 
 export async function analizarDocumentoBase(
   codigoProceso: string,

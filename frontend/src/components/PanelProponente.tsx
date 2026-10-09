@@ -40,6 +40,8 @@ interface Props {
   onSiguientePendiente: (() => void) | null
   /** Contenido adicional al final (personas verificadas y antecedentes aportados). */
   extra?: React.ReactNode
+  /** Deja estos documentos de la carpeta como asociados a mano al requisito (null = solo lectura). */
+  onAsociarDocumentos: ((resultado: ResultadoRequisito, archivos: string[], excluidos: string[]) => Promise<void>) | null
   /** Subir el certificado que el evaluador consultó en línea (null = solo lectura). */
   onSubirCertificado: ((requisito: number) => void) | null
   /** Consultar el COPNIA en línea por la matrícula que se leyó del documento. */
@@ -59,10 +61,26 @@ function Pill({ estado }: { estado: Estado }) {
   )
 }
 
+/** El pliego de este proceso no incluye el requisito (ni lo pide ni lo puntúa):
+ * es igual para todos los proponentes, así que no se muestra como un requisito más. */
+function fueraDelPliego(r: ResultadoRequisito | undefined): boolean {
+  return Boolean(r && r.cumple === true && !r.error && (r.motivo ?? '').startsWith('N.A. — el pliego'))
+}
+
 export default function PanelProponente(p: Props) {
   const panel = useRef<HTMLElement>(null)
   useDialogo(panel)
   const porReq = new Map(p.resultados.map((r) => [r.requisito, r]))
+  const [asociando, setAsociando] = useState(false)
+  async function asociar(r: ResultadoRequisito, archivos: string[], excluidos: string[] = r.archivos_excluidos ?? []) {
+    if (!p.onAsociarDocumentos) return
+    setAsociando(true)
+    try {
+      await p.onAsociarDocumentos(r, archivos, excluidos)
+    } finally {
+      setAsociando(false)
+    }
+  }
   const resumen = resumenProponente(p.resultados, p.revisiones)
   const tipo = p.resultados.find((r) => r.tipo_proponente)?.tipo_proponente
 
@@ -104,6 +122,8 @@ export default function PanelProponente(p: Props) {
 
   useEffect(() => {
     function tecla(e: KeyboardEvent) {
+      // Con una ventana abierta encima (subir un certificado), el teclado es de esa ventana.
+      if (document.querySelector('.ventana-fondo')) return
       // Al escribir en un campo las teclas son texto, no atajos.
       const foco = document.activeElement
       if (foco instanceof HTMLInputElement || foco instanceof HTMLTextAreaElement || foco instanceof HTMLSelectElement) {
@@ -211,12 +231,14 @@ export default function PanelProponente(p: Props) {
         </div>
 
         <div className="drawer-body">
-          {ORDEN_GRUPOS.filter((g) => REQUISITOS.some((r) => r.grupo === g)).map((grupo) => (
+          {ORDEN_GRUPOS.filter((g) => REQUISITOS.some((r) => r.grupo === g && !fueraDelPliego(porReq.get(r.numero)))).map((grupo) => (
             <div key={grupo}>
               <div className="grupo-titulo">{GRUPOS[grupo]}</div>
               {REQUISITOS.filter((info) => info.grupo === grupo).map((info) => {
                 const r = porReq.get(info.numero)
                 if (!r) return null
+                // Lo que este pliego no pide no se lista como requisito: se nombra al final.
+                if (fueraDelPliego(r)) return null
                 const estado = estadoDe(r, p.revisiones)
                 const abierto = abiertos.has(info.numero)
                 const decision = p.revisiones[claveRevision(r.hoja, r.requisito)]
@@ -228,6 +250,17 @@ export default function PanelProponente(p: Props) {
                     ? [r.archivo_evaluado]
                     : ordenarArchivosPorRequisito(info.numero, r.archivos_disponibles)
                 const archivo = archivoElegido[info.numero] ?? (r.archivo_evaluado ?? '')
+                // Varios documentos sostienen el resultado: cada uno con su botón.
+                const asociados = r.archivos_asociados ?? []
+                const excluidos = r.archivos_excluidos ?? []
+                const soportes = [...new Set([r.archivo_evaluado, ...(r.archivos_soporte ?? []), ...asociados].filter((a): a is string => Boolean(a)))].filter(
+                  (a) => !excluidos.includes(a),
+                )
+                // Se listan uno por uno cuando hay varios o cuando alguien añadió o quitó alguno.
+                // Lo que el programa dio por verificado no se toca, salvo que la persona haya dicho que no está de acuerdo.
+                const bloqueadoPorVerificado = r.cumple === true && decision !== false
+                const puedeCambiarDocumentos = Boolean(p.onAsociarDocumentos) && !bloqueadoPorVerificado
+                const listar = soportes.length > 1 || asociados.length > 0 || excluidos.length > 0 || (puedeCambiarDocumentos && soportes.length > 0)
                 return (
                   <div key={info.numero} id={`req-${info.numero}`} className="req" data-destacado={p.requisitoDestacado === info.numero}>
                     <button type="button" className="req-top" onClick={() => alternar(info.numero)} aria-expanded={abierto}>
@@ -261,20 +294,21 @@ export default function PanelProponente(p: Props) {
                           />
                         )}
                         {p.onConsultarCopnia && fuente(info.numero)?.clave === 'copnia' && esPendiente(estado) && (() => {
-                          const matricula = (matriculaEscrita[info.numero] ?? r.matricula_profesional ?? '').trim()
+                          // El COPNIA se consulta por la cédula del profesional (también acepta la matrícula).
+                          const matricula = (matriculaEscrita[info.numero] ?? '').trim()
                           return (
                             <div className="acciones">
                               <span className="small muted">
-                                {r.matricula_profesional
-                                  ? 'El COPNIA entrega este certificado en línea con la matrícula leída de la oferta:'
-                                  : 'No se leyó la matrícula profesional de la oferta. Escríbala y el certificado se consulta en línea:'}
+                                Escriba la cédula del ingeniero que avala la oferta y el certificado del COPNIA se consulta en línea
+                                {r.matricula_profesional ? ` (matrícula leída de la oferta: ${r.matricula_profesional})` : ''}:
                               </span>
                               <input
                                 className="input"
                                 style={{ maxWidth: 200, height: 34 }}
-                                aria-label="Matrícula profesional"
-                                placeholder="Matrícula profesional"
-                                value={matriculaEscrita[info.numero] ?? r.matricula_profesional ?? ''}
+                                aria-label="Cédula del ingeniero"
+                                placeholder="Cédula del ingeniero"
+                                inputMode="numeric"
+                                value={matriculaEscrita[info.numero] ?? ''}
                                 onChange={(e) => setMatriculaEscrita((prev) => ({ ...prev, [info.numero]: e.target.value }))}
                               />
                               <button
@@ -323,11 +357,80 @@ export default function PanelProponente(p: Props) {
                         )}
                         {verCarpeta.has(info.numero) && carpeta && (
                           <span className="small muted">
-                            Viendo toda la carpeta: {carpeta.archivos.length + carpeta.aportados.length} documentos. Elija uno y ábralo.
+                            Viendo toda la carpeta: {carpeta.archivos.length + carpeta.aportados.length} documentos. Elija uno, ábralo y, si
+                            corresponde a este requisito, añádalo: queda guardado.
                           </span>
                         )}
                         {errorCarpeta && <span className="small" style={{ color: 'var(--bad, #c0392b)' }}>{errorCarpeta}</span>}
-                        {archivos.length > 0 && (
+                        {listar && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <span className="small muted">Documentos de este requisito ({soportes.length}):</span>
+                            {soportes.map((a) => (
+                              <div key={a} className="acciones">
+                                <span className="archivo" title={a}>
+                                  <Icono nombre="documento" tam={15} /> {nombreArchivo(a)}
+                                </span>
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  type="button"
+                                  onClick={() => p.onVerDocumento(r, a)}
+                                  disabled={p.abriendoDocumento !== null}
+                                >
+                                  {p.abriendoDocumento === `${r.hoja}|${a}` ? <span className="spinner oscuro" /> : <Icono nombre="ojo" tam={15} />}
+                                  Ver documento
+                                </button>
+                                {asociados.includes(a) && <span className="small muted">añadido a mano</span>}
+                                {puedeCambiarDocumentos && (
+                                  <button
+                                    className="btn btn-ghost btn-icon"
+                                    type="button"
+                                    disabled={asociando}
+                                    title="Quitar de este requisito (no corresponde)"
+                                    aria-label={`Quitar ${nombreArchivo(a)} de este requisito`}
+                                    onClick={() =>
+                                      // Lo añadido a mano simplemente se retira; lo que trajo el programa queda como quitado.
+                                      void asociar(
+                                        r,
+                                        asociados.filter((x) => x !== a),
+                                        a === r.archivo_evaluado || (r.archivos_soporte ?? []).includes(a) ? [...excluidos, a] : excluidos,
+                                      )
+                                    }
+                                  >
+                                    <Icono nombre="papelera" tam={16} />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                            {excluidos.length > 0 && (
+                              <div className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <span>Quitados por no corresponder ({excluidos.length}):</span>
+                                {excluidos.map((a) => (
+                                  <span key={a} title={a}>
+                                    <s>{nombreArchivo(a)}</s>{' '}
+                                    {puedeCambiarDocumentos && (
+                                      <button
+                                        className="enlace"
+                                        type="button"
+                                        disabled={asociando}
+                                        onClick={() => void asociar(r, asociados, excluidos.filter((x) => x !== a))}
+                                      >
+                                        Restaurar
+                                      </button>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {p.onAsociarDocumentos && bloqueadoPorVerificado && (
+                              <span className="small muted">
+                                El programa dio por verificado este requisito: para añadir o quitar documentos, primero marque que no
+                                está de acuerdo.
+                              </span>
+                            )}
+                            <span className="small muted">Cada documento que se añade o se quita queda registrado con quién y cuándo.</span>
+                          </div>
+                        )}
+                        {(!listar || verTodo) && archivos.length > 0 && (
                           <div className="acciones">
                             {archivos.length > 1 || !r.archivo_evaluado ? (
                               <select
@@ -360,6 +463,17 @@ export default function PanelProponente(p: Props) {
                               {p.abriendoDocumento === `${r.hoja}|${archivo}` ? <span className="spinner oscuro" /> : <Icono nombre="ojo" tam={15} />}
                               Ver documento
                             </button>
+                            {verTodo && puedeCambiarDocumentos && (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                type="button"
+                                disabled={asociando || !archivo || soportes.includes(archivo)}
+                                title={soportes.includes(archivo) ? 'Ya está entre los documentos de este requisito' : undefined}
+                                onClick={() => void asociar(r, [...asociados, archivo])}
+                              >
+                                {asociando ? <span className="spinner" /> : <Icono nombre="mas" tam={15} />} Añadir a este requisito
+                              </button>
+                            )}
                           </div>
                         )}
                         <div className="acciones decision" style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
@@ -407,6 +521,15 @@ export default function PanelProponente(p: Props) {
               })}
             </div>
           ))}
+          {REQUISITOS.some((info) => fueraDelPliego(porReq.get(info.numero))) && (
+            <p className="small muted" style={{ marginTop: 12 }}>
+              No aplican en este pliego (no se evalúan):{' '}
+              {REQUISITOS.filter((info) => fueraDelPliego(porReq.get(info.numero)))
+                .map((info) => info.titulo)
+                .join('; ')}
+              .
+            </p>
+          )}
           {p.extra}
           <p className="small muted atajos">
             Atajos: <kbd>←</kbd> <kbd>→</kbd> cambian de proponente · <kbd>P</kbd> salta al siguiente pendiente ·{' '}

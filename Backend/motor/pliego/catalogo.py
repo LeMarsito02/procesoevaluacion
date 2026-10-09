@@ -106,7 +106,9 @@ def parametros_de(req) -> dict[str, int]:
         return {"camara_dias": dias} if dias else {"camara_meses": meses}
     if v in ("juridica.aval_ingeniero", "juridica.copnia_antecedentes") and meses:
         return {"copnia_meses": meses}
-    if v in ("juridica.contraloria", "juridica.procuraduria", "juridica.policia", "juridica.rnmc") and (dias or meses):
+    if v in ("juridica.contraloria", "juridica.procuraduria") and (dias or meses):
+        return {"antecedentes_disciplinarios_fiscales_meses": meses or max(1, round(dias / 30))}
+    if v in ("juridica.policia", "juridica.rnmc") and (dias or meses):
         return {"antecedentes_meses": meses or max(1, round(dias / 30))}
     return {}
 

@@ -1480,11 +1480,243 @@ class FacultadesRepresentanteTests(TestCase):
         cumple, motivo = self.evaluar("3.000 SALARIOS MINIMOS MENSUALES LEGALES VIGENTES", 2_269_370_336, smmlv=1_500_000)
         self.assertTrue(cumple, motivo)
 
+    def evaluar_con_oferta(self, actas: dict[str, str]):
+        """Certificado que exige autorización de la asamblea por encima de $100 millones,
+        con los documentos de la oferta como texto (sin abrir PDF)."""
+        from unittest import mock
+
+        from motor.evaluacion.camara_comercio import _evaluar_facultades_certificado
+
+        certificado = (
+            "CERTIFICADO DE EXISTENCIA Y REPRESENTACION LEGAL RAZON SOCIAL : CONSTRUCTORA EJEMPLO S.A.S NIT : "
+            "900.123.456-5 " + self.CERTIFICADO.format(limite="$100.000.000")
+        )
+        pdfs = {"existencia.pdf": certificado.encode(), **{k: v.encode() for k, v in actas.items()}}
+        with mock.patch("motor.evaluacion.camara_comercio.extraer_texto", side_effect=lambda b, max_paginas=None: b.decode()):
+            return _evaluar_facultades_certificado(
+                "existencia.pdf", certificado, 2_269_370_336, pdfs, "ICCU-LP-014-2026"
+            )
+
+    def test_acta_de_la_asamblea_que_autoriza_este_proceso_se_senala(self):
+        """Se encuentra y se dice cuál es, pero la valida el abogado: no se aprueba solo."""
+        cumple, motivo = self.evaluar_con_oferta({
+            "JURIDICO/ACTA ASAMBLEA.pdf": (
+                "ACTA No. 12 ASAMBLEA GENERAL DE ACCIONISTAS CONSTRUCTORA EJEMPLO S.A.S NIT 900123456-5. "
+                "SE AUTORIZA AL REPRESENTANTE LEGAL PARA PRESENTAR OFERTA Y SUSCRIBIR EL CONTRATO DEL PROCESO "
+                "LP-014-2026 DEL ICCU"
+            ),
+        })
+        self.assertFalse(cumple)
+        self.assertIn("se aportó el acta 'ACTA ASAMBLEA.pdf'", motivo)
+
+    def test_acta_de_otro_organo_va_a_revision(self):
+        cumple, motivo = self.evaluar_con_oferta({
+            "acta.pdf": (
+                "ACTA No. 3 JUNTA DIRECTIVA CONSTRUCTORA EJEMPLO S.A.S NIT 900123456. SE AUTORIZA AL REPRESENTANTE "
+                "LEGAL PARA EL PROCESO ICCU-LP-014-2026"
+            ),
+        })
+        self.assertFalse(cumple)
+        self.assertIn("junta directiva", motivo)
+
+    def test_acta_sin_el_proceso_va_a_revision(self):
+        cumple, motivo = self.evaluar_con_oferta({
+            "acta.pdf": "ACTA ASAMBLEA DE ACCIONISTAS CONSTRUCTORA EJEMPLO S.A.S SE AUTORIZA AL GERENTE PARA CONTRATAR",
+        })
+        self.assertFalse(cumple)
+        self.assertIn("no menciona el proceso", motivo)
+
+    def test_sin_acta_se_pide_como_subsanacion(self):
+        cumple, motivo = self.evaluar_con_oferta({"carta.pdf": "CARTA DE PRESENTACION DE LA OFERTA"})
+        self.assertFalse(cumple)
+        self.assertIn("asamblea", motivo)
+        self.assertIn("subsanación", motivo)
+
     def test_sin_salario_minimo_configurado_queda_para_revision(self):
         """Nunca se aprueba a ciegas: sin el dato, decide una persona."""
         cumple, motivo = self.evaluar("100 SALARIOS MINIMOS MENSUALES LEGALES VIGENTES", 2_269_370_336)
         self.assertFalse(cumple)
         self.assertIn("salario mínimo", motivo)
+
+
+class InformeExcelTests(TestCase):
+    """El Excel se diligencia como lo hace el abogado: título de cada requisito del
+    proceso, CUMPLE, nombre del documento y la observación debajo."""
+
+    def _libro(self, requisitos, resultados, proponentes, **extras):
+        import io
+
+        import openpyxl
+
+        from motor.esquemas.proceso import ProcesoDocumentoBase
+        from motor.excel.filler import fill_template
+
+        contenido = fill_template(
+            "motor/plantillas/plantilla_evaluacion_juridica.xlsx", ProcesoDocumentoBase.model_validate(DOCUMENTO_BASE),
+            proponentes, resultados, requisitos=requisitos, **extras,
+        )
+        return openpyxl.load_workbook(io.BytesIO(contenido))
+
+    def test_nit_con_digito_de_verificacion(self):
+        from motor.excel.filler import nit_con_dv
+
+        self.assertEqual(nit_con_dv("902069061"), "902.069.061-9")
+        self.assertEqual(nit_con_dv("9020690619"), "902.069.061-9")
+        self.assertEqual(nit_con_dv("901733411"), "901.733.411-8")
+        self.assertEqual(nit_con_dv(""), "")
+
+    def test_cada_requisito_con_su_titulo_documentos_y_observacion(self):
+        from motor.esquemas.proceso import Proponente, ResultadoRequisito
+
+        base = {"hoja": "P-01", "numero_orden": 1, "nombre_proponente": "CONSORCIO UNO"}
+        proponentes = [Proponente(**base, nombre_archivo="1.zip", drive_file_id="x")]
+        # 19 requisitos: uno más de los que caben en la plantilla.
+        requisitos = [(n, f"Requisito {n}") for n in range(1, 20)]
+        resultados = [
+            ResultadoRequisito(**base, requisito=1, cumple=True, archivo_evaluado="JUR.rar/Carta.pdf", archivos_soporte=["JUR.rar/Acta.pdf"],
+                               archivos_excluidos=["JUR.rar/Acta.pdf"], archivos_asociados=["JUR.rar/Poder.pdf"]),
+            ResultadoRequisito(**base, requisito=5, cumple=False, motivo="'JUR.rar/a/REDAM.pdf' venció antes del cierre"),
+            ResultadoRequisito(**base, requisito=18, cumple=True, motivo="N.A. — no es una S.A."),
+            ResultadoRequisito(**base, requisito=19, cumple=True, archivo_evaluado="Existencia.pdf"),
+        ]
+        wb = self._libro(requisitos, resultados, proponentes,
+                         observaciones={("P-01", 5): "[Revisado por Ana el 09/10/2026: NO CUMPLE]"},
+                         integrantes={"P-01": [("ALFA S.A.S — NIT 901.733.411-8", "60 %")]})
+        ws = wb["P-01"]
+        self.assertEqual((ws["D5"].value, ws["E12"].value, ws["E14"].value), (1, "ALFA S.A.S — NIT 901.733.411-8", "60 %"))
+        # Título, CUMPLE y documentos (el quitado no sale; el añadido a mano sí).
+        self.assertEqual((ws["B29"].value, ws["C29"].value, ws["L29"].value), (1, "Requisito 1", "SI"))
+        self.assertEqual(ws["N29"].value, "Carta.pdf, Poder.pdf")
+        # El quinto requisito del proceso va en el quinto bloque, con su observación debajo y sin la ruta de carpetas.
+        self.assertEqual((ws["C45"].value, ws["L45"].value), ("Requisito 5", "NO"))
+        self.assertEqual(ws["C47"].value, "'REDAM.pdf' venció antes del cierre [Revisado por Ana el 09/10/2026: NO CUMPLE]")
+        self.assertEqual(ws["L97"].value, "N.A.")
+        # Lo que no se evaluó queda en blanco: nunca el «SI» de ejemplo de la plantilla.
+        self.assertIsNone(ws["L33"].value)
+        # El requisito 19 no cabía: se añade un bloque y el pie baja con él.
+        self.assertEqual((ws["B101"].value, ws["L101"].value, ws["N101"].value), (19, "SI", "Existencia.pdf"))
+        self.assertIn('L101="NO"', ws["G109"].value)
+        self.assertIn("POR REVISAR", ws["G109"].value)
+        self.assertEqual(wb["RESUMEN"]["E6"].value, "G109")
+        # Las hojas de más de la plantilla (con datos de ejemplo) no van en el informe.
+        self.assertNotIn("P-02", wb.sheetnames)
+
+
+class SoportesNombradosTests(TestCase):
+    """Todo documento que el motivo nombra se puede abrir desde el requisito."""
+
+    def test_enlaza_los_documentos_que_nombra_el_motivo(self):
+        from evaluaciones.servicios import soportes_nombrados
+
+        archivos = ["1. JURIDICO.rar/ACTA ASAMBLEA.pdf", "1. JURIDICO.rar/EXISTENCIA.pdf", "4. PONDERABLES.rar/CERTIFICADO DESEMPATE.pdf",
+                    "1. JURIDICO.rar/RUT.pdf"]
+        motivo = "falta el 'CERTIFICADO DESEMPATE.pdf'; se aportó el acta '1. JURIDICO.rar/ACTA ASAMBLEA.pdf'"
+        self.assertEqual(
+            soportes_nombrados(motivo, archivos, ["1. JURIDICO.rar/EXISTENCIA.pdf"]),
+            ["1. JURIDICO.rar/EXISTENCIA.pdf", "4. PONDERABLES.rar/CERTIFICADO DESEMPATE.pdf", "1. JURIDICO.rar/ACTA ASAMBLEA.pdf"],
+        )
+        # Un nombre demasiado corto no se enlaza por su nombre suelto.
+        self.assertEqual(soportes_nombrados("revisa el RUT.pdf", archivos, []), [])
+
+
+class AnotacionesDelCertificadoTests(TestCase):
+    """Un embargo o una insolvencia se le explica al abogado: qué es, qué revisar y
+    la frase completa del certificado. El título de la sección del registro
+    («reorganización, adjudicación o liquidación judicial») no es una liquidación."""
+
+    def test_reorganizacion_explicada_y_no_confundida_con_liquidacion(self):
+        from unittest import mock
+
+        from motor.evaluacion import camara_comercio as C
+
+        paginas = [
+            "PROCESO DE REORGANIZACION EMPRESARIAL, ADJUDICACION O LIQUIDACION JUDICIAL MEDIANTE AUTO NO. 460-011886 DEL 11 DE "
+            "JULIO DE 2025, LA SUPERINTENDENCIA DE SOCIEDADES, INSCRITO EL 24 DE ABRIL DE 2026 BAJO",
+            "CODIGO DE VERIFICACION ABC. LA VERIFICACION SE PUEDE REALIZAR DURANTE 60 DIAS. ---------- EL NO. 00009960 DEL LIBRO XIX, "
+            "EN VIRTUD DE LA LEY 1116 DE 2006 RESOLVIO ADMITIR AL PROCESO DE REORGANIZACION A LA SOCIEDAD DE LA REFERENCIA. CAPITAL",
+        ]
+        with mock.patch("motor.procesamiento.pdf_utils.paginas_de_texto", return_value=paginas):
+            anotaciones = C.anotaciones_del_certificado(b"")
+        self.assertEqual(len(anotaciones), 1)
+        que, revisar, frase, pagina = anotaciones[0]
+        self.assertIn("reorganización", que)
+        self.assertNotIn("liquidación", que)
+        self.assertIn("promotor", revisar)
+        self.assertEqual(pagina, 1)
+        # El auto con su fecha y la decisión, sin el encabezado de página ni cortes en «NO.».
+        self.assertIn("AUTO NO. 460-011886 DEL 11 DE JULIO DE 2025", frase)
+        self.assertIn("RESOLVIO ADMITIR AL PROCESO DE REORGANIZACION", frase)
+        self.assertNotIn("VERIFICACION", frase)
+
+    def test_un_certificado_limpio_no_trae_anotaciones(self):
+        from unittest import mock
+
+        from motor.evaluacion import camara_comercio as C
+
+        limpio = ["EL REPRESENTANTE LEGAL PODRA SOLICITAR LA ADMISION DE LA SOCIEDAD A UN TRAMITE. LOS BIENES ESTAN LIBRES DE EMBARGOS. SIN EMBARGO PODRA."]
+        with mock.patch("motor.procesamiento.pdf_utils.paginas_de_texto", return_value=limpio):
+            self.assertEqual(C.anotaciones_del_certificado(b""), [])
+
+
+class CacheDeAportadosTests(TestCase):
+    """Subir un certificado recalcula su requisito (y los que comparten certificado),
+    no la oferta entera: recalcular todo tardaba muchos minutos por cada certificado."""
+
+    def test_solo_cambia_la_clave_del_requisito_del_certificado(self):
+        from motor.esquemas.proceso import ProcesoDocumentoBase, Proponente
+        from motor.evaluacion.formato1 import _clave_cache
+
+        proceso = ProcesoDocumentoBase.model_validate(DOCUMENTO_BASE)
+        base = {"hoja": "P-01", "numero_orden": 1, "nombre_proponente": "UNO", "nombre_archivo": "1.zip", "drive_file_id": "x"}
+        sin = Proponente(**base)
+        con = Proponente(**base, documentos_aportados=[("Req 17 - RNMC 123.pdf", b"%PDF")])
+        copnia = Proponente(**base, documentos_aportados=[("Req 2 - COPNIA 1.pdf", b"%PDF")])
+
+        def clave(p, requisito):
+            return _clave_cache(p, proceso, "md5", requisito=requisito)
+
+        # El RNMC aportado cambia los cinco antecedentes y nada más.
+        for requisito in (5, 14, 15, 16, 17):
+            self.assertNotEqual(clave(sin, requisito), clave(con, requisito), requisito)
+        for requisito in (1, 2, 6, 9, 11, 20):
+            self.assertEqual(clave(sin, requisito), clave(con, requisito), requisito)
+        # El COPNIA cambia el aval y los antecedentes del ingeniero.
+        self.assertNotEqual(clave(sin, 2), clave(copnia, 2))
+        self.assertNotEqual(clave(sin, 3), clave(copnia, 3))
+        self.assertEqual(clave(sin, 17), clave(copnia, 17))
+
+
+class SiglaDeLaEmpresaTests(TestCase):
+    """El Formato 2 nombra a la empresa por su sigla y el certificado por la razón
+    social: es una sola empresa (CONSORCIO ROHI, ICCU-LP-014-2026: KONKON S.A.S =
+    KONSTRUCCIONES Y KONSULTORIAS S.A.S). Antes salía dos veces y a la «segunda»
+    le faltaban todos los antecedentes."""
+
+    def test_la_sigla_del_certificado_empareja_al_integrante(self):
+        from motor.evaluacion.antecedentes import _con_integrantes_juridicos
+        from motor.evaluacion.camara_comercio import SIGLA_RE, Empresa
+        from motor.evaluacion.proponente_plural import Integrante
+
+        texto = "RAZON SOCIAL : KONSTRUCCIONES Y KONSULTORIAS S.A.S SIGLA : KONKON S.A.S NIT : 901839938-3 DOMICILIO: VALLEDUPAR"
+        self.assertEqual(SIGLA_RE.search(texto).group(1), "KONKON S.A.S")
+        certificados = [
+            Empresa("INVERSIONES INVASAR S.A.S", "901869180", "INVASAR"),
+            Empresa("KONSTRUCCIONES Y KONSULTORIAS S.A.S", "901839938", "KONKON S.A.S"),
+        ]
+
+        def integrante(nombre):
+            return Integrante(nombre=nombre, identificacion=None, persona_natural=False)
+
+        for como_firma in ("KONKON S.A.S", "Konkon SAS", "KONKON S.A.S."):
+            empresas = _con_integrantes_juridicos(certificados, [integrante("INVERSIONES INVASAR S.A.S"), integrante(como_firma)])
+            self.assertEqual([e.nit for e in empresas], ["901869180", "901839938"], como_firma)
+        # La misma razón social escrita con y sin puntos en el tipo de sociedad (P-02: «ICSSA SAS» / «ICSSA S.A.S»).
+        dos = [Empresa("ICSSA S.A.S", "900111222"), Empresa("PROMAQCO S.A.S", "900333444")]
+        empresas = _con_integrantes_juridicos(dos, [integrante("ICSSA SAS"), integrante("PROMAQCO SAS")])
+        self.assertEqual([e.nit for e in empresas], ["900111222", "900333444"])
+        # Otra empresa que no es ninguna de las dos sí se agrega: le faltan sus certificados.
+        empresas = _con_integrantes_juridicos(certificados, [integrante("KONSTRUCTORA DEL NORTE S.A.S")])
+        self.assertEqual(len(empresas), 3)
 
 
 class AntecedentesEmpresaTests(TestCase):
@@ -2805,6 +3037,36 @@ class UnZipConTodasLasOfertasTests(SimpleTestCase):
         })
         self.assertEqual(len(ofertas_locales.desde_archivos([("CO1.RPL.5804554.zip", oferta)]).proponentes), 1)
 
+    def test_las_ofertas_dentro_de_una_carpeta_envoltorio(self):
+        """El caso real de ICCU-LP-014-2026: un .zip de 5,6 GB con todo dentro
+        de «OFERTAS_LP-14/» —83 ofertas y la carpeta «ANTECEDENTES CONSULTADOS»
+        que agregó la entidad— salía como un solo proponente."""
+        from motor.integrations import ofertas_locales
+
+        paquete = self._contenedor({
+            "OFERTAS_LP-14/01. CONSORCIO ROHI.zip": self._oferta("rohi"),
+            "OFERTAS_LP-14/02. CONSORCIO MVS 2026.zip": self._oferta("mvs"),
+            "OFERTAS_LP-14/03. CONSORCIO_VIAL_CUNDINAMARCA.zip": self._oferta("vial"),
+            "OFERTAS_LP-14/ANTECEDENTES CONSULTADOS/procuraduria.pdf": b"%PDF",
+        })
+        r = ofertas_locales.desde_archivos([("OFERTAS_LP-14.zip", paquete)])
+        self.assertEqual([(p.hoja, p.nombre_proponente) for p in r.proponentes],
+                         [("P-01", "CONSORCIO ROHI"), ("P-02", "CONSORCIO MVS 2026"), ("P-03", "CONSORCIO_VIAL_CUNDINAMARCA")])
+        # Dos carpetas envoltorio también.
+        doble = self._contenedor({"A/B/01. UNO SAS.zip": self._oferta("u"), "A/B/02. DOS SAS.zip": self._oferta("d")})
+        self.assertEqual(len(ofertas_locales.desde_archivos([("paquete.zip", doble)]).proponentes), 2)
+
+    def test_un_paquete_que_no_se_pudo_repartir_no_pasa_en_silencio(self):
+        """Si un zip trae varias ofertas a una profundidad que no se reparte,
+        queda como un proponente pero con la advertencia a la vista."""
+        from motor.integrations import ofertas_locales
+
+        raro = self._contenedor({f"X/Y/Z/W/V/{i:02d}. EMPRESA {i} SAS.zip": self._oferta(str(i)) for i in range(1, 5)})
+        r = ofertas_locales.desde_archivos([("paquete raro.zip", raro)])
+        self.assertEqual(len(r.proponentes), 1)
+        self.assertIn("4 ofertas adentro", r.proponentes[0].advertencia)
+        self.assertTrue(any("4 ofertas adentro" in x for x in r.no_reconocidos))
+
     def test_un_contenedor_de_verdad_se_sigue_repartiendo(self):
         """El arreglo anterior no puede llevarse por delante el caso para el
         que existe el reparto: nombres de empresa que empiezan como una sección
@@ -3287,14 +3549,22 @@ class VigenciaAntecedentesTests(TestCase):
         from datetime import date
 
         from motor import criterios
-        from motor.evaluacion.antecedentes import CONFIG_PROCURADURIA, problema_de_vigencia
+        from motor.evaluacion.antecedentes import CONFIG_CONTRALORIA, CONFIG_POLICIA, CONFIG_PROCURADURIA, problema_de_vigencia
 
         reciente = "BOGOTA DC, 31 DE JULIO DEL 2026 LA PROCURADURIA GENERAL DE LA NACION CERTIFICA"
         viejo = "BOGOTA DC, 15 DE MAYO DEL 2026 LA PROCURADURIA GENERAL DE LA NACION CERTIFICA"
-        self.assertIsNone(problema_de_vigencia(CONFIG_PROCURADURIA, reciente, date(2026, 8, 3)))
-        self.assertIn("más de 1 mes", problema_de_vigencia(CONFIG_PROCURADURIA, viejo, date(2026, 8, 3)))
-        with criterios.usar({"antecedentes_meses": 0}):
-            self.assertIsNone(problema_de_vigencia(CONFIG_PROCURADURIA, viejo, date(2026, 8, 3)))
+        muy_viejo = "BOGOTA DC, 15 DE ABRIL DEL 2026 LA PROCURADURIA GENERAL DE LA NACION CERTIFICA"
+        cierre = date(2026, 8, 3)
+        # Procuraduría y Contraloría: tres meses.
+        self.assertIsNone(problema_de_vigencia(CONFIG_PROCURADURIA, reciente, cierre))
+        self.assertIsNone(problema_de_vigencia(CONFIG_PROCURADURIA, viejo, cierre))
+        self.assertIsNone(problema_de_vigencia(CONFIG_CONTRALORIA, viejo, cierre))
+        self.assertIn("más de 3 meses", problema_de_vigencia(CONFIG_PROCURADURIA, muy_viejo, cierre))
+        self.assertIn("más de 3 meses", problema_de_vigencia(CONFIG_CONTRALORIA, muy_viejo, cierre))
+        # Policía: un mes.
+        self.assertIn("más de 1 mes", problema_de_vigencia(CONFIG_POLICIA, viejo, cierre))
+        with criterios.usar({"antecedentes_disciplinarios_fiscales_meses": 0}):
+            self.assertIsNone(problema_de_vigencia(CONFIG_PROCURADURIA, muy_viejo, cierre))
 
 
 class ObjetoSocialTests(TestCase):
@@ -3472,6 +3742,9 @@ class CatalogoPliegoTests(TestCase):
         self.assertEqual(parametros_de(rup), {"camara_dias": 30})
         policia = _requisito_pliego(requisito="Antecedentes judiciales", verificacion="juridica.policia", vigencia_dias=90)
         self.assertEqual(parametros_de(policia), {"antecedentes_meses": 3})
+        procuraduria = _requisito_pliego(requisito="Antecedentes disciplinarios", verificacion="juridica.procuraduria",
+                                         vigencia_meses=2)
+        self.assertEqual(parametros_de(procuraduria), {"antecedentes_disciplinarios_fiscales_meses": 2})
         extranjero = _requisito_pliego(requisito="Certificado de existencia", verificacion="juridica.existencia",
                                        vigencia_dias=90, aplica_a=["extranjero"])
         self.assertEqual(parametros_de(extranjero), {})
@@ -4198,12 +4471,18 @@ class CertificadoAportadoSeVeTests(BaseHistorico):
         self.assertEqual(respuesta["Content-Type"], "application/pdf")
         self.assertTrue(bytes(respuesta.content).startswith(b"%PDF"))
 
-    def test_aportar_vuelve_a_poner_al_proponente_en_la_fila(self):
+    def test_aportar_reevalua_enseguida_solo_los_requisitos_del_certificado(self):
+        """Sin fila y sin recalcular la oferta entera: los antecedentes comparten
+        certificado, así que se reevalúan los cinco y nada más."""
+        from unittest import mock
+
         from evaluaciones.models import Trabajo
 
         Trabajo.objects.filter(evaluacion_id=self.ev["id"]).delete()
-        self.aportar(self.abogado, self.p1, 14, nombre="contraloria.pdf")
-        self.assertTrue(Trabajo.objects.filter(evaluacion_id=self.ev["id"], proponente_id=self.p1).exists())
+        with mock.patch("evaluaciones.servicios.reevaluar_requisitos", return_value=5) as reevaluar:
+            self.aportar(self.abogado, self.p1, 14, nombre="contraloria.pdf")
+        self.assertEqual(reevaluar.call_args.args[2], {5, 14, 15, 16, 17})
+        self.assertFalse(Trabajo.objects.filter(evaluacion_id=self.ev["id"], proponente_id=self.p1).exists())
 
     def test_el_motor_recibe_el_certificado_aportado(self):
         from evaluaciones import servicios

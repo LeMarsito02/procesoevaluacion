@@ -23,6 +23,12 @@ from PIL import Image, ImageChops, ImageOps
 from motor.procesamiento.pdf_utils import OCR_CACHE_DIR, OCR_HABILITADO, abrir_pdf
 
 VERSION = 3
+# Motor de esta lectura a fondo: el mismo de todo el OCR (OCR_MOTOR), salvo
+# que OCR_MOTOR_CEDULA diga otro. Medido el 8/10/2026 en las 25 personas de
+# ICCU-CM-043-2026 e ICCU-LP-027-2026 contra la fecha impresa: PaddleOCR dio
+# 22 de 24 fechas confiables y ninguna equivocada; Tesseract, 16 y una
+# equivocada dada por buena (1981 por 1991).
+MOTOR = (os.environ.get("OCR_MOTOR_CEDULA") or os.environ.get("OCR_MOTOR", "tesseract")).strip().lower()
 LADO_MINIMO_IMAGEN = 250
 TIEMPO_MAXIMO = 60
 # Palabras impresas en la cédula: la orientación correcta es la que más lee.
@@ -32,6 +38,13 @@ _PALABRAS_CEDULA_RE = re.compile(
 
 
 def _tesseract(imagen: Image.Image) -> str:
+    if MOTOR == "paddle":
+        from motor.procesamiento import ocr_motor
+
+        try:
+            return ocr_motor.paddle(imagen)
+        except Exception:  # noqa: BLE001
+            return ""
     buffer = io.BytesIO()
     imagen.save(buffer, format="PNG")
     try:
@@ -95,7 +108,14 @@ ALTURAS_FRANJA = (140, 160, 200, 260, 300)
 
 
 def _lineas(imagen: Image.Image) -> list[tuple[str, tuple[int, int, int, int]]]:
-    """(texto, caja) de cada línea que lee tesseract."""
+    """(texto, caja) de cada línea que lee el OCR."""
+    if MOTOR == "paddle":
+        from motor.procesamiento import ocr_motor
+
+        try:
+            return ocr_motor.lineas_paddle(imagen)
+        except Exception:  # noqa: BLE001
+            return []
     buffer = io.BytesIO()
     imagen.save(buffer, format="PNG")
     try:
@@ -151,7 +171,8 @@ def lecturas_a_fondo(contenido: bytes, pagina: int) -> dict[str, list[str]]:
             if pagina > len(pdf.pages):
                 return vacio
             page = pdf.pages[pagina - 1]
-            cache = OCR_CACHE_DIR / f"{pdf._huella_contenido}_{pagina}_cedula_v{VERSION}.json"
+            sufijo = "_paddle" if MOTOR == "paddle" else ""
+            cache = OCR_CACHE_DIR / f"{pdf._huella_contenido}_{pagina}_cedula_v{VERSION}{sufijo}.json"
             if cache.exists():
                 return json.loads(cache.read_text(encoding="utf-8"))
             lecturas: dict[str, list[str]] = {"paginas": [], "franjas": []}

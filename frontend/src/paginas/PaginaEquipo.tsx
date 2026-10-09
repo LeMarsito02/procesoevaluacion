@@ -219,7 +219,7 @@ export default function PaginaEquipo() {
         </div>
       ) : pestana === 'usuarios' ? (
         <div className="tabla-wrap">
-          <table className="tabla">
+          <table className="tabla tabla-apilable">
             <thead>
               <tr>
                 <th>Persona</th>
@@ -235,7 +235,7 @@ export default function PaginaEquipo() {
                 const editable = esAdmin && !soyYo
                 return (
                   <tr key={u.id} data-inactivo={!u.activo}>
-                    <td>
+                    <td data-label="Persona">
                       <div className="persona">
                         <span className="avatar" aria-hidden="true">{iniciales(u.nombre_completo)}</span>
                         <div>
@@ -246,7 +246,7 @@ export default function PaginaEquipo() {
                         </div>
                       </div>
                     </td>
-                    <td>
+                    <td data-label="Rol">
                       {editable ? (
                         <select className="select select-sm" value={u.rol} disabled={guardandoId === u.id} onChange={(e) => cambiar(u, { rol: e.target.value as Rol })}>
                           {ROLES.map((r) => (
@@ -259,7 +259,7 @@ export default function PaginaEquipo() {
                         u.rol_nombre
                       )}
                     </td>
-                    <td>
+                    <td data-label="Áreas">
                       <div className="chips">
                         {AREAS.map((a) => {
                           const activa = u.areas.some((x) => x.tipo === a.id)
@@ -283,8 +283,8 @@ export default function PaginaEquipo() {
                         })}
                       </div>
                     </td>
-                    <td className="small muted nowrap">{fecha(u.ultimo_ingreso)}</td>
-                    <td>
+                    <td data-label="Último ingreso" className="small muted nowrap">{fecha(u.ultimo_ingreso)}</td>
+                    <td data-label="Estado">
                       <div className="acciones">
                         <span className="pill" data-estado={!u.activo ? 'no_aplica' : u.debe_cambiar_clave ? 'revisar' : 'cumple'}>
                           <span className="dot" /> {!u.activo ? 'Inactivo' : u.debe_cambiar_clave ? 'Sin estrenar' : 'Activo'}
@@ -342,7 +342,7 @@ export default function PaginaEquipo() {
         <SoporteEntidad entidadId={idConsulta} onAviso={setAviso} onError={setError} />
       ) : (
         <div className="tabla-wrap">
-          <table className="tabla">
+          <table className="tabla tabla-apilable">
             <thead>
               <tr>
                 <th>Fecha</th>
@@ -354,10 +354,10 @@ export default function PaginaEquipo() {
             <tbody>
               {eventos.map((ev, n) => (
                 <tr key={n}>
-                  <td className="small nowrap">{fecha(ev.fecha)}</td>
-                  <td className="small">{ev.usuario ?? '—'}</td>
-                  <td>{ACCIONES[ev.accion] ?? ev.accion}</td>
-                  <td className="small muted">{detalle(ev.detalles)}</td>
+                  <td data-label="Fecha" className="small nowrap">{fecha(ev.fecha)}</td>
+                  <td data-label="Quién" className="small">{ev.usuario ?? '—'}</td>
+                  <td data-label="Acción">{ACCIONES[ev.accion] ?? ev.accion}</td>
+                  <td data-label="Detalle" className="small muted">{detalle(ev.detalles)}</td>
                 </tr>
               ))}
               {eventos.length === 0 && (

@@ -272,10 +272,15 @@ def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None
                     matriz2: bytes | None = None) -> ParametrosFinancieros:
     """`lotes`: [(nombre, presupuesto)] como los leyó el análisis técnico del
     pliego (ya separa los lotes cuando el presupuesto viene en letras)."""
-    from motor.procesamiento.pdf_utils import abrir_pdf
+    from motor.procesamiento.ocr_motor import corregir_porcentajes
+    from motor.procesamiento.pdf_utils import abrir_pdf, texto_pagina
 
     with abrir_pdf(contenido_pliego) as pdf:
-        texto_norm = normalizar(_texto_con_simbolos("\n".join(page.extract_text() or "" for page in pdf.pages)))
+        # Con OCR en las páginas escaneadas (cacheado), como la técnica. Los
+        # porcentajes con la O por el cero («3O%») se corrigen aquí también:
+        # las páginas ya guardadas en caché traen el error.
+        texto_norm = corregir_porcentajes(
+            normalizar(_texto_con_simbolos("\n".join(texto_pagina(page) for page in pdf.pages))))
     parametros = ParametrosFinancieros(smmlv=smmlv)
     anticipo = _anticipo(texto_norm)
     plazos = _plazos(texto_norm, len(lotes))

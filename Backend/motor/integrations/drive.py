@@ -15,12 +15,15 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
 from motor.esquemas.proceso import Proponente
-from motor.integrations import onedrive
+from motor import cifrado
+from motor.integrations import onedrive, onedrive_empresa
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 DEFAULT_CREDENTIALS_PATH = Path(__file__).resolve().parent.parent.parent / "credentials" / "service_account.json"
-CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "drive_files"
+# Las pruebas usan otra carpeta (CACHE_OFERTAS_DIR): antes dejaban miles de
+# ofertas de juguete en la caché real.
+CACHE_DIR = Path(os.environ.get("CACHE_OFERTAS_DIR") or Path(__file__).resolve().parent.parent.parent / "cache" / "drive_files")
 CACHE_LISTADOS_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "drive_listados"
 
 # Con DRIVE_SOLO_CACHE=1 no se consulta Drive en absoluto: se usa lo que ya
@@ -120,6 +123,8 @@ def _get_file_metadata(file_id: str) -> dict:
     try:
         if onedrive.es_id(file_id):
             return onedrive.metadatos(file_id)
+        if onedrive_empresa.es_id(file_id):
+            return onedrive_empresa.metadatos(file_id)
         service = get_drive_service()
         return service.files().get(fileId=file_id, fields="md5Checksum,size,name", supportsAllDrives=True).execute()
     except Exception:
@@ -165,12 +170,14 @@ def _download_file_bytes(file_id: str, metadata: dict | None) -> bytes:
         # md5 None = no se pudo consultar Drive: la copia local es lo mejor
         # disponible (antes esto terminaba en error de descarga).
         try:
-            return cache_zip.read_bytes()
+            return cifrado.leer(cache_zip)
         except OSError:
             pass
 
     if onedrive.es_id(file_id):
         data = onedrive.descargar(file_id)
+    elif onedrive_empresa.es_id(file_id):
+        data = onedrive_empresa.descargar(file_id)
     else:
         service = get_drive_service()
         request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
@@ -184,7 +191,7 @@ def _download_file_bytes(file_id: str, metadata: dict | None) -> bytes:
     if md5:
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            cache_zip.write_bytes(data)
+            cifrado.escribir(cache_zip, data)
             cache_meta.write_text(json.dumps(metadata))
         except OSError:
             pass
@@ -273,9 +280,12 @@ def _listar_archivos_recursivo(service, folder_id: str, _profundidad: int = 0, _
     return archivos
 
 
-def list_proponentes(carpeta_drive: str) -> ProponentesResult:
-    """Ofertas de la carpeta: un enlace de Google Drive o uno público de
-    OneDrive."""
+def list_proponentes(carpeta_drive: str, directorio_microsoft: str | None = None) -> ProponentesResult:
+    """Ofertas de la carpeta: un enlace de Google Drive, uno público de
+    OneDrive personal o uno del OneDrive/SharePoint de la entidad (Microsoft
+    365), que solo se lee si es del directorio de la entidad."""
+    if onedrive_empresa.es_enlace(carpeta_drive):
+        return _list_proponentes_empresa(carpeta_drive.strip(), directorio_microsoft)
     if onedrive.es_enlace(carpeta_drive):
         return _list_proponentes_onedrive(carpeta_drive.strip())
     folder_id = extract_folder_id(carpeta_drive)
@@ -308,6 +318,16 @@ def list_proponentes(carpeta_drive: str) -> ProponentesResult:
                 raise DriveAccessError(f"No se pudo consultar Google Drive y no hay copia local: {exc}") from exc
             archivos = json.loads(cache_listado.read_text())
 
+    return _proponentes_de(archivos)
+
+
+def _list_proponentes_empresa(enlace: str, directorio: str | None) -> ProponentesResult:
+    try:
+        archivos = onedrive_empresa.listar(enlace, directorio, MAX_PROFUNDIDAD_CARPETAS)
+    except onedrive_empresa.OneDriveEmpresaError as exc:
+        raise DriveAccessError(str(exc)) from exc
+    for a in archivos:
+        _METADATA_MEMORIA[a["id"]] = (time.monotonic(), {k: a[k] for k in ("md5Checksum", "size", "name")})
     return _proponentes_de(archivos)
 
 

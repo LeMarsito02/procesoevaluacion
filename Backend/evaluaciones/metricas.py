@@ -30,6 +30,7 @@ from evaluaciones.models import (
     Evaluacion,
     ItemMuestra,
     MuestraControl,
+    ObservacionInforme,
     Proceso,
     Proponente,
     Resultado,
@@ -193,6 +194,35 @@ def calcular(entidad_id=None, anio: int | None = None, mes: int | None = None) -
             causas[(tipo_de[r["evaluacion_id"]], r["requisito"])] += 1
     titulos = _titulos(evaluaciones)
 
+    # --- Causales de rechazo: lo que quedó «no cumple» en la decisión final ---
+    # (la de la persona si revisó; si no, la del sistema cuando no la dejó en
+    # revisión). Un N.A. no es rechazo.
+    final = {(v["evaluacion_id"], v["proponente_id"], v["requisito"]): v["cumple"] for v in revisiones}
+    rechazos = Counter()
+    ofertas_rechazadas = set()
+    for r in resultados:
+        clave = (r["evaluacion_id"], r["proponente_id"], r["requisito"])
+        cumple = final[clave] if clave in final else (None if r["requiere_revision"] else r["datos__cumple"])
+        if cumple is False:
+            rechazos[(tipo_de[r["evaluacion_id"]], r["requisito"])] += 1
+            ofertas_rechazadas.add((r["evaluacion_id"], r["proponente_id"]))
+
+    # --- Traslado del informe: observaciones ---
+    observaciones = list(ObservacionInforme.objects.filter(evaluacion_id__in=ev_ids).values("decision", "respondida_en", "recibida_en",
+                                                                                            "registrada_en", "modifica_resultado"))
+    respondidas = [o for o in observaciones if o["respondida_en"]]
+
+    # --- Tiempos por proceso: días de la creación a la aprobación de su última evaluación ---
+    cierre: dict = {}
+    for e in evaluaciones:
+        if e.aprobada_en:
+            cierre[e.proceso_id] = max(cierre.get(e.proceso_id, e.aprobada_en), e.aprobada_en)
+    por_proceso: dict[str, list[float]] = defaultdict(list)
+    for proc in procesos:
+        if proc.id in cierre:
+            por_proceso[modalidad_de(proc)].append((cierre[proc.id] - proc.creado_en).total_seconds() / 86400)
+    todos_dias = [d for lista in por_proceso.values() for d in lista]
+
     verificaciones = len(resultados)
     automaticas = sum(a["verificadas_sistema"] for a in areas)
     todos_segundos = [s for lista in segundos_area.values() for s in lista]
@@ -236,6 +266,30 @@ def calcular(entidad_id=None, anio: int | None = None, mes: int | None = None) -
             {"area": TIPOS[a].nombre if a in TIPOS else a, "requisito": n, "titulo": titulos.get((a, n), f"Requisito {n}"), "casos": c}
             for (a, n), c in causas.most_common(6)
         ],
+        "causas_rechazo": [
+            {"area": TIPOS[a].nombre if a in TIPOS else a, "requisito": n, "titulo": titulos.get((a, n), f"Requisito {n}"), "casos": c}
+            for (a, n), c in rechazos.most_common(8)
+        ],
+        "ofertas_rechazadas": len(ofertas_rechazadas),
+        "observaciones": {
+            "recibidas": len(observaciones),
+            "respondidas": len(respondidas),
+            "pendientes": len(observaciones) - len(respondidas),
+            "acogidas": sum(1 for o in observaciones if o["decision"] in ("acoge", "acoge_parcial")),
+            "modifican_resultado": sum(1 for o in observaciones if o["modifica_resultado"]),
+            "dias_para_responder": statistics.mean(
+                [(o["respondida_en"].date() - o["recibida_en"]).days for o in respondidas]
+            ) if respondidas else None,
+        },
+        "tiempos_por_proceso": {
+            "procesos_cerrados": len(todos_dias),
+            "promedio_dias": statistics.mean(todos_dias) if todos_dias else None,
+            "mediana_dias": statistics.median(todos_dias) if todos_dias else None,
+            "maximo_dias": max(todos_dias) if todos_dias else None,
+            "por_modalidad": [
+                {"nombre": MODALIDADES.get(m, m), "procesos": len(d), "promedio_dias": statistics.mean(d)} for m, d in por_proceso.items()
+            ],
+        },
         "minutos_por_verificacion": MINUTOS_POR_VERIFICACION,
     }
 

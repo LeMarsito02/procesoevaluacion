@@ -37,6 +37,8 @@ interface Props {
   onCambiarLote: (indice: number, cambios: Partial<Lote>) => void
   onCambiarGarantia: (cambios: { vigenciaMeses?: number; porcentajePct?: number; baseCalculo?: BaseCalculo }) => void
   onVolver: (() => void) | null
+  /** Corregir la fecha de cierre antes de crear el proceso (recalcula la vigencia de la póliza). */
+  onCambiarFecha?: (fecha: string) => void
   onEvaluar: () => void
 }
 
@@ -73,8 +75,21 @@ export default function PasoDatos(p: Props) {
           <div className="fact-value big">{p.codigoProceso}</div>
         </div>
         <div className="fact">
-          <div className="fact-label">Fecha de cierre</div>
-          <div className="fact-value big">{formatFechaCorta(p.fechaCierre)}</div>
+          <label className="fact-label" htmlFor="fecha-cierre-datos">
+            Fecha de cierre
+          </label>
+          {p.onCambiarFecha && !p.soloLectura ? (
+            <input
+              id="fecha-cierre-datos"
+              className="input fact-input"
+              type="date"
+              value={p.fechaCierre}
+              onChange={(e) => e.target.value && p.onCambiarFecha?.(e.target.value)}
+              title="Si se equivocó, corríjala aquí: se recalcula la vigencia de la garantía"
+            />
+          ) : (
+            <div className="fact-value big">{formatFechaCorta(p.fechaCierre)}</div>
+          )}
         </div>
         <div className="fact">
           <div className="fact-label">Proponentes encontrados</div>

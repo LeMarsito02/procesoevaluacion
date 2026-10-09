@@ -125,6 +125,21 @@ class ResultadoRequisito(BaseModel):
     cumple: bool | None = Field(default=None, description="None si no se pudo evaluar (ej. error al descargar el zip)")
     motivo: str | None = Field(default=None, description="Explicación de por qué no cumple, cuando aplica")
     archivo_evaluado: str | None = Field(default=None, description="Ruta dentro del zip del archivo que se evaluó")
+    archivos_soporte: list[str] = Field(
+        default_factory=list,
+        description="Otros documentos que sostienen el resultado, además de archivo_evaluado (el certificado de "
+        "cada integrante, el acta que autoriza al representante legal, los que nombra el motivo…)",
+    )
+    archivos_asociados: list[str] = Field(
+        default_factory=list,
+        description="Documentos de la carpeta del proponente que quien revisa asoció a este requisito a mano. Se "
+        "conservan al volver a evaluar.",
+    )
+    archivos_excluidos: list[str] = Field(
+        default_factory=list,
+        description="Documentos que el programa relacionó con este requisito y que quien revisa quitó porque no "
+        "corresponden. Se conservan al volver a evaluar; cada cambio queda en la auditoría.",
+    )
     lotes_encontrados: list[str] = Field(default_factory=list)
     numero_proceso_encontrado: bool = False
     objeto_relacionado: bool | None = Field(

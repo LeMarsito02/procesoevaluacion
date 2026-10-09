@@ -342,6 +342,7 @@ export default function Previsualizacion() {
             onAnterior={null}
             onSiguiente={() => {}}
             onSiguientePendiente={() => {}}
+            onAsociarDocumentos={null}
             onSubirCertificado={() => {}}
             onConsultarCopnia={null}
             consultandoCopnia={null}

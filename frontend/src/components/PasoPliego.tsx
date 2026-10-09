@@ -187,6 +187,11 @@ export default function PasoPliego(p: Props) {
               <Icono nombre={verCobertura ? 'menos' : 'mas'} tam={15} /> Secciones jurídicas del pliego y qué las verifica (
               {p.pliego.secciones.length})
             </button>
+            <p className="small muted" style={{ margin: '8px 0 0' }}>
+              Son los numerales del pliego que tratan requisitos jurídicos habilitantes (capacidad jurídica, existencia y representación, seguridad
+              social, carta de presentación…). Al lado de cada uno, la columna «Lo verifica» dice qué revisión automática del programa comprueba
+              eso en cada oferta. Si una sección no tiene revisión automática, se explica qué debe revisar el comité.
+            </p>
             {verCobertura && (
               <div className="tabla-wrap" style={{ marginTop: 12 }}>
               <table className="tabla">
@@ -205,12 +210,17 @@ export default function PasoPliego(p: Props) {
                       </td>
                       <td className="num">{s.pagina}</td>
                       <td className="small">
-                        {s.verificaciones.length ? (
-                          s.verificaciones.join(' · ')
+                        {s.verificaciones.length > 0 && s.verificaciones.join(' · ')}
+                        {s.nota ? (
+                          <div className={s.verificaciones.length ? 'muted' : ''} style={s.verificaciones.length ? { marginTop: 4 } : undefined}>
+                            {s.nota}
+                          </div>
                         ) : (
-                          <span className="pill" data-estado="revisar">
-                            <span className="dot" /> Sin verificación automática
-                          </span>
+                          s.verificaciones.length === 0 && (
+                            <span className="pill" data-estado="no_aplica" title="El programa no tiene una verificación para esta sección: la revisa el comité al evaluar.">
+                              <span className="dot" /> La revisa el comité
+                            </span>
+                          )
                         )}
                       </td>
                     </tr>
@@ -368,6 +378,19 @@ function AvisoLectura({ ia }: { ia: LecturaIA }) {
             <div style={{ width: `${Math.max(ia.progreso, 3)}%` }} data-animada="true" />
           </div>
           <span className="small muted">Puede revisar lo de abajo mientras tanto; al terminar se agregan los hallazgos nuevos.</span>
+        </div>
+      </div>
+    )
+  }
+  if (ia.estado === 'listo' && ia.requisitos === 0) {
+    // Cero requisitos jurídicos en un pliego completo casi siempre es una mala
+    // lectura (escaneo), no un pliego sin requisitos: no se presenta como un visto bueno.
+    return (
+      <div className="callout callout-warn" role="alert" style={{ marginTop: 16 }}>
+        <Icono nombre="alerta" />
+        <div>
+          <strong>La IA leyó el pliego pero no encontró requisitos jurídicos.</strong> Lo más probable es que no haya podido leerlo bien (por
+          ejemplo, un escaneo). Las verificaciones de abajo siguen valiendo; revise el pliego por si exige algo más.
         </div>
       </div>
     )

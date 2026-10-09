@@ -74,6 +74,8 @@ export interface TituloOps {
   pagina: number | null
   /** Lo declara la persona en su hoja de vida; el diploma no se pudo leer. */
   declarado?: boolean
+  /** No se leyó ningún diploma: la profesión se tomó de su matrícula profesional. */
+  por_matricula?: boolean
 }
 
 export interface PeriodoOps {
@@ -90,10 +92,21 @@ export interface PeriodoOps {
   manual: boolean
   /** Una persona le corrigió fechas, entidad o contrato. */
   corregido: boolean
+  /** Una persona confirmó la lectura que había quedado en duda. */
+  confirmado: boolean
+  /** Su lectura quedó en duda: no sostiene una conclusión hasta que alguien la confirme o la corrija. */
+  por_confirmar: boolean
+  /** Qué es lo que está en duda. */
+  duda: string
+  /** Si está relacionado en la hoja de vida del SIGEP: si · no · ilegible · sin_hoja. */
+  sigep: 'si' | 'no' | 'ilegible' | 'sin_hoja'
+  /** Una persona dijo haberlo visto en la hoja de vida del SIGEP. */
+  sigep_confirmado: boolean
   documento_id: string | null
   pagina: number | null
-  /** cuenta · sobra (se propone retirar) · descartado (traslape o anterior al grado) · retirado (por la persona) */
-  estado: 'cuenta' | 'sobra' | 'descartado' | 'retirado'
+  /** cuenta · sobra (se propone retirar) · descartado (traslape o anterior al grado) · retirado (por la persona) ·
+   * sin_sigep (no está relacionado en la hoja de vida del SIGEP: no es válido) */
+  estado: 'cuenta' | 'sobra' | 'descartado' | 'retirado' | 'sin_sigep'
   motivo: string
   dias: number
   duracion: string
@@ -133,6 +146,8 @@ export interface DetalleOps {
   segundos: number | null
   confirmada_en: string | null
   confirmada_por: string | null
+  /** Las copias de los documentos se borraron por la política de retención. */
+  documentos_eliminados_en: string | null
   archivos: { id: string; origen: 'entidad' | 'contratista'; nombre: string; tamano: number }[]
   // Lo siguiente llega cuando termina el análisis.
   estudio?: { documento_id: string; objeto: string; plazo_meses: number | null; valor: number | null } | null
@@ -156,7 +171,13 @@ export interface DetalleOps {
   documentos?: DocumentoOps[]
   documentos_pendientes?: number
   sin_reconocer?: { documento_id: string | null; archivo: string }[]
+  /** La experiencia de la hoja de vida del SIGEP: cuántos empleos trae y a cuántos se les leyeron las fechas. */
+  sigep?: { empleos: number; leidos: number; confiable: boolean } | null
   revisiones?: string[]
+  /** Avisos de la lectura de los documentos; cada uno lo marca como visto una persona. */
+  avisos?: { texto: string; visto: boolean }[]
+  /** Lo que impide concluir: mientras haya algo, el sistema no dice ni «cumple» ni «no cumple». */
+  por_confirmar?: string[]
   /** null mientras quede algo por revisar. */
   cumple?: boolean | null
 }
@@ -172,8 +193,9 @@ export interface PeriodoNuevo {
 export interface DecisionesOps {
   periodos?: Record<
     string,
-    { incluir?: boolean | null; relacionada?: boolean | null; entidad?: string; referencia?: string; inicio?: string; fin?: string }
+    { incluir?: boolean | null; relacionada?: boolean | null; confirmado?: boolean; en_sigep?: boolean; entidad?: string; referencia?: string; inicio?: string; fin?: string }
   >
+  avisos_vistos?: string[]
   /** Un periodo que la persona agrega a mano, y el id de uno agregado que quita. */
   agregar?: PeriodoNuevo
   quitar?: string
@@ -213,6 +235,9 @@ export interface TablaHonorarios {
   vigencias: number[]
 }
 
+/** La fecha local (AAAA-MM-DD) de un instante del servidor, que llega en hora universal. */
+export const fechaLocal = (iso: string) => new Date(iso).toLocaleDateString('en-CA')
+
 const conEntidad = (entidadId?: string | null) => (entidadId ? `?entidad_id=${entidadId}` : '')
 
 export const listarOps = (entidadId?: string | null) => pedirJson<ListaOps>(`/api/ops${conEntidad(entidadId)}`)
@@ -227,6 +252,7 @@ export const confirmarOps = (id: string) => enviarJson<DetalleOps>(`/api/ops/${i
 export const reabrirOps = (id: string) => enviarJson<DetalleOps>(`/api/ops/${id}/reabrir`, 'POST')
 export const eliminarOps = (id: string) => pedirJson<void>(`/api/ops/${id}`, { method: 'DELETE' })
 export const urlCertificado = (id: string) => `/api/ops/${id}/certificado`
+export const urlListaVerificacion = (id: string) => `/api/ops/${id}/lista-de-verificacion`
 export const urlDocumento = (id: string, documentoId: string, pagina?: number | null) =>
   `/api/ops/${id}/documentos/${documentoId}${pagina ? `#page=${pagina}` : ''}`
 

@@ -22,6 +22,7 @@ from django.utils import timezone
 from evaluaciones.models import ContratacionOps, DocumentoOps, EstadoOps, OrigenDocumentoOps, TablaHonorariosOps
 from motor.ops import documentos as motor_documentos
 from motor.ops.expediente import leer_expediente
+from motor.ops.hoja_de_vida import EN_SIGEP, ILEGIBLE, NO_ESTA, SIN_HOJA, Declarada, ExperienciaDeclarada, en_el_sigep, misma_entidad
 from motor.ops.identidad import identificar
 from motor.ops.experiencia import Periodo
 from motor.ops.honorarios import ESPECIALIZACION, MAESTRIA, SIN_POSGRADO, FranjaProfesional, FranjaReconocimiento, TablaHonorarios
@@ -129,6 +130,13 @@ def analizar(contratacion: ContratacionOps) -> dict:
             "honorarios_mensuales": perfil.honorarios_mensuales, "obligaciones": perfil.obligaciones,
             "especifica_minima": perfil.especifica_minima, "especifica_maxima": perfil.especifica_maxima, "descripcion": perfil.descripcion,
         },
+        "sigep": None if exp.sigep is None else {
+            "bloques": exp.sigep.bloques,
+            "experiencias": [
+                {"entidad": d.entidad, "inicio": d.inicio.isoformat(), "fin": d.fin.isoformat() if d.fin else None, "cargo": d.cargo}
+                for d in exp.sigep.experiencias
+            ],
+        },
         "matricula": None if m is None else {
             "profesion": m.profesion, "numero": m.numero, "fecha": m.fecha.isoformat() if m.fecha else None, "sin_sanciones": m.sin_sanciones,
         },
@@ -138,10 +146,10 @@ def analizar(contratacion: ContratacionOps) -> dict:
             for t in exp.titulos
         ],
         "periodos": [
-            {"id": f"p{i}", "inicio": p.inicio.isoformat(), "fin": p.fin.isoformat(), "entidad": p.entidad, "referencia": p.referencia,
+            {"id": pid, "inicio": p.inicio.isoformat(), "fin": p.fin.isoformat(), "entidad": p.entidad, "referencia": p.referencia,
              "suspensiones": [[a.isoformat(), b.isoformat()] for a, b in p.suspensiones], "abierto": p.abierto, "nota": p.nota,
              "documento_id": doc_id(p.archivo), "archivo": p.archivo, "pagina": p.pagina, "texto": p.texto}
-            for i, p in enumerate(exp.periodos, 1)
+            for pid, p in zip(_ids_de_periodos(exp.periodos), exp.periodos)
         ],
         "documentos": [
             {"clave": r.clave, "nombre": r.nombre, "estado": r.estado, "motivo": r.motivo, "documento_id": doc_id(r.archivo),
@@ -152,6 +160,19 @@ def analizar(contratacion: ContratacionOps) -> dict:
         "sin_reconocer": [{"documento_id": doc_id(n), "archivo": n} for n in exp.sin_reconocer],
         "avisos": [*avisos, *exp.avisos],
     }
+
+
+def _ids_de_periodos(periodos: list[Periodo]) -> list[str]:
+    """El identificador de un periodo son sus fechas: lo que la persona decidió
+    sobre él lo sigue aunque un análisis nuevo lea más periodos o en otro
+    orden, y deja de aplicar si sus fechas cambian. Nunca cae en otro periodo."""
+    vistos: dict[str, int] = {}
+    ids = []
+    for p in periodos:
+        base = f"p{p.inicio:%Y%m%d}-{p.fin:%Y%m%d}"
+        vistos[base] = vistos.get(base, 0) + 1
+        ids.append(base if vistos[base] == 1 else f"{base}-{vistos[base]}")
+    return ids
 
 
 def reclamar() -> ContratacionOps | None:
@@ -248,9 +269,31 @@ def perfil_vigente(contratacion: ContratacionOps) -> Perfil | None:
     )
 
 
+def _sigep(contratacion: ContratacionOps) -> ExperienciaDeclarada | None:
+    guardado = (contratacion.resultado or {}).get("sigep")
+    if guardado is None:
+        return None
+    return ExperienciaDeclarada(
+        experiencias=[
+            Declarada(d["entidad"], date.fromisoformat(d["inicio"]), date.fromisoformat(d["fin"]) if d["fin"] else None, d.get("cargo", ""))
+            for d in guardado["experiencias"]
+        ],
+        bloques=guardado["bloques"],
+    )
+
+
+DUDAS_SIGEP = {
+    SIN_HOJA: "No está la hoja de vida del SIGEP entre los documentos: confirme que este periodo está relacionado en ella.",
+    ILEGIBLE: "La hoja de vida del SIGEP no se dejó leer completa: confirme que este periodo está relacionado en ella.",
+}
+OTRA_ENTIDAD = "En el SIGEP, en esas fechas figura otra entidad ({entidad}): confirme que es la misma experiencia."
+FUERA_DEL_SIGEP = "No está relacionado en la hoja de vida del SIGEP: no es experiencia válida."
+
+
 def _todos_los_periodos(contratacion: ContratacionOps) -> list[dict]:
     """Los periodos leídos y los que agregó la persona, con sus correcciones aplicadas."""
     decisiones = contratacion.decisiones.get("periodos") or {}
+    declarada = _sigep(contratacion)
     periodos = []
     for p in [*((contratacion.resultado or {}).get("periodos") or []), *(contratacion.decisiones.get("agregados") or [])]:
         d = decisiones.get(p["id"]) or {}
@@ -259,9 +302,25 @@ def _todos_los_periodos(contratacion: ContratacionOps) -> list[dict]:
             "suspensiones": [], "abierto": False, "nota": "", "documento_id": None, "archivo": "", "pagina": None, "texto": "",
             **p, **{c: d[c] for c in ("inicio", "fin", "entidad", "referencia") if c in d},
             "decision": d, "manual": p["id"].startswith("m"), "corregido": corregido,
-            # Si la persona corrigió las fechas, lo dudoso de la lectura ya no aplica.
-            **({"abierto": False, "nota": ""} if "inicio" in d or "fin" in d else {}),
+            # Si la persona corrigió las fechas o confirmó la lectura, lo dudoso ya no aplica.
+            **({"abierto": False, "nota": ""} if "inicio" in d or "fin" in d or d.get("confirmado") else {}),
+            "confirmado": bool(d.get("confirmado")),
+            "duda": "" if ("inicio" in d or "fin" in d or d.get("confirmado")) else (p.get("nota") or ("Sin fecha de terminación" if p.get("abierto") else "")),
         })
+        # La experiencia que cuenta debe estar relacionada en la hoja de vida del
+        # SIGEP. Se cruza con las fechas ya corregidas; lo que la persona vio allí
+        # con sus ojos lo marca ella.
+        actual = periodos[-1]
+        estado, cubren = en_el_sigep(date.fromisoformat(actual["inicio"]), date.fromisoformat(actual["fin"]), declarada, contratacion.fecha_referencia)
+        actual["sigep"] = EN_SIGEP if d.get("en_sigep") else estado
+        actual["sigep_confirmado"] = bool(d.get("en_sigep"))
+        if not d.get("en_sigep"):
+            if estado in DUDAS_SIGEP:
+                actual["duda"] = (actual["duda"] + " " if actual["duda"] else "") + DUDAS_SIGEP[estado]
+            elif estado == EN_SIGEP and misma_entidad(actual["entidad"], cubren) is False:
+                actual["duda"] = (actual["duda"] + " " if actual["duda"] else "") + OTRA_ENTIDAD.format(entidad=cubren[0].entidad)
+        if estado == EN_SIGEP and not actual["entidad"] and len(cubren) == 1:
+            actual["entidad"] = cubren[0].entidad
     return periodos
 
 
@@ -273,7 +332,10 @@ def _periodos(contratacion: ContratacionOps) -> tuple[list[Periodo], dict[int, d
     for p in _todos_los_periodos(contratacion):
         d = p["decision"]
         if d.get("incluir") is False:
-            retirados.append(p)
+            retirados.append({**p, "estado": "retirado", "motivo": "Retirado por decisión de la persona."})
+            continue
+        if p["sigep"] == NO_ESTA:
+            retirados.append({**p, "estado": "sin_sigep", "motivo": FUERA_DEL_SIGEP})
             continue
         relacionada_decidida = "relacionada" in d or (p["manual"] and "relacionada" in p)
         periodo = Periodo(
@@ -322,6 +384,7 @@ def detalle(contratacion: ContratacionOps) -> dict:
         "analizada_en": contratacion.analizada_en.isoformat() if contratacion.analizada_en else None, "segundos": contratacion.segundos,
         "confirmada_en": contratacion.confirmada_en.isoformat() if contratacion.confirmada_en else None,
         "confirmada_por": contratacion.confirmada_por.nombre_completo if contratacion.confirmada_por_id else None,
+        "documentos_eliminados_en": contratacion.documentos_eliminados_en.isoformat() if contratacion.documentos_eliminados_en else None,
         "archivos": [
             {"id": str(d.id), "origen": d.origen, "nombre": d.nombre_original, "tamano": d.tamano} for d in contratacion.documentos.all()
         ],
@@ -336,7 +399,8 @@ def detalle(contratacion: ContratacionOps) -> dict:
     def fila(p: dict, **extra) -> dict:
         return {"id": p["id"], "entidad": p["entidad"], "referencia": p["referencia"], "inicio": p["inicio"], "fin": p["fin"],
                 "abierto": p["abierto"], "nota": p["nota"], "documento_id": p["documento_id"], "pagina": p["pagina"],
-                "manual": p["manual"], "corregido": p["corregido"], **extra}
+                "manual": p["manual"], "corregido": p["corregido"], "confirmado": p["confirmado"], "por_confirmar": bool(p["duda"]),
+                "duda": p["duda"], "sigep": p["sigep"], "sigep_confirmado": p["sigep_confirmado"], **extra}
 
     experiencia = []
     for t in r.lineal.tramos:
@@ -349,7 +413,7 @@ def detalle(contratacion: ContratacionOps) -> dict:
     for d in r.lineal.descartados:
         experiencia.append(fila(de[id(d.periodo)], dias=0, duracion="", estado="descartado", motivo=d.motivo))
     for p in retirados:
-        experiencia.append(fila(p, dias=0, duracion="", estado="retirado", motivo="Retirado por decisión de la persona."))
+        experiencia.append(fila(p, dias=0, duracion="", estado=p["estado"], motivo=p["motivo"]))
     experiencia.sort(key=lambda f: (f["inicio"], f["fin"]))
 
     decisiones_doc = contratacion.decisiones.get("documentos") or {}
@@ -367,7 +431,7 @@ def detalle(contratacion: ContratacionOps) -> dict:
             "especifica_minima": perfil.especifica_minima, "especifica_maxima": perfil.especifica_maxima, "descripcion": perfil.descripcion,
             "corregido": bool(contratacion.decisiones.get("perfil")),
         },
-        "titulos": resultado.get("titulos") or [], "matricula": resultado.get("matricula"),
+        "titulos": formacion_acreditada(resultado.get("titulos") or [], resultado.get("matricula")), "matricula": resultado.get("matricula"),
         "grado": r.grado.isoformat() if r.grado else None, "grado_corregido": bool(contratacion.decisiones.get("grado")),
         "posgrado": r.posgrado, "posgrado_corregido": bool(contratacion.decisiones.get("posgrado")),
         "experiencia": experiencia,
@@ -376,16 +440,79 @@ def detalle(contratacion: ContratacionOps) -> dict:
         "franja": r.franja.nombre if r.franja else None, "tope": r.tope, "tabla_honorarios": (tabla.norma or None) if tabla else None,
         "documentos": documentos, "documentos_pendientes": pendientes,
         "sin_reconocer": resultado.get("sin_reconocer") or [],
-        "revisiones": list(dict.fromkeys([*(resultado.get("avisos") or []), *r.revisiones])),
+        "sigep": None if resultado.get("sigep") is None else {
+            "empleos": resultado["sigep"]["bloques"], "leidos": len(resultado["sigep"]["experiencias"]),
+            "confiable": bool(resultado["sigep"]["bloques"]) and resultado["sigep"]["bloques"] == len(resultado["sigep"]["experiencias"]),
+        },
+        "revisiones": list(dict.fromkeys(r.revisiones)),
     })
+    vistos = set(contratacion.decisiones.get("avisos_vistos") or [])
+    datos["avisos"] = [{"texto": a, "visto": a in vistos} for a in dict.fromkeys(resultado.get("avisos") or [])]
+    datos["por_confirmar"] = _por_confirmar(contratacion, datos, tabla is not None)
     datos["cumple"] = conclusion(datos)
     return datos
 
 
+def _por_confirmar(contratacion: ContratacionOps, datos: dict, hay_tabla: bool) -> list[str]:
+    """Lo que impide dar una conclusión: mientras quede algo aquí, el sistema
+    no dice ni «cumple» ni «no cumple». Un aprobado no puede apoyarse en algo
+    que no se leyó completo o que nadie confirmó."""
+    resultado, decisiones = contratacion.resultado or {}, contratacion.decisiones
+    faltan: list[str] = []
+    if datos.get("perfil") is None:
+        faltan.append("Registrar el perfil que exige el estudio previo.")
+    if datos["documentos_pendientes"]:
+        faltan.append(f"Decidir {datos['documentos_pendientes']} documentos que faltan o están por revisar.")
+    dudosos = sum(1 for f in datos["experiencia"] if f["por_confirmar"] and f["estado"] in ("cuenta", "sobra"))
+    if dudosos:
+        faltan.append(f"Confirmar o corregir {dudosos} periodos de experiencia cuya lectura quedó en duda.")
+    titulos = resultado.get("titulos") or []
+    if not decisiones.get("grado"):
+        leido = any(t["nivel"] == "profesional" and t["fecha"] and not t.get("declarado") for t in titulos)
+        if not leido:
+            faltan.append("Confirmar la fecha de grado: no se leyó del diploma.")
+    if not decisiones.get("posgrado") and datos["posgrado"] != SIN_POSGRADO:
+        # El posgrado sube el tope de honorarios: debe constar en un diploma leído.
+        leido = any(t["nivel"] == datos["posgrado"] and not t.get("declarado") and (t["fecha"] or t["nombre"]) for t in titulos)
+        if not leido:
+            faltan.append("Confirmar el posgrado: no se leyó del diploma.")
+    if not hay_tabla:
+        faltan.append(f"Registrar la tabla de honorarios de {contratacion.fecha_referencia.year}: sin ella no se verifica el tope.")
+    sin_ver = sum(1 for a in datos["avisos"] if not a["visto"])
+    if sin_ver:
+        faltan.append(f"Revisar {sin_ver} avisos de la lectura de los documentos.")
+    return faltan
+
+
+def formacion_acreditada(titulos: list[dict], matricula: dict | None) -> list[dict]:
+    """Un renglón por nivel: el diploma y su acta dicen lo mismo, y a veces
+    uno trae el nombre y el otro la fecha. El de bachiller no va."""
+    profesion = (matricula or {}).get("profesion") or ""
+    por_nivel: dict[str, dict] = {}
+    for t in titulos:
+        if t["nivel"] == "bachiller":
+            continue
+        actual = por_nivel.get(t["nivel"])
+        if actual is None:
+            por_nivel[t["nivel"]] = dict(t)
+            continue
+        if not actual["nombre"] and t["nombre"]:
+            actual["nombre"] = t["nombre"]
+        if not actual["fecha"] and t["fecha"]:
+            actual.update(fecha=t["fecha"], documento_id=t.get("documento_id"), pagina=t.get("pagina"), declarado=t.get("declarado", False))
+    for t in por_nivel.values():
+        if t["nivel"] == "profesional" and not t["nombre"]:
+            t["nombre"] = profesion
+    if "profesional" not in por_nivel and profesion:
+        por_nivel = {"profesional": {"nivel": "profesional", "nombre": profesion, "fecha": None, "documento_id": None, "pagina": None,
+                                     "declarado": False, "por_matricula": True}, **por_nivel}
+    return list(por_nivel.values())
+
+
 def conclusion(datos: dict) -> bool | None:
-    """True/False cuando ya no queda nada por revisar; None mientras tanto."""
+    """True/False cuando ya no queda nada por confirmar; None mientras tanto."""
     perfil = datos.get("perfil")
-    if perfil is None or datos["documentos_pendientes"]:
+    if perfil is None or datos["por_confirmar"]:
         return None
     if datos["total_dias"] < perfil["anios_minimos"] * 360:
         return False
@@ -439,6 +566,10 @@ def aplicar_decisiones(contratacion: ContratacionOps, cambios: dict) -> None:
             for campo in ("incluir", "relacionada"):
                 if d.get(campo) is not None:
                     limpia[campo] = bool(d[campo])
+            if d.get("confirmado"):
+                limpia["confirmado"] = True
+            if d.get("en_sigep"):
+                limpia["en_sigep"] = True
             for campo in ("entidad", "referencia"):
                 if isinstance(d.get(campo), str):
                     limpia[campo] = d[campo].strip()[:200]
@@ -484,6 +615,9 @@ def aplicar_decisiones(contratacion: ContratacionOps, cambios: dict) -> None:
             decisiones["posgrado"] = cambios["posgrado"]
         else:
             raise ErrorOps("Elija el posgrado que acredita la persona.")
+    if "avisos_vistos" in cambios:
+        validos = set(resultado.get("avisos") or [])
+        decisiones["avisos_vistos"] = [a for a in dict.fromkeys(cambios["avisos_vistos"] or []) if a in validos]
     if "documentos" in cambios:
         validos = {d["clave"] for d in resultado.get("documentos") or []}
         guardadas = {**(decisiones.get("documentos") or {})}
@@ -548,9 +682,20 @@ def certificado(contratacion: ContratacionOps) -> bytes:
     doc = Document()
     doc.styles["Normal"].font.name = "Arial"
     doc.styles["Normal"].font.size = Pt(10)
-    encabezado = doc.sections[0].header.paragraphs[0]
-    encabezado.text = f"{entidad} · Certificado de idoneidad y experiencia para contrato de prestación de servicios"
-    encabezado.runs[0].font.size = Pt(8)
+    # Encabezado de control documental, en cada página: la entidad pone aquí
+    # el código y la versión de su propio formato.
+    seccion = doc.sections[0]
+    control = seccion.header.add_table(rows=2, cols=4, width=seccion.page_width - seccion.left_margin - seccion.right_margin)
+    control.style = "Table Grid"
+    for i, (etiqueta, valor) in enumerate([
+        ("Entidad", entidad), ("Código del formato", ""),
+        ("Documento", "Certificado de idoneidad y experiencia para contrato de prestación de servicios"), ("Versión", ""),
+    ]):
+        for celda, texto, negrita in ((control.cell(i // 2, (i % 2) * 2), etiqueta, True), (control.cell(i // 2, (i % 2) * 2 + 1), valor, False)):
+            celda.text = texto
+            if celda.paragraphs[0].runs:
+                celda.paragraphs[0].runs[0].bold = negrita
+                celda.paragraphs[0].runs[0].font.size = Pt(8)
 
     _titulo(doc, "Certificado de idoneidad y experiencia")
     _parrafo(doc, fecha_larga(timezone.localdate()), alineacion=WD_ALIGN_PARAGRAPH.LEFT)
@@ -567,28 +712,20 @@ def certificado(contratacion: ContratacionOps) -> bytes:
         _parrafo(doc, f"Objeto a contratar: {datos['estudio']['objeto']}")
     _parrafo(doc, "Elaborados los estudios previos, se analizó la hoja de vida del contratista junto con las certificaciones de estudios y de experiencia aportadas:")
 
-    _titulo(doc, "1. Formación académica", 2)
+    _titulo(doc, "1. Formación académica del contratista", 2)
     minimo = perfil["descripcion"] or f"Profesional{'' if perfil['posgrado'] == SIN_POSGRADO else ' con ' + POSGRADOS[perfil['posgrado']].lower()}"
+    _parrafo(doc, "1.1 Requisitos mínimos de formación académica", negrita=True)
     _parrafo(doc, f"Requisito mínimo: {minimo.rstrip('.')}.")
-    profesion = (datos.get("matricula") or {}).get("profesion") or ""
-    # Un título por nivel (el diploma y su acta dicen lo mismo); el de bachiller no va.
-    por_nivel: dict[str, dict] = {}
-    for t in datos["titulos"]:
-        if t["nivel"] == "bachiller":
-            continue
-        actual = por_nivel.get(t["nivel"])
-        if actual is None or (not actual["nombre"] and t["nombre"]) or (not actual["fecha"] and t["fecha"] and not actual["nombre"]):
-            por_nivel[t["nivel"]] = {**t, "fecha": t["fecha"] or (actual or {}).get("fecha")}
-        elif not actual["fecha"] and t["fecha"]:
-            actual["fecha"] = t["fecha"]
+    _parrafo(doc, "1.2 Formación académica acreditada", negrita=True)
     _tabla(doc, ["Formación acreditada", "Fecha de grado", "Nivel"], [
-        [t["nombre"] or (profesion if t["nivel"] == "profesional" else "") or NIVELES.get(t["nivel"], t["nivel"]),
-         fecha_larga(date.fromisoformat(t["fecha"])) if t["fecha"] else "—", NIVELES.get(t["nivel"], t["nivel"])]
-        for t in por_nivel.values()
-    ] or [[profesion or "No se leyeron títulos", "—", "Profesional" if profesion else "—"]])
+        [t["nombre"] or NIVELES.get(t["nivel"], t["nivel"]), fecha_larga(date.fromisoformat(t["fecha"])) if t["fecha"] else "—",
+         NIVELES.get(t["nivel"], t["nivel"])]
+        for t in datos["titulos"]
+    ] or [["No se leyeron títulos", "—", "—"]])
 
     _parrafo(doc, "")
-    _titulo(doc, "2. Experiencia", 2)
+    _titulo(doc, "2. Experiencia del contratista", 2)
+    _parrafo(doc, "2.1 Experiencia mínima y relacionada con el área del servicio a prestar", negrita=True)
     maximo = perfil["anios_maximos"]
     exigida = f"entre {perfil['anios_minimos']:g} y {maximo:g} años" if maximo is not None else f"mínima de {perfil['anios_minimos']:g} años"
     if perfil["especifica_minima"] or perfil["especifica_maxima"] is not None:
@@ -598,6 +735,7 @@ def certificado(contratacion: ContratacionOps) -> bytes:
             else f", y experiencia específica mínima de {perfil['especifica_minima']:g} años"
         )
     _parrafo(doc, f"Experiencia exigida: {exigida}. La experiencia se relaciona sin traslapes: el tiempo trabajado en un mismo periodo se cuenta una sola vez.")
+    _parrafo(doc, "2.2 Experiencia acreditada por el contratista", negrita=True)
     _tabla(doc, ["Entidad", "Contrato o cargo", "Inicio", "Terminación", "Duración", "Tipo"], [
         [f["entidad"] or "—", f["referencia"] or "—", f"{date.fromisoformat(f['cuenta_desde']):%d/%m/%Y}", f"{date.fromisoformat(f['fin']):%d/%m/%Y}",
          f["duracion"], "Relacionada" if f["relacionada"] else "Profesional"]
@@ -631,6 +769,52 @@ def certificado(contratacion: ContratacionOps) -> bytes:
     quien = f" Confirmado por {datos['confirmada_por']}." if datos["confirmada_por"] else " Pendiente de confirmación por una persona."
     _parrafo(
         doc, f"Proyectado con apoyo de MiEvaluador {settings.MIEVALUADOR_VERSION} a partir de los documentos aportados.{quien}",
+        tam=8, alineacion=WD_ALIGN_PARAGRAPH.LEFT,
+    )
+    salida = io.BytesIO()
+    doc.save(salida)
+    return salida.getvalue()
+
+
+ESTADOS_DOCUMENTO = {
+    motor_documentos.CUMPLE: "Cumple", motor_documentos.FALTA: "Falta", motor_documentos.REVISION: "Por revisar",
+    motor_documentos.NO_CUMPLE: "No cumple", motor_documentos.NO_APLICA: "No aplica",
+}
+
+
+def lista_de_verificacion(contratacion: ContratacionOps) -> bytes:
+    """Lista de verificación de los documentos del contratista, en Word, para el expediente."""
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt
+
+    from evaluaciones.reporte import _parrafo, _tabla, _titulo, fecha_larga
+
+    datos = detalle(contratacion)
+    doc = Document()
+    doc.styles["Normal"].font.name = "Arial"
+    doc.styles["Normal"].font.size = Pt(10)
+    _titulo(doc, "Lista de verificación de documentos")
+    _tabla(doc, ["Contratista", "Identificación", "Proceso o contrato"], [[
+        contratacion.contratista_nombre.upper(), f"C.C. {contratacion.contratista_cedula}", contratacion.referencia or "—",
+    ]])
+    _parrafo(doc, "")
+    filas = []
+    for i, d in enumerate(datos.get("documentos") or [], 1):
+        decision = d["decision"]
+        observacion = (decision["nota"] or "Verificado por una persona") if decision else d["motivo"]
+        archivos = ", ".join(a for a in [d["archivo"], *(x["archivo"] for x in d["adicionales"])] if a)
+        filas.append([str(i), d["nombre"], ESTADOS_DOCUMENTO.get(d["estado_final"], d["estado_final"]), archivos or "—", observacion or ""])
+    _tabla(doc, ["N.º", "Documento", "Estado", "Archivo", "Observación"], filas)
+    _parrafo(doc, "")
+    pendientes = datos.get("documentos_pendientes") or 0
+    _parrafo(doc, "Todos los documentos están al día." if not pendientes else f"Quedan {pendientes} documentos por revisar.", negrita=True)
+    quien = (
+        f"Confirmada por {datos['confirmada_por']} el {fecha_larga(contratacion.confirmada_en)}." if datos["confirmada_por"]
+        else "Pendiente de confirmación por una persona."
+    )
+    _parrafo(
+        doc, f"Elaborada con apoyo de MiEvaluador {settings.MIEVALUADOR_VERSION} el {fecha_larga(timezone.localdate())}. {quien}",
         tam=8, alineacion=WD_ALIGN_PARAGRAPH.LEFT,
     )
     salida = io.BytesIO()

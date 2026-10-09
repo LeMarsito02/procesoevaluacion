@@ -37,6 +37,8 @@ class DecisionesIn(Schema):
     perfil: dict | None = None
     grado: str | None = None
     posgrado: str | None = None
+    # Avisos de la lectura que la persona ya revisó (el texto de cada uno).
+    avisos_vistos: list[str] | None = None
     documentos: dict[str, dict | None] | None = None
 
 
@@ -228,7 +230,7 @@ def corregir_datos(request: HttpRequest, contratacion_id: UUID, datos: DatosIn) 
         releer = ops.cambiar_datos(c, cambios)
     except ops.ErrorOps as exc:
         raise _error(exc) from exc
-    if releer:
+    if releer and c.documentos.exists():
         ops.pedir_analisis(c)
     auditar(request, "ops.datos", entidad_id=c.entidad_id, objeto=c, cambios=sorted(cambios))
     return ops.detalle(c)
@@ -256,6 +258,8 @@ def reanalizar(request: HttpRequest, contratacion_id: UUID) -> dict:
     c = _para_modificar(request, contratacion_id)
     if c.estado in (EstadoOps.PENDIENTE, EstadoOps.ANALIZANDO):
         raise HttpError(409, "El análisis ya está en curso.")
+    if not c.documentos.exists():
+        raise HttpError(409, "Los documentos se eliminaron por la política de retención: cárguelos de nuevo para volver a leerlos.")
     ops.pedir_analisis(c)
     auditar(request, "ops.reanalizar", entidad_id=c.entidad_id, objeto=c)
     return ops.detalle(c)
@@ -271,8 +275,8 @@ def confirmar(request: HttpRequest, contratacion_id: UUID) -> dict:
     datos = ops.detalle(c)
     if datos.get("perfil") is None:
         raise HttpError(409, "Registre primero el perfil que exige el estudio previo.")
-    if datos["documentos_pendientes"]:
-        raise HttpError(409, f"Quedan {datos['documentos_pendientes']} documentos por revisar: decida cada uno antes de confirmar.")
+    if datos["por_confirmar"]:
+        raise HttpError(409, "Antes de confirmar falta: " + " ".join(datos["por_confirmar"]))
     c.estado, c.confirmada_por, c.confirmada_en = EstadoOps.CONFIRMADA, request.auth, timezone.now()
     c.save(update_fields=["estado", "confirmada_por", "confirmada_en", "actualizada_en"])
     auditar(request, "ops.confirmada", entidad_id=c.entidad_id, objeto=c, cumple=datos["cumple"], total_dias=datos["total_dias"])
@@ -302,6 +306,18 @@ def descargar_certificado(request: HttpRequest, contratacion_id: UUID):
     auditar(request, "ops.certificado", entidad_id=c.entidad_id, objeto=c, confirmada=c.estado == EstadoOps.CONFIRMADA)
     return FileResponse(
         io.BytesIO(contenido), as_attachment=True, filename=f"Certificado de idoneidad - {c.contratista_nombre}.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+@router.get("/{contratacion_id}/lista-de-verificacion")
+def descargar_lista(request: HttpRequest, contratacion_id: UUID):
+    c = _una(request.auth, contratacion_id)
+    if c.resultado is None:
+        raise HttpError(409, "Todavía no termina el análisis de los documentos.")
+    auditar(request, "ops.lista_de_verificacion", entidad_id=c.entidad_id, objeto=c)
+    return FileResponse(
+        io.BytesIO(ops.lista_de_verificacion(c)), as_attachment=True, filename=f"Lista de verificación - {c.contratista_nombre}.docx",
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 

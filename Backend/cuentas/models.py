@@ -35,6 +35,9 @@ class Entidad(models.Model):
     # Módulo de prestación de servicios (OPS): licencia aparte. Sin ella, la
     # opción aparece con candado.
     modulo_ops = models.BooleanField("módulo de prestación de servicios", default=False)
+    # Cuándo se comprobó que el administrador de Microsoft 365 de la entidad
+    # aprobó la lectura de su OneDrive (enlaces de carpetas de ofertas).
+    onedrive_autorizado_en = models.DateTimeField("OneDrive autorizado", null=True, blank=True)
 
     class Meta:
         verbose_name = "entidad"

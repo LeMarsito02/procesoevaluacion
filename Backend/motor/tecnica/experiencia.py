@@ -337,7 +337,9 @@ def objeto_valido(objeto: str, lote: LoteTecnico) -> bool | None:
     # (dos contratos de la AERONÁUTICA CIVIL sobre la pista de un aeropuerto se
     # contaban para un lote de vías). Se exige la señal aeroportuaria junto al
     # elemento del lado aire para no descartar una vía de acceso al aeropuerto.
-    if _AERONAUTICA_RE.search(texto):
+    # Salvo que el pliego admita pistas de aeropuerto en la experiencia general
+    # (ICCU-LP-014-2026: «… VIAS URBANAS O PISTAS DE AEROPUERTOS»).
+    if _AERONAUTICA_RE.search(texto) and not re.search(r"AEROPUERT|AERODROM|AEROPORTUAR", normalizar(lote.experiencia_general)):
         return False
     actividades = actividades_del_lote(lote)
     if pide_interventoria(lote):
@@ -354,6 +356,46 @@ def objeto_valido(objeto: str, lote: LoteTecnico) -> bool | None:
     if not tiene_materia and not re.search(r"OBRA|INFRAESTRUCTURA", texto):
         return False
     return None
+
+
+_INSTRUCCION_OBJETO = (
+    "Eres evaluador técnico de una licitación de obra pública en Colombia. El pliego exige que los contratos "
+    "aportados como experiencia hayan contenido la ejecución de: «{general}». "
+    "Responde si el OBJETO DEL CONTRATO (el documento) corresponde a esa experiencia: la actividad (construcción, "
+    "mejoramiento, rehabilitación, mantenimiento…) y la clase de obra (vías, puentes, pavimentos…) deben estar "
+    "dentro de lo que pide el pliego. La interventoría, la consultoría, los estudios y los diseños NO son ejecución "
+    "de obra: si el objeto es eso y el pliego no lo pide, no corresponde. No supongas lo que el objeto no dice. "
+    'Responde JSON: {{"corresponde": "si"|"no"|"dudoso", "razon": "una frase corta"}}'
+)
+
+
+def objeto_con_ia(objeto: str, lote: LoteTecnico) -> tuple[str, str] | None:
+    """La inferencia de la IA sobre un objeto que las reglas no pudieron
+    clasificar: ("si"|"no"|"dudoso", razón). None si no hay IA o no hay con qué
+    comparar. Es solo una ayuda para quien revisa: nunca aprueba ni descarta."""
+    if not objeto.strip() or not lote.experiencia_general.strip():
+        return None
+    from motor.llm.cliente import consultar_json
+
+    try:
+        respuesta = consultar_json(_INSTRUCCION_OBJETO.format(general=lote.experiencia_general[:600]), objeto[:1500])
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(respuesta, dict):
+        return None
+    veredicto = str(respuesta.get("corresponde", "")).strip().lower().replace("í", "i")
+    razon = str(respuesta.get("razon") or "").strip()
+    if veredicto not in {"si", "no", "dudoso"}:
+        return None
+    return veredicto, razon[:240]
+
+
+def _con_la_ia(inferencia: tuple[str, str] | None) -> str:
+    if inferencia is None:
+        return ""
+    veredicto, razon = inferencia
+    dice = {"si": "SÍ corresponde", "no": "NO corresponde", "dudoso": "no es claro"}[veredicto]
+    return f" — según la IA, {dice}" + (f" ({razon})" if razon else "") + "; confírmalo"
 
 
 # ----------------------------------------------------------- cruce con el RUP
@@ -513,6 +555,9 @@ def evaluar_lote(
         del_lote = del_lote[: parametros.max_contratos]
     resultado.contratos = del_lote
     validos = [c for c in del_lote if c.valido and objeto[id(c)] is not False]
+    # Lo que las reglas no pudieron clasificar lo infiere la IA, para que quien
+    # revisa solo confirme. Sigue yendo a revisión: la IA no aprueba ni descarta.
+    inferencias = {id(c): objeto_con_ia(c.objeto, lote) for c in validos if objeto[id(c)] is None and c.objeto.strip()}
     presupuesto = parametros.presupuesto_smmlv(lote)
     if presupuesto is None:
         resultado.motivos.append("no se pudo leer el presupuesto oficial del lote en el pliego")
@@ -539,7 +584,10 @@ def evaluar_lote(
                 "leer): míralo en el documento para saber si corresponde a la experiencia del lote"
             )
         elif objeto[id(c)] is None and c in validos:
-            resultado.motivos.append(f"contrato {c.orden}: revisa que el objeto corresponda a la experiencia general del lote: «{c.objeto[:160]}»")
+            resultado.motivos.append(
+                f"contrato {c.orden}: revisa que el objeto corresponda a la experiencia general del lote: «{c.objeto[:160]}»"
+                + _con_la_ia(inferencias.get(id(c)))
+            )
         elif objeto[id(c)] is False and c.valor_aportado is not None:
             resultado.motivos.append(f"contrato {c.orden}: el objeto no corresponde a la experiencia general del lote (no se tuvo en cuenta): «{c.objeto[:160]}»")
     if not validos:
@@ -646,7 +694,7 @@ def evaluar_lote(
             resultado.revisiones.append(PuntoDeRevision(
                 f"objeto_contrato_{c.orden}", "oferta",
                 f"el objeto del contrato {c.orden} no se parece a la experiencia que pide el pliego ni se puede "
-                f"descartar: «{(c.objeto or '')[:120]}»",
+                f"descartar: «{(c.objeto or '')[:120]}»" + _con_la_ia(inferencias.get(id(c))),
             ))
         elif c.de_un_socio and not socio_ok.get(id(c)):
             resultado.revisiones.append(PuntoDeRevision(

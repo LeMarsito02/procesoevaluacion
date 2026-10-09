@@ -30,6 +30,8 @@ LeMarTek usa la inteligencia artificial en MiEvaluador **solo como apoyo** a la 
 | Visión | `qwen2.5vl:7b` (7B) | Apache 2.0 | Lee documentos escaneados (fecha de expedición de la cédula) | Decidir antecedentes | Reglas de confianza; si duda, a revisión |
 | Asistente de consulta | El mismo de extracción (`llama3.1:8b`; `ASISTENTE_MODELO` lo cambia) | La del modelo que se configure | Responde preguntas de la persona sobre las evaluaciones que puede ver, citando la evaluación de donde sale cada dato | Decidir, aprobar, modificar datos ni leer evaluaciones ajenas | Solo consultas de lectura con los permisos de quien pregunta (`evaluaciones/asistente.py`); aviso visible; cada conversación y cada consulta quedan guardadas y auditadas |
 
+**Prestación de servicios (OPS):** el módulo no usa ninguno de estos modelos. Lee los documentos con reglas y con reconocimiento de texto (Tesseract, Apache 2.0), pone la experiencia en línea con aritmética de fechas y deja para una persona lo que no pudo confirmar; la idoneidad la confirma una persona, con su nombre y la fecha (`motor/ops`, `evaluaciones/ops.py`).
+
 **Licencias:** se verifican en el archivo LICENSE oficial de cada modelo, no en la etiqueta de Ollama. El 2/10/2026 se encontró que Ollama marca `qwen2.5vl:3b` como Apache 2.0, cuando su licencia oficial (Qwen Research License) prohíbe el uso comercial: se reemplazó por el 7B. El registro está en `evaluaciones/transparencia.py` (`LICENCIAS`) y `inventario_ia` no deja aprobar un modelo sin uso comercial verificado.
 
 El inventario vivo, con la huella exacta de cada modelo y su aprobación, lo da:

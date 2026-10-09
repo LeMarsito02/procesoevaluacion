@@ -184,6 +184,27 @@ def _experiencia_por_lote(tablas) -> dict[str, tuple[str, str]]:
     return por_lote
 
 
+# Experiencia escrita como texto y no como tabla, o tabla escaneada (solo queda
+# el OCR): «EXPERIENCIA GENERAL: CONSTRUCCION O RECONSTRUCCION O MEJORAMIENTO
+# EN PAVIMENTO …» y luego «EXPERIENCIA ESPECIFICA: POR LO MENOS UNO (1) …»
+# (pliego ICCU-LP-014-2026). Se corta en el pie de página, en el siguiente
+# encabezado o en el siguiente literal («B. ESTAR RELACIONADOS…»).
+_FIN_DE_BLOQUE = r"(?=\n\s*\d{1,3}\s*\n|\bCODIGO\s*:|DOCUMENTO BASE|EXPERIENCIA ESPECIFICA\s*:|\n\s*[B-H]\.\s+[A-Z]|$)"
+_GENERAL_TEXTO_RE = re.compile(r"EXPERIENCIA GENERAL\s*:\s*(.{20,700}?)" + _FIN_DE_BLOQUE, re.DOTALL)
+_ESPECIFICA_TEXTO_RE = re.compile(r"EXPERIENCIA ESPECIFICA\s*:\s*(.{20,1500}?)(?=\n\s*[B-H]\.\s+[A-Z]|$)", re.DOTALL)
+
+
+def _experiencia_del_texto(texto_norm: str) -> tuple[str, str] | None:
+    """(general, específica) de un pliego de un solo lote que no la trae en una
+    tabla legible. None si no aparece."""
+    general = _GENERAL_TEXTO_RE.search(texto_norm)
+    if general is None:
+        return None
+    especifica = _ESPECIFICA_TEXTO_RE.search(texto_norm, general.end())
+    limpio = lambda t: re.sub(r"\s+", " ", t).strip(" .;:")  # noqa: E731
+    return limpio(general.group(1)), limpio(especifica.group(1)) if especifica else ""
+
+
 # Palabras que no distinguen nada al comparar la experiencia específica con
 # la general.
 _VACIAS_CONDICION = {
@@ -414,6 +435,43 @@ _PUNTOS_RE = re.compile(
 )
 
 
+# El puntaje escrito en letras: «ASIGNARA DIEZ (10) PUNTOS», «UN PUNTAJE DE CERO
+# PUNTO VEINTICINCO (0.25) PUNTOS», «UN (1) PUNTO». Es la segunda lectura del
+# mismo dato: si la cifra entre paréntesis sale mal del OCR («(O.25)»), queda
+# esta; y si las dos se leen y no coinciden, el factor va a revisión.
+_NUMEROS_EN_LETRAS = {
+    "CERO": 0, "UN": 1, "UNO": 1, "DOS": 2, "TRES": 3, "CUATRO": 4, "CINCO": 5, "SEIS": 6, "SIETE": 7, "OCHO": 8,
+    "NUEVE": 9, "DIEZ": 10, "ONCE": 11, "DOCE": 12, "TRECE": 13, "CATORCE": 14, "QUINCE": 15, "DIECISEIS": 16,
+    "DIECISIETE": 17, "DIECIOCHO": 18, "DIECINUEVE": 19, "VEINTE": 20, "VEINTIUN": 21, "VEINTIUNO": 21,
+    "VEINTIDOS": 22, "VEINTITRES": 23, "VEINTICUATRO": 24, "VEINTICINCO": 25, "VEINTISEIS": 26, "VEINTISIETE": 27,
+    "VEINTIOCHO": 28, "VEINTINUEVE": 29, "TREINTA": 30, "CUARENTA": 40, "CINCUENTA": 50, "SESENTA": 60,
+    "SETENTA": 70, "OCHENTA": 80, "NOVENTA": 90, "CIEN": 100,
+}
+_LETRAS = "|".join(sorted(_NUMEROS_EN_LETRAS, key=len, reverse=True))
+_ENTERO_EN_LETRAS = rf"(?:{_LETRAS})(?:\s+Y\s+(?:{_LETRAS}))?"
+_PUNTOS_EN_LETRAS_RE = re.compile(
+    rf"(?:ASIGNAR|OTORGAR)[A-Z]*\s+(?:HASTA\s+)?(?:UN\s+PUNTAJE\s+DE\s+)?"
+    rf"({_ENTERO_EN_LETRAS})(?:\s+(?:PUNTO|COMA)\s+({_ENTERO_EN_LETRAS}))?\s*(?:\([^)]{{0,12}}\))?\s*PUNTOS?\b"
+)
+
+
+def _entero_en_letras(texto: str) -> int:
+    return sum(_NUMEROS_EN_LETRAS[p] for p in texto.split() if p != "Y")
+
+
+def puntos_en_letras(cuerpo: str) -> float | None:
+    """El puntaje que el pliego escribe en letras, o None si no lo trae así."""
+    m = _PUNTOS_EN_LETRAS_RE.search(cuerpo)
+    if m is None:
+        return None
+    entero = _entero_en_letras(m.group(1))
+    if not m.group(2):
+        return float(entero)
+    # «CERO PUNTO VEINTICINCO» = 0,25; «CERO PUNTO CINCO» = 0,5.
+    decimales = _entero_en_letras(m.group(2))
+    return entero + decimales / (10 if decimales < 10 else 100)
+
+
 def _puntajes(texto_norm: str) -> tuple[dict[str, float | None], set[str]]:
     """Puntos de cada factor, en el cuerpo del capítulo IV (no en el índice:
     ahí el título va seguido de puntos suspensivos y la página). None cuando
@@ -453,21 +511,35 @@ def _puntajes(texto_norm: str) -> tuple[dict[str, float | None], set[str]]:
         # ("…DE LA MAQUINARIA DE\nOBRA N/A.").
         if re.match(r"[^.]{0,60}?(?:NO\s+APLICA|N\s*/\s*A)\b", cuerpo):
             puntajes[clave] = None
-        elif p := _PUNTOS_RE.search(cuerpo):
-            valor = float(p.group(1).replace(",", "."))
-            # Si el numeral y la tabla no dicen lo mismo, algo se leyó mal:
-            # el factor se queda sin número y lo mira una persona.
-            if clave not in tabla or abs(tabla[clave] - valor) <= 0.01:
-                puntajes[clave] = valor
-            else:
+        else:
+            p = _PUNTOS_RE.search(cuerpo)
+            en_cifras = float(p.group(1).replace(",", ".")) if p else None
+            en_letras = puntos_en_letras(cuerpo)
+            # Las lecturas que haya (cifra, letras, tabla del capítulo IV) deben
+            # decir lo mismo. Si alguna no coincide, algo se leyó mal: el factor
+            # se queda sin número y lo mira una persona.
+            lecturas = [v for v in (en_cifras, en_letras, tabla.get(clave)) if v is not None]
+            if lecturas and all(abs(v - lecturas[0]) <= 0.01 for v in lecturas):
+                puntajes[clave] = lecturas[0]
+            elif lecturas:
                 en_disputa.add(clave)
-        elif clave in tabla:
-            puntajes[clave] = tabla[clave]
     # Factores que solo aparecen en la tabla (el equipo de trabajo de los
     # concursos de méritos no tiene un numeral con su puntaje).
     for clave, valor in tabla.items():
         if clave not in en_disputa:
             puntajes.setdefault(clave, valor)
+    if nombrados and not re.search(r"PERSONAL\s+CLAVE", texto_norm):
+        # El personal clave es de los concursos de méritos (interventoría). Si
+        # el pliego se leyó y no lo nombra en ninguna parte, no hace parte del
+        # proceso: ni el formato de aceptación (habilitante) ni los puntos por
+        # la formación adicional. En ICCU-LP-014-2026 (licitación de obra) se
+        # les exigía a los 83 proponentes un formato que el pliego no pide.
+        puntajes.setdefault("personal_clave_adicional", None)
+        puntajes.setdefault("personal_clave", None)
+    if not nombrados:
+        # No se leyó ni un factor: el capítulo IV no se pudo leer (escaneado,
+        # ilegible), no es que el pliego no tenga puntajes. Todos a revisión.
+        return {}, set()
     return puntajes, nombrados
 
 
@@ -500,16 +572,23 @@ def _exigencias_sin_cuantificar(lote: LoteTecnico, texto_norm: str) -> list[str]
 def leer_parametros(contenido_pliego: bytes, lotes: list[tuple[str, float | None]], smmlv: float) -> ParametrosTecnicos:
     """`lotes`: [(nombre, presupuesto en pesos)] como los leyó el análisis del
     documento base."""
-    from motor.procesamiento.pdf_utils import abrir_pdf
+    from motor.procesamiento.ocr_motor import corregir_porcentajes
+    from motor.procesamiento.pdf_utils import abrir_pdf, texto_pagina
 
     with abrir_pdf(contenido_pliego) as pdf:
         tablas = _tablas(pdf)
-        texto_norm = normalizar("\n".join(page.extract_text() or "" for page in pdf.pages))
+        # Con OCR en las páginas escaneadas (cacheado: el análisis del pliego ya
+        # las leyó). El pliego ICCU-LP-014-2026 viene escaneado entero y, solo
+        # con el texto digital, la técnica no veía ningún factor de puntaje y
+        # los daba por «no incluidos» en el pliego.
+        texto_norm = corregir_porcentajes(normalizar("\n".join(texto_pagina(page) for page in pdf.pages)))
     parametros = ParametrosTecnicos(smmlv=smmlv)
     parametros.clases_unspsc = _clases_unspsc(texto_norm)
     parametros.tabla_valor = _tabla_valor(tablas) or list(TABLA_VALOR_DOCUMENTO_TIPO)
     parametros.puntajes, parametros.factores_nombrados = _puntajes(texto_norm)
     experiencia = _experiencia_por_lote(tablas)
+    if not experiencia and len(lotes) == 1 and (del_texto := _experiencia_del_texto(texto_norm)):
+        experiencia = {"1": del_texto}
     if len(experiencia) > 1 and len(lotes) < len(experiencia):
         # El análisis del documento base no separó los lotes (presupuesto en letras).
         separados = lotes_del_pliego(texto_norm, sorted(experiencia, key=int))

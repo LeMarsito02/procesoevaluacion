@@ -25,6 +25,7 @@ import re
 from datetime import date
 
 import requests
+from motor.gpu_turno import turno_ia
 
 log = logging.getLogger(__name__)
 
@@ -103,21 +104,36 @@ def _recorte_de_la_fecha(imagen):
 
     from PIL import Image
 
-    buffer = io.BytesIO()
-    imagen.save(buffer, format="PNG")
-    try:
-        salida = subprocess.run(
-            ["tesseract", "stdin", "stdout", "-l", "spa", "tsv"],
-            input=buffer.getvalue(), capture_output=True, timeout=120,
-            env={**os.environ, "OMP_THREAD_LIMIT": "2"},
-        ).stdout.decode("utf-8", "ignore")
-    except Exception:  # noqa: BLE001
-        return None
-    for linea in salida.splitlines()[1:]:
-        partes = linea.split("\t")
-        if len(partes) < 12 or "EXPEDI" not in partes[11].upper():
-            continue
-        x, y, ancho, alto = (int(partes[i]) for i in (6, 7, 8, 9))
+    from motor.procesamiento import ocr_cedula, ocr_motor
+
+    # Cajas (x, y, ancho, alto) de las palabras o líneas con «EXPEDI».
+    cajas: list[tuple[int, int, int, int]] = []
+    if ocr_cedula.MOTOR == "paddle":
+        try:
+            for texto, (x0, y0, x1, y1) in ocr_motor.lineas_paddle(imagen):
+                if "EXPEDI" in texto.upper():
+                    # PaddleOCR da la línea entera («FECHA Y LUGAR DE EXPEDICION»):
+                    # la palabra es el último tercio, que es lo que sigue el recorte.
+                    ancho_palabra = max(1, (x1 - x0) // 3)
+                    cajas.append((x1 - ancho_palabra, y0, ancho_palabra, y1 - y0))
+        except Exception:  # noqa: BLE001
+            return None
+    else:
+        buffer = io.BytesIO()
+        imagen.save(buffer, format="PNG")
+        try:
+            salida = subprocess.run(
+                ["tesseract", "stdin", "stdout", "-l", "spa", "tsv"],
+                input=buffer.getvalue(), capture_output=True, timeout=120,
+                env={**os.environ, "OMP_THREAD_LIMIT": "2"},
+            ).stdout.decode("utf-8", "ignore")
+        except Exception:  # noqa: BLE001
+            return None
+        for linea in salida.splitlines()[1:]:
+            partes = linea.split("\t")
+            if len(partes) >= 12 and "EXPEDI" in partes[11].upper():
+                cajas.append(tuple(int(partes[i]) for i in (6, 7, 8, 9)))
+    for x, y, ancho, alto in cajas:
         # La fecha está a la izquierda de la etiqueta y un poco más arriba.
         caja = (
             max(0, x - int(ancho * 1.2)),
@@ -136,6 +152,11 @@ def _recorte_de_la_fecha(imagen):
 
 
 def _preguntar(imagen: bytes) -> dict:
+    with turno_ia():
+        return _preguntar_en_turno(imagen)
+
+
+def _preguntar_en_turno(imagen: bytes) -> dict:
     respuesta = requests.post(
         f"{URL}/api/chat",
         timeout=TIEMPO_MAXIMO,
@@ -254,12 +275,13 @@ def firma_manuscrita(contenido: bytes, max_paginas: int = 2) -> bool | None:
                     imagen.thumbnail((1000, 1000))
                     buffer = io.BytesIO()
                     imagen.save(buffer, format="JPEG", quality=85)
-                    respuesta = requests.post(
-                        f"{URL}/api/chat", timeout=TIEMPO_MAXIMO,
-                        json={"model": MODELO, "stream": False, "format": "json", "options": {"temperature": 0},
-                              "messages": [{"role": "user", "content": INSTRUCCION_FIRMA,
-                                            "images": [base64.b64encode(buffer.getvalue()).decode()]}]},
-                    )
+                    with turno_ia():
+                        respuesta = requests.post(
+                            f"{URL}/api/chat", timeout=TIEMPO_MAXIMO,
+                            json={"model": MODELO, "stream": False, "format": "json", "options": {"temperature": 0},
+                                  "messages": [{"role": "user", "content": INSTRUCCION_FIRMA,
+                                                "images": [base64.b64encode(buffer.getvalue()).decode()]}]},
+                        )
                     respuesta.raise_for_status()
                     encontrado = re.search(r"\{.*\}", respuesta.json()["message"]["content"], re.S)
                     respuesta = json.loads(encontrado.group(0)) if encontrado else {}

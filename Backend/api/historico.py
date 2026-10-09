@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
+import re
 import logging
 
 from django.core.files.base import ContentFile
@@ -305,8 +306,20 @@ def aportar_documento(
         raise HttpError(400, "El certificado supera 20 MB.")
     inicio = archivo.read(5)
     archivo.seek(0)
+    nombre_archivo = archivo.name or "certificado.pdf"
+    contenido_archivo = archivo
     if inicio != b"%PDF-":
-        raise HttpError(400, "El certificado debe ser un PDF.")
+        # Desde una tableta o un teléfono lo que hay es la foto o la captura del
+        # certificado: se convierte a PDF de una página y se lee con OCR.
+        from django.core.files.base import ContentFile
+
+        from motor.procesamiento.zip_utils import _imagen_a_pdf
+
+        convertido = _imagen_a_pdf(archivo.read())
+        if convertido is None:
+            raise HttpError(400, "El certificado debe ser un PDF o una imagen (JPG o PNG).")
+        nombre_archivo = f"{nombre_archivo.rsplit('.', 1)[0]}.pdf"
+        contenido_archivo = ContentFile(convertido)
     with transaction.atomic():
         doc = DocumentoAportado(
             entidad_id=evaluacion.entidad_id,
@@ -315,11 +328,11 @@ def aportar_documento(
             persona=persona,
             requisito=requisito,
             fecha_expedicion=fecha_expedicion,
-            nombre_original=(archivo.name or "certificado.pdf")[:255],
+            nombre_original=nombre_archivo[:255],
             observacion=observacion.strip(),
             subido_por=usuario,
         )
-        doc.archivo.save(archivo.name or "certificado.pdf", archivo, save=False)
+        doc.archivo.save(nombre_archivo, contenido_archivo, save=False)
         doc.save()
         auditar(
             request,
@@ -330,7 +343,7 @@ def aportar_documento(
             persona=persona.nombre if persona else None,
             fecha_expedicion=fecha_expedicion.isoformat(),
         )
-    _reevaluar(evaluacion, proponente, usuario)
+    _reevaluar(evaluacion, proponente, usuario, requisito)
     return 201, _aportado_out(doc)
 
 
@@ -404,16 +417,20 @@ def _pagina_en_pausa(fuente: str) -> str | None:
     )
 
 
-def _reevaluar(evaluacion, proponente, usuario) -> None:
-    """Pone al proponente en la fila para que el motor lea el certificado que
-    se acaba de adjuntar: así el requisito deja de estar pendiente solo, sin
-    que nadie tenga que decidirlo a mano."""
+def _reevaluar(evaluacion, proponente, usuario, requisito: int | None = None) -> None:
+    """Hace que el motor lea el certificado que se acaba de adjuntar (o que deje
+    de contar el que se quitó): así el requisito se actualiza solo, sin que
+    nadie tenga que decidirlo a mano. Con `requisito` se evalúan enseguida solo
+    los requisitos que usan ese certificado; sin él, el proponente va a la fila."""
     if evaluacion.estado in (EstadoEvaluacion.APROBADA,):
         return
     try:
-        servicios.encolar(evaluacion, [proponente.id], usuario)
+        if requisito is None:
+            servicios.encolar(evaluacion, [proponente.id], usuario)
+        else:
+            servicios.reevaluar_requisitos(evaluacion, proponente, servicios.requisitos_del_certificado(requisito))
     except Exception:  # noqa: BLE001
-        log.exception("No se pudo volver a evaluar %s tras adjuntar un certificado", proponente.hoja)
+        log.exception("No se pudo volver a evaluar %s tras cambiar un certificado", proponente.hoja)
 
 
 def _fecha_de_expedicion(persona: PersonaVerificada, proponente, indicada: date | None = None) -> date:
@@ -522,7 +539,15 @@ def consultar_en_linea(request: HttpRequest, evaluacion_id: UUID, proponente_id:
                 fecha_expedicion=fecha_usada,
             )
         elif datos.matricula:
-            certificado = consultar_copnia(datos.matricula.strip(), por="matricula")
+            # El COPNIA se consulta por la cédula del profesional. Lo que se escribe
+            # es una cédula si son solo dígitos; una matrícula trae guion o letras
+            # («25202-78686»).
+            escrito = datos.matricula.strip()
+            solo_digitos = re.sub(r"[.\s]", "", escrito)
+            if solo_digitos.isdigit() and 5 <= len(solo_digitos) <= 11:
+                certificado = consultar_copnia(solo_digitos, por="cedula")
+            else:
+                certificado = consultar_copnia(escrito, por="matricula")
         elif persona.tipo == "juridica":
             raise HttpError(400, "El COPNIA certifica personas naturales, no empresas.")
         else:
@@ -631,7 +656,7 @@ def _guardar_consultado(request, evaluacion, proponente, datos, persona, fuente,
             fuente=fuente,
             sin_novedades=certificado.sin_novedades,
         )
-    _reevaluar(evaluacion, proponente, usuario)
+    _reevaluar(evaluacion, proponente, usuario, datos.requisito)
     return 201, _aportado_out(doc)
 
 @router.get("/{evaluacion_id}/pliego")
@@ -664,8 +689,11 @@ def quitar_aportado(request: HttpRequest, evaluacion_id: UUID, documento_id: UUI
     exigir_trabajo(usuario, evaluacion)
     doc = get_object_or_404(DocumentoAportado, pk=documento_id, evaluacion=evaluacion)
     auditar(request, "antecedente.quitado", objeto=evaluacion, requisito=doc.requisito, archivo=doc.nombre_original)
+    proponente, requisito = doc.proponente, doc.requisito
     doc.archivo.delete(save=False)
     doc.delete()
+    # Sin el certificado, el requisito no puede seguir «cumple» por él: se vuelve a evaluar.
+    _reevaluar(evaluacion, proponente, usuario, requisito)
     return 204, None
 
 

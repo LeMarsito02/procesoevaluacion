@@ -67,13 +67,34 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "evaluacio
 # (ej. soporte para .rar, un regex), hay que subir este número para que los
 # resultados viejos (evaluados con la lógica anterior) no se sigan sirviendo
 # desde el caché como si fueran válidos.
-VERSION_LOGICA = 63
+VERSION_LOGICA = 64
 # Lo mismo, para un solo requisito: corregir uno no invalida la caché de todos.
 # Solo entra en la clave si está aquí (así las claves de los demás no cambian).
 VERSION_REQUISITO = {
     4: 1,  # el N.A. de un proponente individual trae la carta como soporte
+    6: 1,  # embargos e insolvencia explicados (empresa, página, frase completa, qué revisar)
+    7: 2,  # el objeto social de cada integrante, con inferencia de IA verificada cuando las palabras no coinciden
+    8: 2,  # con restricción para contratar se busca el acta del órgano que autoriza (y se adjunta)
+    14: 2,  # Contraloría: vigencia de tres meses; la sigla del certificado empareja al integrante
+    15: 2,  # Procuraduría: vigencia de tres meses; la sigla del certificado empareja al integrante
     18: 1,  # el N.A. de una sociedad que no es S.A. trae su certificado como soporte
 }
+
+
+# Requisitos que se resuelven con los mismos certificados: el COPNIA sirve al aval
+# (2) y a los antecedentes del ingeniero (3); y los cinco antecedentes suelen
+# venir juntos en un solo PDF, así que uno aportado en cualquiera cuenta para todos.
+_ANTECEDENTES = {5, 14, 15, 16, 17}
+_REQUISITOS_QUE_COMPARTEN_APORTADO = {2: {2, 3}, 3: {2, 3}, **{n: _ANTECEDENTES for n in _ANTECEDENTES}}
+_REQUISITO_DEL_APORTADO_RE = re.compile(r"^Req (\d+) - ")
+
+
+def _aportado_del_requisito(nombre: str, requisito: int) -> bool:
+    """El certificado aportado («Req 17 - RNMC 123.pdf») es del requisito que se evalúa."""
+    m = _REQUISITO_DEL_APORTADO_RE.match(nombre)
+    if m is None:
+        return True  # sin el requisito en el nombre no se puede descartar
+    return int(m.group(1)) in _REQUISITOS_QUE_COMPARTEN_APORTADO.get(requisito, {requisito})
 
 
 def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str | None, requisito: int = 1) -> str:
@@ -85,8 +106,11 @@ def _clave_cache(proponente: Proponente, proceso: ProcesoDocumentoBase, md5: str
         "codigo_proceso": proceso.codigo_proceso,
         "lotes": sorted(lote.numero for lote in proceso.lotes),
         # Un certificado aportado o consultado cambia el resultado: sin esto se
-        # serviría el resultado anterior, sin ese documento.
-        "aportados": sorted(nombre for nombre, _ in (proponente.documentos_aportados or [])),
+        # serviría el resultado anterior, sin ese documento. Solo cuentan los de
+        # ESTE requisito: antes, subir un RNMC obligaba a recalcular también la
+        # carta, el RUP y la lectura de cédulas con IA, y la reevaluación tardaba
+        # muchos minutos por cada certificado.
+        "aportados": sorted(nombre for nombre, _ in (proponente.documentos_aportados or []) if _aportado_del_requisito(nombre, requisito)),
     }
     if requisito in VERSION_REQUISITO:
         payload["version_requisito"] = VERSION_REQUISITO[requisito]

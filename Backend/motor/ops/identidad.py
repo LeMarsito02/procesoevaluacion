@@ -33,16 +33,18 @@ def libreta_exigible(cedula: str | None, textos: dict[str, str], fecha_referenci
         numero = int(re.sub(r"\D", "", cedula or ""))
     except ValueError:
         return None, ""
-    corregir = " Si no es así, corríjalo en los datos del contratista."
+    # Ley 1861 de 2017, arts. 11 y 42: los varones definen su situación militar
+    # hasta los 50 años y la acreditan para contratos de prestación de servicios.
+    corregir = " Confírmelo: si es así, márquela «No aplica»."
     if 20_000_000 <= numero <= 69_999_999:
-        return False, "Por la numeración de su cédula no se le exige." + corregir
+        return False, "Por la numeración de su cédula parece mujer, y no se le exigiría." + corregir
     hombre = numero < 20_000_000 or 70_000_000 <= numero <= 99_999_999
     if not hombre:
         marca = next((m for t in textos.values() for m in [_GENERO_RE.search(t)] if m and bool(m.group(1)) != bool(m.group(2))), None)
         if marca is None:
             return None, ""
         if marca.group(1):
-            return False, "En su hoja de vida marcó género femenino: no se le exige." + corregir
+            return False, "En su hoja de vida marcó género femenino: no se le exigiría." + corregir
     if fecha_referencia is None:
         return None, ""
     nacimiento = next((f for t in textos.values() for m in [_NACIMIENTO_RE.search(t)] if m and (f := fecha_de(m.group(1)))), None)
@@ -50,7 +52,7 @@ def libreta_exigible(cedula: str | None, textos: dict[str, str], fecha_referenci
         return None, ""
     edad = fecha_referencia.year - nacimiento.year - ((fecha_referencia.month, fecha_referencia.day) < (nacimiento.month, nacimiento.day))
     if edad >= EDAD_LIBRETA:
-        return False, f"Tiene {edad} años según su cédula: solo se exige a menores de {EDAD_LIBRETA}."
+        return False, f"Tiene {edad} años según su cédula y solo se exige a menores de {EDAD_LIBRETA}." + corregir
     return True, ""
 
 

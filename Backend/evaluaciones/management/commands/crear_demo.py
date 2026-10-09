@@ -176,6 +176,7 @@ class Command(BaseCommand):
         from evaluaciones import servicios
         from evaluaciones.models import AnalisisPliego, EstadoEvaluacion, Evaluacion, PlantillaEvaluacion, Proceso, Proponente
         from motor import criterios
+        from motor import cifrado
         from motor.integrations.drive import CACHE_DIR
         from motor.pliego import analisis, lector_ia, lectura
 
@@ -208,7 +209,7 @@ class Command(BaseCommand):
                 for nombre, contenido in pdfs[p.hoja].items():
                     z.writestr(f"{p.hoja} {p.nombre}/{nombre}", contenido)
             contenido = memoria.getvalue()
-            (CACHE_DIR / f"demo-{p.hoja.lower()}.zip").write_bytes(contenido)
+            cifrado.escribir(CACHE_DIR / f"demo-{p.hoja.lower()}.zip", contenido)
             (CACHE_DIR / f"demo-{p.hoja.lower()}.meta.json").write_text(json.dumps({
                 "name": f"{p.hoja[2:]}. {p.nombre}.zip", "md5Checksum": hashlib.md5(contenido, usedforsecurity=False).hexdigest(), "size": str(len(contenido)),
             }))

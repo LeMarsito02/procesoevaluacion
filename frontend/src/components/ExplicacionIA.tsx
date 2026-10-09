@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { explicacionDelResultado } from '../evaluaciones'
 import { mensajeDe } from '../http'
 import Icono from './Icono'
@@ -11,8 +11,9 @@ import Icono from './Icono'
  * qué saberse las siglas de la fórmula de capacidad residual.
  *
  * Se pide al pulsar, no al abrir: el modelo corre en local y tarda unos
- * segundos, y no todas las fichas necesitan explicación. La respuesta queda en
- * caché en el servidor, así que la segunda vez es inmediata. */
+ * segundos, y no todas las fichas necesitan explicación. La respuesta queda
+ * guardada en el servidor: al volver a abrir el requisito aparece sola, sin
+ * tener que pedirla otra vez (ni esperar al modelo). */
 export default function ExplicacionIA({
   evaluacionId,
   proponenteId,
@@ -25,6 +26,19 @@ export default function ExplicacionIA({
   const [texto, setTexto] = useState<string | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // La que ya se redactó para este resultado se muestra al abrir.
+  useEffect(() => {
+    let vigente = true
+    explicacionDelResultado(evaluacionId, proponenteId, requisito, true)
+      .then(({ texto: guardado }) => {
+        if (vigente && guardado) setTexto(guardado)
+      })
+      .catch(() => {})
+    return () => {
+      vigente = false
+    }
+  }, [evaluacionId, proponenteId, requisito])
 
   async function pedirExplicacion() {
     setCargando(true)

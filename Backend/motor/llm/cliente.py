@@ -22,6 +22,7 @@ import unicodedata
 import urllib.error
 import urllib.request
 from pathlib import Path
+from motor.gpu_turno import turno_ia
 
 LLM_URL = os.environ.get("LLM_URL", "http://localhost:11434")
 # La IA es local: solo se habla HTTP(S) con Ollama. Un LLM_URL mal puesto
@@ -75,7 +76,8 @@ def _llamar(instruccion: str, documento: str) -> str:
     with open(_CANDADO_LLM, "a") as candado:
         fcntl.flock(candado, fcntl.LOCK_EX)
         try:
-            return _llamar_sin_candado(instruccion, documento)
+            with turno_ia():
+                return _llamar_sin_candado(instruccion, documento)
         finally:
             fcntl.flock(candado, fcntl.LOCK_UN)
 
@@ -98,6 +100,17 @@ def _llamar_sin_candado(instruccion: str, documento: str) -> str:
     )
     with urllib.request.urlopen(peticion, timeout=LLM_TIMEOUT_SEGUNDOS) as respuesta:  # nosec B310 (esquema validado arriba)
         return json.load(respuesta)["message"]["content"]
+
+
+def respuesta_guardada(instruccion: str, documento: str) -> dict | None:
+    """La respuesta que ya se le dio a esta misma consulta, sin llamar al
+    modelo. None si nunca se hizo."""
+    documento = documento[:MAX_CARACTERES_DOCUMENTO]
+    archivo_cache = CACHE_DIR / f"{_clave_cache(LLM_MODELO, instruccion, documento)}.json"
+    try:
+        return json.loads(archivo_cache.read_text(encoding="utf-8")) if archivo_cache.exists() else None
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def consultar_json(instruccion: str, documento: str) -> dict | None:

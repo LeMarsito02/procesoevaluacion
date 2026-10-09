@@ -165,6 +165,11 @@ class CrearProcesoIn(Schema):
     # Dependencia que evalúa cada área: {"tecnica": id}. Sin enviar, la que
     # sugiere el objeto del contrato (o la única del área).
     dependencias: dict[str, UUID | None] | None = None
+    # La preparación de la que sale (proceso a medio crear): se borra al crearlo.
+    preparacion_id: UUID | None = None
+    # Más integrantes del comité por tipo, además del responsable (que lo coordina):
+    # {"juridica": [id, id]}. Solo jefes y administradores.
+    comites: dict[str, list[UUID]] | None = None
 
 
 class ProponenteOut(Schema):
@@ -469,12 +474,34 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
             # El abogado que crea su propio proceso queda a cargo.
             responsables[tipo] = usuario if usuario.rol == Rol.EVALUADOR else None
 
+    # Un archivo del OneDrive de Microsoft 365 solo puede ser del directorio de
+    # la entidad: el identificador llega del navegador y podría apuntar a otra.
+    from motor.integrations import onedrive_empresa
+
+    for p in datos.proponentes:
+        if onedrive_empresa.es_id(p.drive_file_id):
+            directorio = onedrive_empresa.partes(p.drive_file_id)[0]
+            if not entidad.microsoft_directorio or directorio.lower() != entidad.microsoft_directorio.lower():
+                raise HttpError(400, f"La oferta de {p.hoja} es de un OneDrive de otra organización.")
+
+    # Integrantes adicionales del comité: válidos, sin repetir y con responsable.
+    adicionales: dict[str, list[Usuario]] = {}
+    for tipo, ids in (datos.comites or {}).items():
+        ids = [x for x in dict.fromkeys(ids) if not (responsables.get(tipo) and x == responsables[tipo].id)]
+        if not ids or tipo not in tipos:
+            continue
+        if not gestiona:
+            raise HttpError(403, "Solo el jefe del área o el administrador designan el comité.")
+        if not responsables.get(tipo):
+            raise HttpError(400, f"Elija primero el responsable de la evaluación {TipoArea(tipo).label.lower()}: él coordina el comité.")
+        adicionales[tipo] = [_responsable_valido(entidad.id, tipo, x, usuario) for x in ids]
+
     doc = datos.documento_base
     try:
         with transaction.atomic():
             proceso = Proceso.objects.create(
                 entidad=entidad,
-                codigo=doc.codigo_proceso.strip(),
+                codigo=doc.codigo_proceso.strip().upper(),
                 fecha_cierre=doc.fecha_cierre,
                 objeto=doc.objeto_general,
                 documento_base=doc.model_dump(mode="json"),
@@ -522,11 +549,14 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
                 )
                 evaluaciones.append(evaluacion)
                 if responsable:
-                    # Queda en el comité; si lo designa un jefe o administrador,
-                    # con su documento de designación.
-                    estructura.designar_comite(evaluacion, [responsable], usuario, documentar=gestiona and responsable.id != usuario.id)
-                if responsable and responsable.id != usuario.id:
-                    transaction.on_commit(lambda e=evaluacion, r=responsable: enviar_asignacion(e, r, usuario))
+                    # Queda en el comité (con los demás integrantes, si se eligieron);
+                    # si lo designa un jefe o administrador, con su documento de designación.
+                    miembros = [responsable, *adicionales.get(tipo, [])]
+                    estructura.designar_comite(evaluacion, miembros, usuario,
+                                               documentar=gestiona and any(m.id != usuario.id for m in miembros))
+                    for miembro in miembros:
+                        if miembro.id != usuario.id:
+                            transaction.on_commit(lambda e=evaluacion, m=miembro: enviar_asignacion(e, m, usuario))
             auditar(
                 request,
                 "proceso.creado",
@@ -536,6 +566,7 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
                 proponentes=len(datos.proponentes),
                 tipos=tipos,
                 responsables={t: (r.email if r else None) for t, r in responsables.items()},
+                comites={t: [m.email for m in ms] for t, ms in adicionales.items()},
                 pliego=analisis.nombre_archivo if analisis else None,
                 ajustes_pliego={a["id"]: a["decision"] for a in ajustes},
             )
@@ -544,6 +575,14 @@ def crear_proceso(request: HttpRequest, datos: CrearProcesoIn):
     for e in evaluaciones:
         e.proceso = proceso
         e.entidad = entidad
+    if datos.preparacion_id:
+        # El proceso ya existe: el borrador del que salió sobra.
+        from evaluaciones import preparacion
+        from evaluaciones.models import PreparacionProceso
+
+        borrador = PreparacionProceso.objects.filter(pk=datos.preparacion_id, creada_por=usuario).first()
+        if borrador is not None:
+            preparacion.borrar(borrador)
     return 201, _resumenes(usuario, evaluaciones)
 
 
@@ -796,7 +835,7 @@ def actualizar_documento_base(request: HttpRequest, evaluacion_id: UUID, datos: 
     evaluacion = _evaluacion(usuario, evaluacion_id)
     exigir_trabajo(usuario, evaluacion)
     proceso = evaluacion.proceso
-    if datos.codigo_proceso.strip() != proceso.codigo:
+    if datos.codigo_proceso.strip().upper() != proceso.codigo.upper():
         raise HttpError(400, "El código del proceso no se puede cambiar.")
     proceso.documento_base = datos.model_dump(mode="json")
     proceso.fecha_cierre = datos.fecha_cierre
@@ -1340,10 +1379,31 @@ def reabrir(request: HttpRequest, evaluacion_id: UUID) -> EvaluacionResumenOut:
     return _resumenes(usuario, [evaluacion])[0]
 
 
+FORMATOS = ("xlsx", "pdf")
+
+
+def _entregar(request: HttpRequest, contenido: bytes, nombre: str, formato: str) -> HttpResponse:
+    """El informe en Excel o, si se pide, en PDF (RF-22)."""
+    from evaluaciones import exportar
+
+    tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if formato == "pdf":
+        try:
+            contenido = exportar.a_pdf(contenido, nombre)
+        except exportar.ErrorExportacion as exc:
+            raise HttpError(503, str(exc)) from exc
+        nombre, tipo = f"{nombre.rsplit('.', 1)[0]}.pdf", "application/pdf"
+    respuesta = HttpResponse(contenido, content_type=tipo)
+    respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+    return respuesta
+
+
 @router.get("/{evaluacion_id}/consolidado")
-def informe_consolidado(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
+def informe_consolidado(request: HttpRequest, evaluacion_id: UUID, formato: str = "xlsx") -> HttpResponse:
     """Las tres áreas del proceso en un solo archivo, con el puntaje y el
     orden de elegibilidad por lote."""
+    if formato not in FORMATOS:
+        raise HttpError(400, "Formato no válido: use xlsx o pdf.")
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
     proceso = evaluacion.proceso
@@ -1351,14 +1411,15 @@ def informe_consolidado(request: HttpRequest, evaluacion_id: UUID) -> HttpRespon
         contenido, nombre = servicios.generar_informe_consolidado(proceso)
     except ValueError as exc:
         raise HttpError(400, str(exc)) from exc
-    auditar(request, "informe.consolidado_descargado", objeto=evaluacion, proceso=proceso.codigo)
-    respuesta = HttpResponse(contenido, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+    respuesta = _entregar(request, contenido, nombre, formato)
+    auditar(request, "informe.consolidado_descargado", objeto=evaluacion, proceso=proceso.codigo, formato=formato)
     return respuesta
 
 
 @router.get("/{evaluacion_id}/informe")
-def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
+def informe(request: HttpRequest, evaluacion_id: UUID, formato: str = "xlsx") -> HttpResponse:
+    if formato not in FORMATOS:
+        raise HttpError(400, "Formato no válido: use xlsx o pdf.")
     usuario: Usuario = request.auth
     evaluacion = _evaluacion(usuario, evaluacion_id)
     try:
@@ -1367,17 +1428,26 @@ def informe(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
         raise HttpError(400, "Este tipo de evaluación aún no tiene plantilla de informe. El administrador puede subirla en Configuración.") from exc
     proceso = evaluacion.proceso
     borrador = evaluacion.estado != EstadoEvaluacion.APROBADA
-    auditar(request, "informe.descargado", objeto=evaluacion, proceso=proceso.codigo, borrador=bool(borrador))
-    respuesta = HttpResponse(contenido, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+    respuesta = _entregar(request, contenido, nombre, formato)
+    auditar(request, "informe.descargado", objeto=evaluacion, proceso=proceso.codigo, borrador=bool(borrador), formato=formato)
+    return respuesta
+
+
+@router.get("/{evaluacion_id}/resultados.csv")
+def resultados_csv(request: HttpRequest, evaluacion_id: UUID) -> HttpResponse:
+    """Resultados por proponente y requisito, con la decisión final, en CSV (RF-22)."""
+    from evaluaciones.exportar import csv_resultados
+
+    evaluacion = _evaluacion(request.auth, evaluacion_id)
+    respuesta = HttpResponse(csv_resultados(evaluacion), content_type="text/csv; charset=utf-8")
+    respuesta["Content-Disposition"] = f'attachment; filename="Resultados {evaluacion.proceso.codigo} {evaluacion.tipo}.csv"'
+    auditar(request, "informe.csv_descargado", objeto=evaluacion, proceso=evaluacion.proceso.codigo)
     return respuesta
 
 
 def _contenido_aportado(evaluacion, proponente, nombre: str) -> bytes | None:
-    from evaluaciones.models import DocumentoAportado
-
-    for d in DocumentoAportado.objects.filter(evaluacion=evaluacion, proponente=proponente):
-        if f"Req {d.requisito} - {d.nombre_original}" == nombre:
+    for como_se_llama, d in servicios.aportados_con_nombre(evaluacion, proponente):
+        if como_se_llama == nombre:
             with d.archivo.open("rb") as archivo_aportado:
                 return archivo_aportado.read()
     return None
@@ -1403,6 +1473,12 @@ def documento(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, ar
             raise HttpError(404, "Ese certificado aportado ya no está disponible.")
         auditar(request, "documento.visto", objeto=evaluacion, hoja=proponente.hoja, archivo=archivo)
         return HttpResponse(contenido, content_type="application/pdf")
+    contenido = _pdf_de_la_oferta(proponente, archivo)
+    auditar(request, "documento.visto", objeto=evaluacion, hoja=proponente.hoja, archivo=archivo)
+    return HttpResponse(contenido, content_type="application/pdf")
+
+
+def _pdf_de_la_oferta(proponente, archivo: str) -> bytes:
     try:
         zip_bytes = download_file_bytes(proponente.drive_file_id)
     except Exception as exc:  # noqa: BLE001
@@ -1410,8 +1486,161 @@ def documento(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, ar
     contenido = extraer_pdfs(zip_bytes).get(archivo)
     if contenido is None:
         raise HttpError(404, "No se encontró ese documento dentro de la oferta del proponente.")
-    auditar(request, "documento.visto", objeto=evaluacion, hoja=proponente.hoja, archivo=archivo)
-    return HttpResponse(contenido, content_type="application/pdf")
+    return contenido
+
+
+@router.get("/{evaluacion_id}/proponentes/{proponente_id}/documento/pagina")
+def pagina_del_documento(
+    request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, archivo: str, n: int = 1, resolucion: int = 110
+) -> HttpResponse:
+    """Una página del documento como imagen. Para los equipos cuyo navegador no
+    muestra un PDF dentro de la página (tabletas y teléfonos): el visor pasa las
+    páginas una por una. El total de páginas va en la cabecera X-Paginas."""
+    import io
+
+    from motor.procesamiento.pdf_utils import abrir_pdf
+
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    if evaluacion.proceso.documentos_eliminados_en:
+        raise HttpError(410, "Los documentos de este proceso se eliminaron por la política de retención.")
+    if archivo.startswith(PREFIJO_APORTADOS):
+        contenido = _contenido_aportado(evaluacion, proponente, archivo[len(PREFIJO_APORTADOS) :])
+        if contenido is None:
+            raise HttpError(404, "Ese certificado aportado ya no está disponible.")
+    else:
+        contenido = _pdf_de_la_oferta(proponente, archivo)
+    try:
+        with abrir_pdf(contenido) as pdf:
+            total = len(pdf.pages)
+            if total == 0:
+                raise HttpError(422, "No se pudo abrir este documento para mostrarlo: descárguelo con «Abrir en pestaña nueva».")
+            numero = min(max(1, n), total)
+            imagen = pdf.pages[numero - 1].to_image(resolution=min(max(60, resolucion), 200)).original.convert("RGB")
+    except HttpError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(422, "No se pudo dibujar esa página del documento.") from exc
+    salida = io.BytesIO()
+    imagen.save(salida, format="JPEG", quality=82)
+    if numero == 1:
+        auditar(request, "documento.visto", objeto=evaluacion, hoja=proponente.hoja, archivo=archivo)
+    respuesta = HttpResponse(salida.getvalue(), content_type="image/jpeg")
+    respuesta["X-Paginas"] = str(total)
+    respuesta["X-Pagina"] = str(numero)
+    respuesta["Cache-Control"] = "private, max-age=300"
+    return respuesta
+
+
+class CoincidenciaOut(Schema):
+    pagina: int
+    fragmento: str
+
+
+@router.get("/{evaluacion_id}/proponentes/{proponente_id}/documento/buscar", response=list[CoincidenciaOut])
+def buscar_en_documento(request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, archivo: str, q: str):
+    """Busca un texto dentro de un documento de la oferta, página por página.
+    Con el texto que leyó el programa (OCR en las páginas escaneadas): el
+    buscador del navegador no encuentra nada en un escaneo, y la mayoría de las
+    ofertas lo son. Sin distinguir mayúsculas ni tildes."""
+    import re
+    import unicodedata
+
+    from motor.procesamiento.pdf_utils import paginas_de_texto
+
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    if evaluacion.proceso.documentos_eliminados_en:
+        raise HttpError(410, "Los documentos de este proceso se eliminaron por la política de retención.")
+    buscado = q.strip()
+    if len(buscado) < 2:
+        return []
+    if archivo.startswith(PREFIJO_APORTADOS):
+        contenido = _contenido_aportado(evaluacion, proponente, archivo[len(PREFIJO_APORTADOS) :])
+        if contenido is None:
+            raise HttpError(404, "Ese certificado aportado ya no está disponible.")
+    else:
+        contenido = _pdf_de_la_oferta(proponente, archivo)
+
+    def plano(texto: str) -> str:
+        # Una letra por letra (sin tildes) para que las posiciones coincidan con el original.
+        return "".join(unicodedata.normalize("NFD", c)[0] for c in texto).upper()
+
+    patron = re.compile(r"\s+".join(re.escape(parte) for parte in plano(buscado).split()))
+    salida: list[CoincidenciaOut] = []
+    for numero, texto in enumerate(paginas_de_texto(contenido), 1):
+        texto = " ".join(texto.split())
+        for m in patron.finditer(plano(texto)):
+            desde, hasta = max(0, m.start() - 70), min(len(texto), m.end() + 70)
+            fragmento = ("…" if desde else "") + texto[desde:hasta] + ("…" if hasta < len(texto) else "")
+            salida.append(CoincidenciaOut(pagina=numero, fragmento=fragmento))
+            if len(salida) >= 100:
+                return salida
+    return salida
+
+
+class AsociarDocumentosIn(Schema):
+    # La lista completa de documentos asociados a mano al requisito (reemplaza la anterior).
+    archivos: list[str]
+    # Los que el programa relacionó y la persona quita porque no corresponden
+    # (lista completa; None = no se toca).
+    excluidos: list[str] | None = None
+
+
+@router.put("/{evaluacion_id}/proponentes/{proponente_id}/requisitos/{numero}/documentos", response=dict)
+def asociar_documentos(
+    request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, numero: int, datos: AsociarDocumentosIn
+) -> dict:
+    """Asocia a un requisito documentos de la carpeta del proponente que el
+    programa no relacionó (llegaron con otro nombre, dentro de otro PDF…), o
+    quita los que una persona había asociado. Queda guardado y se conserva al
+    volver a evaluar. No cambia el resultado: solo qué documentos lo acompañan."""
+    usuario: Usuario = request.auth
+    evaluacion = _evaluacion(usuario, evaluacion_id)
+    exigir_trabajo(usuario, evaluacion)
+    if evaluacion.estado == EstadoEvaluacion.APROBADA:
+        raise HttpError(409, "La evaluación está aprobada: reábrela para cambiar los documentos de un requisito.")
+    proponente = get_object_or_404(Proponente, pk=proponente_id, proceso_id=evaluacion.proceso_id)
+    resultado = Resultado.objects.filter(evaluacion=evaluacion, proponente=proponente, requisito=numero).first()
+    if resultado is None:
+        raise HttpError(404, "Ese requisito todavía no se evaluó para este proponente.")
+    from evaluaciones.models import DocumentoAportado, Revision
+
+    # Lo que el programa dio por verificado no se toca, salvo que la persona
+    # haya dejado constancia de que no está de acuerdo con ese resultado.
+    if (resultado.datos or {}).get("cumple") is True and not Revision.objects.filter(
+        evaluacion=evaluacion, proponente=proponente, requisito=numero, cumple=False
+    ).exists():
+        raise HttpError(
+            409,
+            "El programa dio por verificado este requisito. Para cambiar sus documentos, primero marque que no está "
+            "de acuerdo con el resultado.",
+        )
+
+    try:
+        validos = set(extraer_pdfs(download_file_bytes(proponente.drive_file_id)).keys())
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(502, "No se pudo abrir la carpeta del proponente. Inténtelo de nuevo en unos minutos.") from exc
+    validos |= {f"{PREFIJO_APORTADOS}{nombre}" for nombre, _ in servicios.aportados_con_nombre(evaluacion, proponente)}
+    pedidos = list(dict.fromkeys(a for a in datos.archivos if a))
+    excluidos_antes = list((resultado.datos or {}).get("archivos_excluidos") or [])
+    excluidos = excluidos_antes if datos.excluidos is None else list(dict.fromkeys(a for a in datos.excluidos if a))
+    ajenos = [a for a in [*pedidos, *excluidos] if a not in validos]
+    if ajenos:
+        raise HttpError(400, f"Ese documento no está en la carpeta del proponente: {ajenos[0]}")
+    if len(pedidos) > 30:
+        raise HttpError(400, "Son demasiados documentos para un solo requisito (máximo 30).")
+    antes = list((resultado.datos or {}).get("archivos_asociados") or [])
+    resultado.datos = {**(resultado.datos or {}), "archivos_asociados": pedidos, "archivos_excluidos": excluidos}
+    resultado.save(update_fields=["datos"])
+    # Quién añadió o quitó qué documento, y cuándo: queda en la auditoría.
+    auditar(request, "requisito.documentos_cambiados", objeto=evaluacion, hoja=proponente.hoja, requisito=numero,
+            anadidos=[a for a in pedidos if a not in antes], ya_no_anadidos=[a for a in antes if a not in pedidos],
+            quitados=[a for a in excluidos if a not in excluidos_antes],
+            restaurados=[a for a in excluidos_antes if a not in excluidos])
+    return resultado.datos
 
 
 class ArchivosProponenteOut(Schema):
@@ -1439,10 +1668,7 @@ def archivos_del_proponente(request: HttpRequest, evaluacion_id: UUID, proponent
         )
     from evaluaciones.models import DocumentoAportado
 
-    aportados = [
-        f"{PREFIJO_APORTADOS}Req {d.requisito} - {d.nombre_original}"
-        for d in DocumentoAportado.objects.filter(evaluacion=evaluacion, proponente=proponente)
-    ]
+    aportados = [f"{PREFIJO_APORTADOS}{nombre}" for nombre, _ in servicios.aportados_con_nombre(evaluacion, proponente)]
     try:
         zip_bytes = download_file_bytes(proponente.drive_file_id)
     except Exception as exc:  # noqa: BLE001
@@ -1476,7 +1702,7 @@ def _lineas_del_detalle(detalle: dict | None, profundidad: int = 0) -> list[str]
 
 @router.get("/{evaluacion_id}/proponentes/{proponente_id}/explicacion/{numero}", response=ExplicacionOut)
 def explicacion_del_resultado(
-    request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, numero: int
+    request: HttpRequest, evaluacion_id: UUID, proponente_id: UUID, numero: int, guardada: bool = False
 ) -> ExplicacionOut:
     """El resultado de un requisito contado en palabras llanas por el modelo
     local, para acompañar al detalle técnico (que no se reemplaza: es el dato
@@ -1510,6 +1736,9 @@ def explicacion_del_resultado(
         motivo=str(resultado.get("motivo") or ("Cumple." if resultado.get("cumple") else "")),
         datos="\n".join(_lineas_del_detalle(detalle))[:2500],
         por_revisar=por_revisar[:8],
+        # Al abrir el requisito solo se muestra la que ya existe; el modelo se
+        # llama únicamente cuando la persona la pide.
+        solo_guardada=guardada,
     )
     return ExplicacionOut(texto=texto)
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 
-from motor.llm.cliente import consultar_json
+from motor.llm.cliente import consultar_json, respuesta_guardada
 
 # Las siglas se le dan resueltas: si el modelo las define de memoria se
 # equivoca (llamó a la capacidad residual "la capacidad financiera del
@@ -74,8 +74,11 @@ def _inventa_cifras(explicacion: str, fuente: str) -> bool:
     return bool(_cifras(explicacion) - _cifras(fuente))
 
 
-def explicar(titulo: str, motivo: str, datos: str = "", por_revisar: list[str] | None = None) -> str | None:
+def explicar(titulo: str, motivo: str, datos: str = "", por_revisar: list[str] | None = None,
+             solo_guardada: bool = False) -> str | None:
     """El párrafo en palabras llanas, o None si no se pudo generar.
+    `solo_guardada`: la que ya se redactó para este mismo resultado, sin llamar
+    al modelo (para mostrarla al volver a abrir el requisito).
 
     `titulo` es el requisito ("Capacidad residual"), `motivo` lo que el motor
     concluyó, `datos` el detalle técnico tal como se le muestra a quien revisa y
@@ -91,7 +94,7 @@ def explicar(titulo: str, motivo: str, datos: str = "", por_revisar: list[str] |
     if len(fuente) < 20:
         return None
 
-    respuesta = consultar_json(_INSTRUCCION, fuente)
+    respuesta = respuesta_guardada(_INSTRUCCION, fuente) if solo_guardada else consultar_json(_INSTRUCCION, fuente)
     if not respuesta:
         return None
     explicacion = str(respuesta.get("explicacion") or "").strip()

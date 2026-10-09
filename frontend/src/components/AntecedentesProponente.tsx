@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   agregarPersona,
   consultarEnLinea,
@@ -18,6 +19,7 @@ import {
 } from '../historico'
 import { ErrorApi, mensajeDe } from '../http'
 import Icono from './Icono'
+import { copiarAlPortapapeles, nitConDv, nitParaConsulta } from '../format'
 
 const AYUDA_TIPO: Record<string, string> = {
   persona_natural: 'Persona natural: registre al proponente con su cédula.',
@@ -28,8 +30,7 @@ const AYUDA_TIPO: Record<string, string> = {
 
 async function copiar(texto: string): Promise<boolean> {
   try {
-    await navigator.clipboard.writeText(texto)
-    return true
+    return await copiarAlPortapapeles(texto)
   } catch {
     return false
   }
@@ -227,7 +228,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                     {per.detectada && <span className="tag" style={{ marginLeft: 6 }}>de la oferta</span>}
                     <div className="small muted">
                       {per.rol_nombre}
-                      {per.documento ? ` · ${per.tipo === 'juridica' ? 'NIT' : 'C.C.'} ${per.documento}` : ' · documento no leído'}
+                      {per.documento ? ` · ${per.tipo === 'juridica' ? `NIT ${nitConDv(per.documento)}` : `C.C. ${per.documento}`}` : ' · documento no leído'}
                       {per.fecha_expedicion_documento && ` · expedida el ${fecha(per.fecha_expedicion_documento)}`}
                     </div>
                     {!soloLectura && per.tipo !== 'juridica' && (
@@ -272,18 +273,22 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
                         <button
                           type="button"
                           className="enlace"
-                          title="Copiar nombre, documento y fecha de expedición para consultarlos en las páginas oficiales"
+                          title={
+                            per.tipo === 'juridica'
+                              ? 'Copiar el NIT con su dígito de verificación, sin puntos, para pegarlo en las páginas oficiales'
+                              : 'Copiar el número de cédula para pegarlo en las páginas oficiales'
+                          }
+                          disabled={!per.documento}
                           onClick={async () =>
                             setCopiado(
-                              (await copiar(
-                                `${per.nombre} · ${per.tipo === 'juridica' ? 'NIT' : 'C.C.'} ${per.documento}${per.fecha_expedicion_documento ? ` · expedida el ${fecha(per.fecha_expedicion_documento)}` : ''}`,
-                              ))
+                              // Solo el número: es lo que se pega en la página de consulta.
+                              (await copiar(per.tipo === 'juridica' ? nitParaConsulta(per.documento) : per.documento.replace(/\D/g, '')))
                                 ? per.id
                                 : null,
                             )
                           }
                         >
-                          {copiado === per.id ? '¡copiado!' : 'copiar datos'}
+                          {copiado === per.id ? '¡copiado!' : per.tipo === 'juridica' ? 'copiar NIT' : 'copiar número de cédula'}
                         </button>
                         {per.tipo !== 'juridica' && (
                           <button
@@ -562,6 +567,7 @@ export default function AntecedentesProponente({ evaluacionId, proponenteId, sol
       {subida && (
         <FormularioCertificado
           ocupado={trabajando}
+          error={error}
           titulo={`${datos.requisitos.find((r) => r.numero === subida.requisito)?.titulo ?? `Requisito ${subida.requisito}`}${subida.persona ? ` · ${subida.persona.nombre}` : ''}`}
           fuente={fuenteDe(datos.requisitos.find((r) => r.numero === subida.requisito)?.pistas ?? [])}
           personas={subida.persona ? null : ordenadas}
@@ -671,8 +677,11 @@ function FormularioCertificado({
   onCerrar,
   onGuardar,
   ocupado = false,
+  error = null,
 }: {
   ocupado?: boolean
+  /** Por qué no se pudo subir: se muestra aquí mismo, no arriba de la sección. */
+  error?: string | null
   titulo: string
   /** Página oficial donde se consulta este antecedente, si la hay. */
   fuente?: (typeof FUENTES)[number] | null
@@ -682,12 +691,64 @@ function FormularioCertificado({
   onGuardar: (d: { fecha_expedicion: string; observacion: string; archivo: File }, personaId?: string | null) => void
 }) {
   const [archivo, setArchivo] = useState<File | null>(null)
-  const [expedicion, setExpedicion] = useState('')
+  // Lo normal es subir el certificado recién consultado: la fecha de hoy, que se puede cambiar.
+  const [expedicion, setExpedicion] = useState(() => {
+    const hoy = new Date()
+    return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`
+  })
   const [observacion, setObservacion] = useState('')
-  const [persona, setPersona] = useState('')
+  // Con una sola persona no hay nada que elegir.
+  const [persona, setPersona] = useState(() => (personas && personas.length === 1 ? personas[0].id : ''))
   const faltaPersona = !!personas && personas.length > 0 && !persona
-  return (
-    <div className="formulario-inline">
+  // Qué falta para poder subir: se dice al intentar, en vez de dejar el botón apagado sin explicación.
+  const [aviso, setAviso] = useState<string | null>(null)
+  const faltantes = [
+    ...(faltaPersona ? ['elegir de quién es el certificado'] : []),
+    ...(!archivo ? ['seleccionar el archivo del certificado'] : []),
+    ...(!expedicion ? ['indicar la fecha de expedición'] : []),
+  ]
+  // Se abre como ventana sobre la pantalla: al final del panel quedaba oculto y parecía que el botón no hacía nada.
+  const caja = useRef<HTMLDivElement>(null)
+  // El foco entra a la ventana UNA vez, al abrirla (no a la lista de personas: con el foco en una
+  // lista, cada letra cambia la opción elegida). Antes se repetía cada vez que la pantalla de atrás
+  // se actualizaba y le quitaba el foco al campo en el que se estaba escribiendo.
+  useEffect(() => {
+    caja.current?.focus()
+  }, [])
+  const cerrar = useRef(onCerrar)
+  useEffect(() => {
+    cerrar.current = onCerrar
+  }, [onCerrar])
+  useEffect(() => {
+    function tecla(e: KeyboardEvent) {
+      // Mientras esta ventana está abierta, el teclado es suyo: los atajos del panel
+      // de atrás (P = siguiente pendiente, flechas = otro proponente) no deben dispararse.
+      e.stopPropagation()
+      if (e.key === 'Escape') {
+        cerrar.current()
+      }
+      if (e.key === 'Tab' && caja.current) {
+        // El tabulador da la vuelta dentro de esta ventana.
+        const campos = [...caja.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input, select')]
+        if (campos.length === 0) return
+        const primero = campos[0]
+        const ultimo = campos[campos.length - 1]
+        const dentro = caja.current.contains(document.activeElement)
+        if (!e.shiftKey && (document.activeElement === ultimo || !dentro)) {
+          e.preventDefault()
+          primero.focus()
+        } else if (e.shiftKey && (document.activeElement === primero || !dentro)) {
+          e.preventDefault()
+          ultimo.focus()
+        }
+      }
+    }
+    window.addEventListener('keydown', tecla, true)
+    return () => window.removeEventListener('keydown', tecla, true)
+  }, [])
+  return createPortal(
+    <div className="ventana-fondo" onClick={(e) => e.target === e.currentTarget && onCerrar()}>
+    <div className="formulario-inline ventana" ref={caja} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`Subir certificado: ${titulo}`}>
       <strong className="small">Certificado consultado: {titulo}</strong>
       {fuente && (
         <p className="small muted" style={{ margin: 0 }}>
@@ -713,15 +774,28 @@ function FormularioCertificado({
           </label>
         )}
         <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          PDF del certificado
-          <input type="file" accept="application/pdf" onChange={(e) => setArchivo(e.target.files?.[0] ?? null)} />
+          Certificado (PDF, o foto/captura en JPG o PNG)
+          <input type="file" accept="application/pdf,image/jpeg,image/png" onChange={(e) => setArchivo(e.target.files?.[0] ?? null)} />
         </label>
         <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           Fecha de expedición del certificado
           <input className="input select-sm" type="date" value={expedicion} onChange={(e) => setExpedicion(e.target.value)} />
         </label>
-        <input className="input select-sm" placeholder="Observación (opcional)" value={observacion} onChange={(e) => setObservacion(e.target.value)} />
+        <label className="small muted" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          Observación (opcional)
+          <input className="input select-sm" placeholder="Por ejemplo: consultado hoy en la página oficial" value={observacion} onChange={(e) => setObservacion(e.target.value)} />
+        </label>
       </div>
+      {error && !ocupado && (
+        <p className="small" role="alert" style={{ margin: 0, color: 'var(--bad)' }}>
+          No se pudo subir: {error}
+        </p>
+      )}
+      {aviso && faltantes.length > 0 && (
+        <p className="small" role="alert" style={{ margin: 0, color: 'var(--bad)' }}>
+          Falta {faltantes.join(', ')}.
+        </p>
+      )}
       <div className="acciones" style={{ justifyContent: 'flex-end' }}>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onCerrar}>
           Cancelar
@@ -729,12 +803,21 @@ function FormularioCertificado({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={ocupado || !archivo || !expedicion || faltaPersona}
-          onClick={() => archivo && onGuardar({ fecha_expedicion: expedicion, observacion, archivo }, persona || null)}
+          disabled={ocupado}
+          onClick={() => {
+            if (faltantes.length > 0 || !archivo) {
+              setAviso(`Falta ${faltantes.join(', ')}.`)
+              return
+            }
+            setAviso(null)
+            onGuardar({ fecha_expedicion: expedicion, observacion, archivo }, persona || null)
+          }}
         >
           {ocupado ? <span className="spinner" /> : null} {ocupado ? 'Subiendo…' : 'Subir certificado'}
         </button>
       </div>
     </div>
+    </div>,
+    document.body,
   )
 }

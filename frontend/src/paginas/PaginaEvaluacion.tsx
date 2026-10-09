@@ -13,6 +13,9 @@ import PanelProponente from '../components/PanelProponente'
 import PasoDatos from '../components/PasoDatos'
 import PasoEvaluacion from '../components/PasoEvaluacion'
 import PasoInforme from '../components/PasoInforme'
+import PasoTramite from '../components/PasoTramite'
+import FactorEconomico from '../components/FactorEconomico'
+import CoincidenciasOfertas from '../components/CoincidenciasOfertas'
 import Topbar from '../components/Topbar'
 import { PASOS_EVALUACION, type Paso } from '../pasos'
 import VisorDocumento, { type DecisionMuestra } from '../components/VisorDocumento'
@@ -29,11 +32,13 @@ import {
   pausarEvaluacion,
   descargarConsolidado,
   descargarInforme,
+  type FormatoInforme,
   guardarDocumentoBase,
   guardarRevision,
   obtenerEvaluacion,
   reabrirEvaluacion,
   verDocumentoProponente,
+  asociarDocumentos,
   soltarBloqueo,
   tomarBloqueo,
   type Bloqueo,
@@ -123,7 +128,9 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   const proponentes = inicial.proponentes
   const codigo = inicial.documento_base.codigo_proceso
   const fechaCierre = inicial.documento_base.fecha_cierre
-  const [paso, setPaso] = useState<Paso>(inicial.resultados.length ? 'evaluacion' : 'datos')
+  // Con resultados o ya en la fila se abre en la evaluación: el formulario de datos
+  // es para antes de evaluar, y desde ahí se podía volver a mandar todo a la fila.
+  const [paso, setPaso] = useState<Paso>(inicial.resultados.length || inicial.evaluacion.fila !== null ? 'evaluacion' : 'datos')
   const [panel, setPanel] = useState<{ hoja: string; requisito: number | null; persona?: string } | null>(null)
   // Requisito cuyo certificado consultado se va a subir desde su tarjeta.
   const [subirCertificado, setSubirCertificado] = useState<number | null>(null)
@@ -204,36 +211,50 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   // --- Fila del servidor: mientras haya trabajos pendientes se consultan las novedades ---
   const enFila = resumen.fila !== null
   const desde = useRef<string | null>(null)
+  /** Pide las novedades y las pone en pantalla: los resultados que cambiaron y el estado de la fila. */
+  async function traerNovedades(): Promise<boolean> {
+    const n = await novedadesEvaluacion(id, desde.current)
+    desde.current = n.hasta
+    if (n.resultados.length) {
+      setResultados((prev) => {
+        const nuevo = { ...prev }
+        for (const [hoja, lista] of Object.entries(agrupar(n.resultados))) {
+          const porRequisito = new Map((nuevo[hoja] ?? []).map((r) => [r.requisito, r]))
+          for (const r of lista) porRequisito.set(r.requisito, r)
+          nuevo[hoja] = [...porRequisito.values()]
+        }
+        return nuevo
+      })
+    }
+    setResumen(n.evaluacion)
+    return Boolean(n.evaluacion.fila)
+  }
+  // Con trabajos en la fila se consulta seguido; sin ellos, de vez en cuando: así se ven
+  // también los cambios que hace otra persona del comité (o un certificado que ella adjuntó).
   useEffect(() => {
-    if (!enFila) return
     let vigente = true
     const consultar = async () => {
       try {
-        const n = await novedadesEvaluacion(id, desde.current)
-        if (!vigente) return
-        desde.current = n.hasta
-        if (n.resultados.length) {
-          setResultados((prev) => {
-            const nuevo = { ...prev }
-            for (const [hoja, lista] of Object.entries(agrupar(n.resultados))) {
-              const porRequisito = new Map((nuevo[hoja] ?? []).map((r) => [r.requisito, r]))
-              for (const r of lista) porRequisito.set(r.requisito, r)
-              nuevo[hoja] = [...porRequisito.values()]
-            }
-            return nuevo
-          })
+        // La primera vez solo se fija la hora del servidor, sin traer todos los resultados otra vez.
+        if (!enFila && desde.current === null) {
+          // La hora la da el servidor (la del equipo puede estar adelantada o atrasada).
+          const n = await novedadesEvaluacion(id, new Date().toISOString())
+          desde.current = n.hasta
+          if (vigente) setResumen(n.evaluacion)
+          return
         }
-        setResumen(n.evaluacion)
-        if (!n.evaluacion.fila) setAviso('Evaluación terminada')
+        const sigue = await traerNovedades()
+        if (vigente && enFila && !sigue) setAviso('Evaluación terminada')
       } catch {
         // Un fallo puntual de red no detiene el seguimiento.
       }
     }
-    const t = window.setInterval(consultar, 4000)
+    const t = window.setInterval(consultar, enFila ? 4000 : 20000)
     return () => {
       vigente = false
       window.clearInterval(t)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- traerNovedades usa solo referencias estables
   }, [enFila, id])
 
   // Al adjuntar un certificado el servidor vuelve a evaluar al proponente: se
@@ -252,9 +273,9 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
 
   async function seguirReevaluacion() {
     try {
-      const n = await novedadesEvaluacion(id, desde.current)
-      desde.current = n.hasta
-      setResumen(n.evaluacion)
+      // Antes se descartaban los resultados de esta respuesta: si la reevaluación ya había
+      // terminado, el requisito no cambiaba en pantalla hasta recargar la página.
+      await traerNovedades()
     } catch {
       // Si falla, el usuario igual puede recargar la página.
     }
@@ -293,7 +314,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
   }
 
   async function confirmarDatos() {
-    if (soloLectura) {
+    // Mientras se evalúa no se vuelve a mandar nada a la fila: solo se va al avance.
+    if (soloLectura || resumen.fila !== null) {
       setPaso('evaluacion')
       return
     }
@@ -378,6 +400,25 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     }
   }
 
+  /** Añade o quita documentos de la carpeta asociados a mano a un requisito. */
+  async function asociarAlRequisito(resultado: ResultadoRequisito, archivos: string[], excluidos: string[]) {
+    const pr = proponentes.find((p) => p.hoja === resultado.hoja)
+    if (!pr) return
+    try {
+      const actualizado = await asociarDocumentos(id, pr.id, resultado.requisito, archivos, excluidos)
+      setResultados((prev) => ({
+        ...prev,
+        [resultado.hoja]: (prev[resultado.hoja] ?? []).map((x) =>
+          x.requisito === resultado.requisito
+            ? { ...x, archivos_asociados: actualizado.archivos_asociados ?? [], archivos_excluidos: actualizado.archivos_excluidos ?? [] }
+            : x,
+        ),
+      }))
+    } catch (err) {
+      setAviso(`No se pudo guardar: ${mensajeDe(err)}`)
+    }
+  }
+
   async function abrirDocumento(resultado: ResultadoRequisito, archivo: string, muestra?: DecisionMuestra) {
     const pr = proponentes.find((p) => p.hoja === resultado.hoja)
     if (!pr) return
@@ -392,12 +433,12 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     }
   }
 
-  async function generarConsolidado() {
+  async function generarConsolidado(formato: 'xlsx' | 'pdf' = 'xlsx') {
     setGenerandoConsolidado(true)
     setErrorInforme(null)
     try {
-      const { blob, nombre } = await descargarConsolidado(id)
-      descargar(blob, nombre ?? `INFORME CONSOLIDADO ${codigo}.xlsx`)
+      const { blob, nombre } = await descargarConsolidado(id, formato)
+      descargar(blob, nombre ?? `INFORME CONSOLIDADO ${codigo}.${formato}`)
       setAviso('Consolidado descargado')
     } catch (err) {
       setErrorInforme(mensajeDe(err, 'No se pudo generar el consolidado.'))
@@ -406,13 +447,13 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     }
   }
 
-  async function generarInforme() {
+  async function generarInforme(formato: FormatoInforme = 'xlsx') {
     setGenerando(true)
     setErrorInforme(null)
     try {
-      const { blob, nombre } = await descargarInforme(id)
-      descargar(blob, nombre ?? `INFORME ${codigo}.xlsx`)
-      setAviso('Informe descargado')
+      const { blob, nombre } = await descargarInforme(id, formato)
+      descargar(blob, nombre ?? `INFORME ${codigo}.${formato}`)
+      setAviso(formato === 'csv' ? 'Resultados descargados' : 'Informe descargado')
     } catch (err) {
       setErrorInforme(mensajeDe(err, 'No se pudo generar el informe.'))
     } finally {
@@ -425,6 +466,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
     disponibles.add('evaluacion')
     disponibles.add('control')
     disponibles.add('informe')
+    disponibles.add('traslado')
   }
   const panelProponente = panel ? proponentes.find((pr) => pr.hoja === panel.hoja) : null
   const indicePanel = panel ? evaluadosEnOrden.findIndex((pr) => pr.hoja === panel.hoja) : -1
@@ -492,6 +534,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           textoAccion={
             soloLectura
               ? 'Ver evaluación'
+              : enFila
+                ? 'Ver la evaluación en curso'
               : evaluadosEnOrden.length === proponentes.length
                 ? 'Guardar y ver evaluación'
                 : `Guardar y evaluar ${proponentes.length - evaluadosEnOrden.length} proponentes`
@@ -581,6 +625,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
         </main>
       )}
 
+      {paso === 'traslado' && <PasoTramite evaluacionId={resumen.id} />}
       {paso === 'informe' && (
         <PasoInforme
           areaNombre={resumen.tipo_nombre}
@@ -601,6 +646,8 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
             <>
               <DocumentosFinales resumen={resumen} />
               <RevisionCruzada procesoId={resumen.proceso_id} />
+              <CoincidenciasOfertas procesoId={resumen.proceso_id} />
+              <FactorEconomico procesoId={resumen.proceso_id} />
             </>
           }
         />
@@ -620,6 +667,7 @@ function Evaluacion({ inicial }: { inicial: EvaluacionDetalle }) {
           onRevisar={onRevisar}
           bloqueadoPor={bloqueoAjeno}
           onVerDocumento={abrirDocumento}
+          onAsociarDocumentos={soloLectura ? null : asociarAlRequisito}
           onSubirCertificado={soloLectura ? null : (requisito) => setSubirCertificado(requisito)}
           consultandoCopnia={consultandoCopnia}
           onConsultarCopnia={

@@ -156,13 +156,18 @@ export default function Raiz() {
 
   const evaluacion = encajar('/evaluaciones/:id', ruta)
   const contratacion = ruta === '/ops/nueva' ? null : encajar('/ops/:id', ruta)
+  const preparacion = encajar('/procesos/nuevo/evaluacion/:id', ruta)
   let pagina: React.ReactNode
   let conTopbar = true
   if (evaluacion) {
     pagina = <PaginaEvaluacion key={evaluacion.id} id={evaluacion.id} />
     conTopbar = false
   } else if (ruta === '/procesos/nuevo/evaluacion' && puedeCrearProcesos(usuario)) {
-    pagina = <PaginaNuevoProceso />
+    pagina = <PaginaNuevoProceso key="nuevo" />
+    conTopbar = false
+  } else if (preparacion && puedeCrearProcesos(usuario)) {
+    // Proceso a medio crear: la URL lleva su identificador, así recargar no lo pierde.
+    pagina = <PaginaNuevoProceso key={preparacion.id} preparacionId={preparacion.id} />
     conTopbar = false
   } else if (ruta === '/procesos/nuevo' && puedeCrearProcesos(usuario)) pagina = <PaginaElegirProceso />
   else if (ruta === '/ops/nueva' && puedeCrearProcesos(usuario)) pagina = <PaginaNuevaOps />

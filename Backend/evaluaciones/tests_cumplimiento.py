@@ -409,6 +409,28 @@ class AuditoriaInmutableTests(TestCase):
         with self.assertRaises(DatabaseError), transaction.atomic(), connection.cursor() as c:
             c.execute("DELETE FROM cuentas_eventoauditoria")
 
+    def test_tampoco_se_puede_vaciar_con_truncate(self):
+        EventoAuditoria.objects.create(accion="prueba")
+        with self.assertRaises(DatabaseError), transaction.atomic(), connection.cursor() as c:
+            c.execute("TRUNCATE cuentas_eventoauditoria")
+
+    def test_el_verificador_de_permisos_detecta_a_la_aplicacion_duena_de_las_tablas(self):
+        # En pruebas la aplicación es dueña de todo (como una instalación vieja):
+        # el verificador debe decirlo y fallar; en producción, migrar con el rol
+        # de mantenimiento y correr asegurar_permisos_bd lo deja en orden.
+        from cuentas.management.commands.asegurar_permisos_bd import revisar
+
+        with connection.cursor() as c:
+            c.execute("SELECT current_user")
+            rol = c.fetchone()[0]
+        problemas = revisar(rol)
+        self.assertTrue(any("es dueño de" in p for p in problemas), problemas)
+        self.assertTrue(any("UPDATE sobre la auditoría" in p for p in problemas), problemas)
+        self.assertFalse(any("trigger" in p for p in problemas), problemas)
+        self.assertEqual(revisar("rol_que_no_existe"), ["No existe el rol rol_que_no_existe."])
+        with self.assertRaisesMessage(Exception, "lo corre el rol de mantenimiento"):
+            call_command("asegurar_permisos_bd", rol_app=rol, stdout=io.StringIO())
+
     def test_la_cadena_de_huellas_detecta_manipulacion(self):
         from cuentas.management.commands.verificar_auditoria import verificar
 
@@ -576,6 +598,18 @@ class MetricasTests(BaseFlujo):
         self.assertEqual(juridica["verificaciones"], 9)  # 3 ofertas × 3 requisitos
         self.assertEqual(juridica["revisadas_personas"], 3)  # el requisito 2, revisado en cada oferta
         self.assertNotIn("entidades", d)
+        # RF-23: causales de rechazo (decisión final), traslado y tiempos por proceso.
+        self.assertLessEqual(d["ofertas_rechazadas"], 3)
+        self.assertEqual(sum(c["casos"] for c in d["causas_rechazo"]) >= d["ofertas_rechazadas"], True)
+        self.assertEqual(d["observaciones"]["recibidas"], 0)
+        self.assertNotIn("subsanaciones", d)
+        self.assertIn("promedio_dias", d["tiempos_por_proceso"])
+        from evaluaciones.models import Evaluacion, ObservacionInforme
+        ev = Evaluacion.objects.filter(entidad=self.entidad1).first()
+        ObservacionInforme.objects.create(entidad=self.entidad1, evaluacion=ev, consecutivo=1, observante="Proponente 2",
+                                          recibida_en=timezone.localdate(), texto="x", registrada_por=self.admin_entidad1, decision="acoge")
+        d = admin.get("/api/metricas?anio=" + str(timezone.now().year)).json()
+        self.assertEqual((d["observaciones"]["recibidas"], d["observaciones"]["acogidas"], d["observaciones"]["pendientes"]), (1, 1, 1))
         # Un mes sin procesos no muestra nada.
         otro_mes = 1 if timezone.now().month != 1 else 2
         self.assertEqual(admin.get(f"/api/metricas?mes={otro_mes}").json()["procesos"]["creados"], 0)

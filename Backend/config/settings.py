@@ -22,6 +22,14 @@ if sys.argv[1:2] == ["test"]:
     os.environ["RECAPTCHA_API_KEY"] = ""
     os.environ["MICROSOFT_CLIENT_ID"] = ""
     os.environ["MICROSOFT_CLIENT_SECRET"] = ""
+    # Las pruebas no dependen de que el servicio de OCR esté prendido: leen con
+    # Tesseract; PaddleOCR se prueba con el servicio simulado (tests_ocr_motor).
+    os.environ["OCR_MOTOR"] = "tesseract"
+    os.environ["GPU_COMPARTIDA"] = "0"
+    # Las ofertas que guardan las pruebas van a una carpeta temporal, no a la caché real.
+    import tempfile
+
+    os.environ["CACHE_OFERTAS_DIR"] = tempfile.mkdtemp(prefix="mievaluador-pruebas-ofertas-")
 
 
 def _lista(variable: str, defecto: str = "") -> list[str]:
@@ -215,6 +223,16 @@ EXIGIR_2FA_A_TODOS = os.environ.get("EXIGIR_2FA_A_TODOS", "0" if DEBUG else "1")
 # Días que se conservan los documentos de los proponentes tras aprobar el proceso.
 RETENCION_DIAS = int(os.environ.get("RETENCION_DIAS", "30"))
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
+# Los archivos subidos que no caben en memoria van al disco, no a /tmp (en
+# muchos equipos /tmp vive en la RAM y una oferta grande no cabe).
+FILE_UPLOAD_TEMP_DIR = os.environ.get("SUBIDAS_TEMPORALES_DIR", str(BASE_DIR / "cache" / "temporales"))
+Path(FILE_UPLOAD_TEMP_DIR).mkdir(parents=True, exist_ok=True)
+# Subida de ofertas por pedazos (hasta 10 GB por archivo): se reanuda si se
+# corta, y cada pedazo cabe por debajo del límite del proxy (client_max_body_size).
+SUBIDAS_DIR = Path(os.environ.get("SUBIDAS_DIR", str(BASE_DIR / "cache" / "subidas")))
+SUBIDA_MAXIMA_ARCHIVO = int(os.environ.get("SUBIDA_MAXIMA_ARCHIVO", str(12 * 1024**3)))
+SUBIDA_MAXIMA_CARGA = int(os.environ.get("SUBIDA_MAXIMA_CARGA", str(20 * 1024**3)))
+SUBIDA_PEDAZO_MAXIMO = 48 * 1024 * 1024
 
 LANGUAGE_CODE = "es-co"
 TIME_ZONE = "America/Bogota"
@@ -225,6 +243,11 @@ STATIC_URL = "static/"
 # Archivos subidos (plantillas de informe, etc.), separados por entidad. No se
 # sirven públicamente: solo se entregan por la API con permisos.
 MEDIA_ROOT = Path(os.environ.get("ALMACENAMIENTO_DIR", str(BASE_DIR / "almacenamiento")))
+# Los archivos subidos se guardan cifrados (AES-256-GCM) con CLAVE_CIFRADO_ARCHIVOS (RF-21).
+STORAGES = {
+    "default": {"BACKEND": "config.almacenamiento.AlmacenamientoCifrado"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
 MEDIA_URL = "/no-publico/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

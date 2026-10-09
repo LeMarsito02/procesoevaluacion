@@ -47,6 +47,16 @@ interface Metricas {
   control: { muestras: number; verificaciones_revisadas: number; conformes: number; hallazgos: number; porcentaje_conforme: number | null }
   mensual: { mes: number; procesos: number; ofertas: number }[]
   causas_revision: { area: string; requisito: number; titulo: string; casos: number }[]
+  causas_rechazo: { area: string; requisito: number; titulo: string; casos: number }[]
+  ofertas_rechazadas: number
+  observaciones: { recibidas: number; respondidas: number; pendientes: number; acogidas: number; modifican_resultado: number; dias_para_responder: number | null }
+  tiempos_por_proceso: {
+    procesos_cerrados: number
+    promedio_dias: number | null
+    mediana_dias: number | null
+    maximo_dias: number | null
+    por_modalidad: { nombre: string; procesos: number; promedio_dias: number }[]
+  }
   minutos_por_verificacion: Record<string, number>
 }
 
@@ -349,6 +359,86 @@ export default function PaginaMetricas() {
               </p>
             </section>
           </div>
+          <div className="metricas-dos">
+            <section className="card metricas-bloque">
+              <h2>Causales de rechazo más frecuentes</h2>
+              {datos.causas_rechazo.length === 0 ? (
+                <p className="small muted">Ninguna oferta quedó con un requisito sin cumplir en el periodo.</p>
+              ) : (
+                <ol className="metricas-causas">
+                  {datos.causas_rechazo.map((c) => (
+                    <li key={`r-${c.area}-${c.requisito}`}>
+                      <span>
+                        <strong>{c.titulo}</strong>
+                        <span className="small muted"> · {c.area}</span>
+                      </span>
+                      <span className="metricas-causa-n">{entero(c.casos)}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <p className="small muted" style={{ marginTop: 8 }}>
+                Requisitos que quedaron «no cumple» en la decisión final (la de la persona cuando revisó). {entero(datos.ofertas_rechazadas)} ofertas con al
+                menos uno.
+              </p>
+            </section>
+
+            <section className="card metricas-bloque">
+              <h2>Traslado del informe</h2>
+              <dl className="metricas-lista">
+                <div>
+                  <dt>Observaciones recibidas</dt>
+                  <dd>{entero(datos.observaciones.recibidas)}</dd>
+                </div>
+                <div>
+                  <dt>Respondidas · pendientes</dt>
+                  <dd>
+                    {entero(datos.observaciones.respondidas)} · {entero(datos.observaciones.pendientes)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Acogidas (total o parcialmente)</dt>
+                  <dd>{entero(datos.observaciones.acogidas)}</dd>
+                </div>
+                <div>
+                  <dt>Cambiaron el resultado</dt>
+                  <dd>{entero(datos.observaciones.modifican_resultado)}</dd>
+                </div>
+                <div>
+                  <dt>Días promedio para responder</dt>
+                  <dd>{datos.observaciones.dias_para_responder == null ? '—' : datos.observaciones.dias_para_responder.toLocaleString('es-CO', { maximumFractionDigits: 1 })}</dd>
+                </div>
+              </dl>
+            </section>
+          </div>
+
+          <section className="card metricas-bloque">
+            <h2>Tiempos por proceso</h2>
+            <p className="small muted">Días desde que se crea el proceso hasta que se aprueba su última evaluación.</p>
+            <dl className="metricas-lista">
+              <div>
+                <dt>Procesos cerrados</dt>
+                <dd>{entero(datos.tiempos_por_proceso.procesos_cerrados)}</dd>
+              </div>
+              <div>
+                <dt>Promedio · mediana · máximo (días)</dt>
+                <dd>
+                  {[datos.tiempos_por_proceso.promedio_dias, datos.tiempos_por_proceso.mediana_dias, datos.tiempos_por_proceso.maximo_dias]
+                    .map((n) => (n == null ? '—' : n.toLocaleString('es-CO', { maximumFractionDigits: 1 })))
+                    .join(' · ')}
+                </dd>
+              </div>
+              {datos.tiempos_por_proceso.por_modalidad.map((m) => (
+                <div key={m.nombre}>
+                  <dt>
+                    {m.nombre} ({m.procesos})
+                  </dt>
+                  <dd>{m.promedio_dias.toLocaleString('es-CO', { maximumFractionDigits: 1 })} días</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
           <p className="small muted">
             Tiempo por oferta: tiempo de máquina, sin los procesos de demostración. Horas ahorradas: estimación con{' '}
             {datos.minutos_por_verificacion.juridica} min por verificación jurídica, {datos.minutos_por_verificacion.tecnica} técnica y{' '}

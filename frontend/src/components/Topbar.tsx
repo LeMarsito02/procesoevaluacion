@@ -74,6 +74,21 @@ function Navegacion() {
   const ruta = useRuta()
   const [abierto, setAbierto] = useState(false)
   const caja = useRef<HTMLDivElement>(null)
+  const [compactaAbierta, setCompactaAbierta] = useState(false)
+  const cajaCompacta = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!compactaAbierta) return
+    const cerrar = (e: MouseEvent) => {
+      if (!cajaCompacta.current?.contains(e.target as Node)) setCompactaAbierta(false)
+    }
+    const escape = (e: KeyboardEvent) => e.key === 'Escape' && setCompactaAbierta(false)
+    document.addEventListener('mousedown', cerrar)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('mousedown', cerrar)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [compactaAbierta])
   useEffect(() => {
     if (!abierto) return
     const cerrar = (e: MouseEvent) => {
@@ -106,13 +121,53 @@ function Navegacion() {
   const agrupar = enlaces.length > 5
   const visibles = agrupar ? enlaces.filter((e) => e.principal) : enlaces
   const resto = agrupar ? enlaces.filter((e) => !e.principal) : []
-  const activa = (r: string) => ruta === r || ((r === '/procesos' || r === '/ops') && ruta.startsWith(r))
+  // Crear algo nuevo no es estar en la lista de procesos ni en la de OPS: en
+  // «¿Qué va a hacer?» ninguna sección se marca como la actual.
+  const creando = ruta.startsWith('/procesos/nuevo') || ruta === '/ops/nueva'
+  const activa = (r: string) => ruta === r || (!creando && (r === '/procesos' || r === '/ops') && ruta.startsWith(r))
   const enResto = resto.find((e) => activa(e.ruta))
+  const actual = enlaces.find((e) => activa(e.ruta))
   return (
     <nav className="nav-principal" aria-label="Secciones">
+      {/* En pantallas angostas (tableta, celular) las secciones van en un menú. */}
+      <div className="nav-compacta" ref={cajaCompacta}>
+        <button
+          type="button"
+          className="nav-compacta-boton"
+          aria-expanded={compactaAbierta}
+          aria-haspopup="menu"
+          onClick={() => setCompactaAbierta((a) => !a)}
+        >
+          <span className="nav-hamburguesa" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          <span>{actual?.nombre ?? 'Menú'}</span>
+        </button>
+        {compactaAbierta && (
+          <div className="menu-lista nav-compacta-lista" role="menu">
+            {enlaces.map((e) => (
+              <button
+                key={e.ruta}
+                type="button"
+                role="menuitem"
+                aria-current={activa(e.ruta) ? 'page' : undefined}
+                onClick={() => {
+                  setCompactaAbierta(false)
+                  navegar(e.ruta)
+                }}
+              >
+                {e.nombre}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       {visibles.map((e) => (
         <a
           key={e.ruta}
+          className="nav-enlace"
           href={e.ruta}
           aria-current={activa(e.ruta) ? 'page' : undefined}
           onClick={(ev) => {

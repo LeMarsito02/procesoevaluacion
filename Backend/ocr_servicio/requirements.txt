@@ -1,0 +1,4 @@
+# Entorno aparte del backend (Python 3.12): Paddle aún no publica paquetes para 3.14.
+# GPU: paddlepaddle-gpu==3.2.0 desde https://www.paddlepaddle.org.cn/packages/stable/cu126/
+paddlepaddle==3.2.0
+paddleocr==3.7.0

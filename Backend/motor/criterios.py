@@ -132,15 +132,27 @@ PARAMETROS: dict[str, Parametro] = {
         ),
         Parametro(
             "antecedentes_meses",
-            "Antigüedad máxima de los certificados de antecedentes",
-            "Procuraduría, Contraloría, Policía y RNMC: meses de expedición antes del cierre (0 = no se revisa la "
-            "fecha). El REDAM siempre debe estar vigente al cierre según su propia fecha de validez.",
+            "Antigüedad máxima de los antecedentes de Policía y RNMC",
+            "Policía y RNMC: meses de expedición antes del cierre (0 = no se revisa la fecha). El REDAM siempre "
+            "debe estar vigente al cierre según su propia fecha de validez.",
             1,
             "entero",
             0,
             12,
             "meses",
-            ("juridica.contraloria", "juridica.procuraduria", "juridica.policia", "juridica.rnmc"),
+            ("juridica.policia", "juridica.rnmc"),
+        ),
+        Parametro(
+            "antecedentes_disciplinarios_fiscales_meses",
+            "Antigüedad máxima de los antecedentes de Procuraduría y Contraloría",
+            "Procuraduría (disciplinarios) y Contraloría (fiscales): meses de expedición antes del cierre "
+            "(0 = no se revisa la fecha). Su vigencia es de tres meses.",
+            3,
+            "entero",
+            0,
+            12,
+            "meses",
+            ("juridica.contraloria", "juridica.procuraduria"),
         ),
         Parametro(
             "identidad_suplente",

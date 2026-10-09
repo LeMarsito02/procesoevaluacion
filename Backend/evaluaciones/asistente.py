@@ -28,6 +28,7 @@ from cuentas.models import Usuario
 from evaluaciones import servicios
 from evaluaciones.models import Evaluacion, Resultado, Revision
 from motor.llm import cliente as llm
+from motor.gpu_turno import turno_ia
 
 log = logging.getLogger("mievaluador.asistente")
 
@@ -646,7 +647,7 @@ def _conversar(mensajes: list[dict], con_herramientas: bool = False) -> Iterator
     peticion = urllib.request.Request(
         f"{llm.LLM_URL}/api/chat", data=json.dumps(cuerpo).encode(), headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(peticion, timeout=llm.LLM_TIMEOUT_SEGUNDOS) as respuesta:  # nosec B310 (esquema validado en cliente.py)
+    with turno_ia(), urllib.request.urlopen(peticion, timeout=llm.LLM_TIMEOUT_SEGUNDOS) as respuesta:  # nosec B310 (esquema validado en cliente.py)
         for linea in respuesta:
             if linea.strip():
                 yield json.loads(linea)
